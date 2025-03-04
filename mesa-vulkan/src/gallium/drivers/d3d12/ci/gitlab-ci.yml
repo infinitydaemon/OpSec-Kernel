@@ -14,7 +14,7 @@
     GALLIUM_DRIVER: d3d12
     WGL_DISABLE_ERROR_DIALOGS: "true"
     D3D12_AGILITY_RELATIVE_PATH: "D3D12\\"
-    D3D12_AGILITY_SDK_VERSION: 613
+    D3D12_AGILITY_SDK_VERSION: 614
 
 .d3d12-test-piglit:
   extends:
@@ -23,7 +23,7 @@
     - . _install/piglit_run.ps1
   artifacts:
     when: on_failure
-    name: "mesa_${CI_JOB_NAME}"
+    name: "${CI_PROJECT_NAME}_${CI_JOB_NAME}"
     paths:
       - logs/
   variables:

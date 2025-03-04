@@ -3,8 +3,7 @@
  * SPDX-License-Identifier: MIT
  */
 
-#ifndef BRW_DISASM_H
-#define BRW_DISASM_H
+#pragma once
 
 #include <stdio.h>
 #include <stdbool.h>
@@ -14,12 +13,12 @@ extern "C" {
 #endif
 
 struct brw_isa_info;
-struct brw_inst;
+struct brw_eu_inst;
 
 const struct brw_label *brw_find_label(const struct brw_label *root, int offset);
 void brw_create_label(struct brw_label **labels, int offset, void *mem_ctx);
 int brw_disassemble_inst(FILE *file, const struct brw_isa_info *isa,
-                         const struct brw_inst *inst, bool is_compacted,
+                         const struct brw_eu_inst *inst, bool is_compacted,
                          int offset, const struct brw_label *root_label);
 const struct
 brw_label *brw_label_assembly(const struct brw_isa_info *isa,
@@ -35,8 +34,10 @@ int brw_disassemble_find_end(const struct brw_isa_info *isa,
 void brw_disassemble_with_errors(const struct brw_isa_info *isa,
                                  const void *assembly, int start, FILE *out);
 
+const char *brw_lsc_op_to_string(unsigned op);
+const char *brw_lsc_addr_surftype_to_string(unsigned t);
+const char *brw_lsc_data_size_to_string(unsigned s);
+
 #ifdef __cplusplus
 } /* extern "C" */
 #endif
-
-#endif /* BRW_DISASM_H */

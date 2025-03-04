@@ -1,24 +1,6 @@
 /*
- * Copyright (C) 2018 Jonathan Marek <jonathan@marek.ca>
- *
- * Permission is hereby granted, free of charge, to any person obtaining a
- * copy of this software and associated documentation files (the "Software"),
- * to deal in the Software without restriction, including without limitation
- * the rights to use, copy, modify, merge, publish, distribute, sublicense,
- * and/or sell copies of the Software, and to permit persons to whom the
- * Software is furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice (including the next
- * paragraph) shall be included in all copies or substantial portions of the
- * Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
- * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
- * SOFTWARE.
+ * Copyright © 2018 Jonathan Marek <jonathan@marek.ca>
+ * SPDX-License-Identifier: MIT
  *
  * Authors:
  *    Jonathan Marek <jonathan@marek.ca>
@@ -48,6 +30,7 @@ static const nir_shader_compiler_options options = {
    .lower_fdph = true,
    .has_fsub = true,
    .has_isub = true,
+   .no_integers = true,
    .lower_insert_byte = true,
    .lower_insert_word = true,
    .force_indirect_unrolling = nir_var_all,
@@ -82,7 +65,12 @@ ir2_optimize_loop(nir_shader *s)
       progress |= OPT(s, nir_opt_dce);
       progress |= OPT(s, nir_opt_cse);
       /* progress |= OPT(s, nir_opt_gcm, true); */
-      progress |= OPT(s, nir_opt_peephole_select, UINT_MAX, true, true);
+      nir_opt_peephole_select_options peephole_select_options = {
+         .limit = UINT_MAX,
+         .indirect_load_ok = true,
+         .expensive_alu_ok = true,
+      };
+      progress |= OPT(s, nir_opt_peephole_select, &peephole_select_options);
       progress |= OPT(s, nir_opt_intrinsics);
       progress |= OPT(s, nir_opt_algebraic);
       progress |= OPT(s, nir_opt_constant_folding);
@@ -151,7 +139,9 @@ static struct ir2_src
 load_const(struct ir2_context *ctx, float *value_f, unsigned ncomp)
 {
    struct fd2_shader_stateobj *so = ctx->so;
-   unsigned imm_ncomp, swiz, idx, i, j;
+   unsigned idx, i, j;
+   unsigned imm_ncomp = 0;
+   unsigned swiz = 0;
    uint32_t *value = (uint32_t *)value_f;
 
    /* try to merge with existing immediate (TODO: try with neg) */
@@ -1146,7 +1136,7 @@ ir2_nir_compile(struct ir2_context *ctx, bool binning)
    OPT_V(ctx->nir, nir_opt_algebraic_late);
    OPT_V(ctx->nir, nir_lower_alu_to_scalar, ir2_alu_to_scalar_filter_cb, NULL);
 
-   OPT_V(ctx->nir, nir_convert_from_ssa, true);
+   OPT_V(ctx->nir, nir_convert_from_ssa, true, false);
 
    OPT_V(ctx->nir, nir_move_vec_src_uses_to_dest, false);
    OPT_V(ctx->nir, nir_lower_vec_to_regs, NULL, NULL);

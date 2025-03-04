@@ -38,6 +38,10 @@ impl ShaderModel for ShaderModel50 {
         }
     }
 
+    fn hw_reserved_gprs(&self) -> u32 {
+        0
+    }
+
     fn crs_size(&self, max_crs_depth: u32) -> u32 {
         if max_crs_depth <= 16 {
             0
@@ -2040,13 +2044,39 @@ impl SM50Encoder<'_> {
     }
 }
 
+fn legalize_tex_instr(op: &mut impl SrcsAsSlice, _b: &mut LegalizeBuilder) {
+    // Texture instructions have one or two sources.  When they have two, the
+    // second one is optional and we can set rZ instead.
+    let srcs = op.srcs_as_mut_slice();
+    assert!(matches!(&srcs[0].src_ref, SrcRef::SSA(_)));
+    if srcs.len() > 1 {
+        debug_assert!(srcs.len() == 2);
+        assert!(matches!(&srcs[1].src_ref, SrcRef::SSA(_) | SrcRef::Zero));
+    }
+}
+
 impl SM50Op for OpTex {
     fn legalize(&mut self, b: &mut LegalizeBuilder) {
-        legalize_ext_instr(self, b);
+        legalize_tex_instr(self, b);
     }
 
     fn encode(&self, e: &mut SM50Encoder<'_>) {
-        e.set_opcode(0xdeb8);
+        match self.tex {
+            TexRef::Bound(idx) => {
+                e.set_opcode(0x0380);
+                e.set_field(36..49, idx);
+                e.set_bit(54, self.offset);
+                e.set_tex_lod_mode(55..57, self.lod_mode);
+            }
+            TexRef::CBuf { .. } => {
+                panic!("SM50 doesn't have CBuf textures");
+            }
+            TexRef::Bindless => {
+                e.set_opcode(0xdeb8);
+                e.set_bit(36, self.offset);
+                e.set_tex_lod_mode(37..39, self.lod_mode);
+            }
+        }
 
         e.set_dst(self.dsts[0]);
         assert!(self.dsts[1].is_none());
@@ -2057,20 +2087,29 @@ impl SM50Op for OpTex {
         e.set_tex_dim(28..31, self.dim);
         e.set_field(31..35, self.mask);
         e.set_bit(35, false); // ToDo: NDV
-        e.set_bit(36, self.offset);
-        e.set_tex_lod_mode(37..39, self.lod_mode);
-        e.set_bit(49, false); // TODO: .NODEP
+        e.set_bit(49, self.nodep);
         e.set_bit(50, self.z_cmpr);
     }
 }
 
 impl SM50Op for OpTld {
     fn legalize(&mut self, b: &mut LegalizeBuilder) {
-        legalize_ext_instr(self, b);
+        legalize_tex_instr(self, b);
     }
 
     fn encode(&self, e: &mut SM50Encoder<'_>) {
-        e.set_opcode(0xdd38);
+        match self.tex {
+            TexRef::Bound(idx) => {
+                e.set_opcode(0xdc38);
+                e.set_field(36..49, idx);
+            }
+            TexRef::CBuf { .. } => {
+                panic!("SM50 doesn't have CBuf textures");
+            }
+            TexRef::Bindless => {
+                e.set_opcode(0xdd38);
+            }
+        }
 
         e.set_dst(self.dsts[0]);
         assert!(self.dsts[1].is_none());
@@ -2081,7 +2120,7 @@ impl SM50Op for OpTld {
         e.set_tex_dim(28..31, self.dim);
         e.set_field(31..35, self.mask);
         e.set_bit(35, self.offset);
-        e.set_bit(49, false); // TODO: .NODEP
+        e.set_bit(49, self.nodep);
         e.set_bit(50, self.is_ms);
 
         assert!(
@@ -2094,11 +2133,31 @@ impl SM50Op for OpTld {
 
 impl SM50Op for OpTld4 {
     fn legalize(&mut self, b: &mut LegalizeBuilder) {
-        legalize_ext_instr(self, b);
+        legalize_tex_instr(self, b);
     }
 
     fn encode(&self, e: &mut SM50Encoder<'_>) {
-        e.set_opcode(0xdef8);
+        let offset_mode = match self.offset_mode {
+            Tld4OffsetMode::None => 0_u8,
+            Tld4OffsetMode::AddOffI => 1_u8,
+            Tld4OffsetMode::PerPx => 2_u8,
+        };
+        match self.tex {
+            TexRef::Bound(idx) => {
+                e.set_opcode(0xc838);
+                e.set_field(36..49, idx);
+                e.set_field(54..56, offset_mode);
+                e.set_field(56..58, self.comp);
+            }
+            TexRef::CBuf { .. } => {
+                panic!("SM50 doesn't have CBuf textures");
+            }
+            TexRef::Bindless => {
+                e.set_opcode(0xdef8);
+                e.set_field(36..38, offset_mode);
+                e.set_field(38..40, self.comp);
+            }
+        }
 
         e.set_dst(self.dsts[0]);
         assert!(self.dsts[1].is_none());
@@ -2109,27 +2168,29 @@ impl SM50Op for OpTld4 {
         e.set_tex_dim(28..31, self.dim);
         e.set_field(31..35, self.mask);
         e.set_bit(35, false); // ToDo: NDV
-        e.set_field(
-            36..38,
-            match self.offset_mode {
-                Tld4OffsetMode::None => 0_u8,
-                Tld4OffsetMode::AddOffI => 1_u8,
-                Tld4OffsetMode::PerPx => 2_u8,
-            },
-        );
-        e.set_field(38..40, self.comp);
-        e.set_bit(49, false); // TODO: .NODEP
+        e.set_bit(49, self.nodep);
         e.set_bit(50, self.z_cmpr);
     }
 }
 
 impl SM50Op for OpTmml {
     fn legalize(&mut self, b: &mut LegalizeBuilder) {
-        legalize_ext_instr(self, b);
+        legalize_tex_instr(self, b);
     }
 
     fn encode(&self, e: &mut SM50Encoder<'_>) {
-        e.set_opcode(0xdf60);
+        match self.tex {
+            TexRef::Bound(idx) => {
+                e.set_opcode(0xdf58);
+                e.set_field(36..49, idx);
+            }
+            TexRef::CBuf { .. } => {
+                panic!("SM50 doesn't have CBuf textures");
+            }
+            TexRef::Bindless => {
+                e.set_opcode(0xdf60);
+            }
+        }
 
         e.set_dst(self.dsts[0]);
         assert!(self.dsts[1].is_none());
@@ -2139,17 +2200,28 @@ impl SM50Op for OpTmml {
         e.set_tex_dim(28..31, self.dim);
         e.set_field(31..35, self.mask);
         e.set_bit(35, false); // ToDo: NDV
-        e.set_bit(49, false); // TODO: .NODEP
+        e.set_bit(49, self.nodep);
     }
 }
 
 impl SM50Op for OpTxd {
     fn legalize(&mut self, b: &mut LegalizeBuilder) {
-        legalize_ext_instr(self, b);
+        legalize_tex_instr(self, b);
     }
 
     fn encode(&self, e: &mut SM50Encoder<'_>) {
-        e.set_opcode(0xde78);
+        match self.tex {
+            TexRef::Bound(idx) => {
+                e.set_opcode(0xde38);
+                e.set_field(36..49, idx);
+            }
+            TexRef::CBuf { .. } => {
+                panic!("SM50 doesn't have CBuf textures");
+            }
+            TexRef::Bindless => {
+                e.set_opcode(0xde78);
+            }
+        }
 
         e.set_dst(self.dsts[0]);
         assert!(self.dsts[1].is_none());
@@ -2160,17 +2232,28 @@ impl SM50Op for OpTxd {
         e.set_tex_dim(28..31, self.dim);
         e.set_field(31..35, self.mask);
         e.set_bit(35, self.offset);
-        e.set_bit(49, false); // TODO: .NODEP
+        e.set_bit(49, self.nodep);
     }
 }
 
 impl SM50Op for OpTxq {
     fn legalize(&mut self, b: &mut LegalizeBuilder) {
-        legalize_ext_instr(self, b);
+        legalize_tex_instr(self, b);
     }
 
     fn encode(&self, e: &mut SM50Encoder<'_>) {
-        e.set_opcode(0xdf50);
+        match self.tex {
+            TexRef::Bound(idx) => {
+                e.set_opcode(0xdf48);
+                e.set_field(36..49, idx);
+            }
+            TexRef::CBuf { .. } => {
+                panic!("SM50 doesn't have CBuf textures");
+            }
+            TexRef::Bindless => {
+                e.set_opcode(0xdf50);
+            }
+        }
 
         e.set_dst(self.dsts[0]);
         assert!(self.dsts[1].is_none());
@@ -2189,7 +2272,7 @@ impl SM50Op for OpTxq {
             },
         );
         e.set_field(31..35, self.mask);
-        e.set_bit(49, false); // TODO: .NODEP
+        e.set_bit(49, self.nodep);
     }
 }
 
@@ -2581,6 +2664,11 @@ impl SM50Op for OpAtom {
                         _ => panic!("Unsupported data type"),
                     };
                     e.set_field(28..30, data_type);
+                    assert!(
+                        self.atom_type != AtomType::U64
+                            || self.atom_op == AtomOp::Exch,
+                        "64-bit Shared atomics only support CmpExch or Exch"
+                    );
                     e.set_atom_op(52..56, self.atom_op);
                 }
 

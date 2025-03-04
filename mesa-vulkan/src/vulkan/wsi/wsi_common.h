@@ -97,7 +97,7 @@ struct vk_instance;
 
 struct driOptionCache;
 
-#define VK_ICD_WSI_PLATFORM_MAX (VK_ICD_WSI_PLATFORM_HEADLESS + 1)
+#define VK_ICD_WSI_PLATFORM_MAX (VK_ICD_WSI_PLATFORM_METAL + 1)
 
 struct wsi_device {
    /* Allocator for the instance */
@@ -122,6 +122,9 @@ struct wsi_device {
     * If false, WSI will always use either modifiers or the prime blit path.
     */
    bool supports_scanout;
+
+   bool supports_protected[VK_ICD_WSI_PLATFORM_MAX];
+
    bool supports_modifiers;
    uint32_t maxImageDimension2D;
    uint32_t optimalBufferCopyRowPitchAlignment;
@@ -202,6 +205,11 @@ struct wsi_device {
     * to be able to synchronize with the WSI present semaphore being unsignalled.
     * This requires VK_KHR_timeline_semaphore. */
    bool khr_present_wait;
+
+   struct {
+      /* Don't use the commit-timing protocol for pacing */
+      bool disable_timestamps;
+   } wayland;
 
    /*
     * This sets the ownership for a WSI memory object:

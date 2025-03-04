@@ -29,16 +29,13 @@
 #include <string.h>
 #include <stdlib.h>
 #include "glapi/glapi.h"
-#include "u_current.h"
-#include "table.h" /* for MAPI_TABLE_NUM_SLOTS */
+#include "table.h"
 #include "stub.h"
 
 /*
- * _glapi_Dispatch, _glapi_Context
- * _glapi_tls_Dispatch, _glapi_tls_Context,
- * _glapi_set_context, _glapi_get_context,
- * _glapi_destroy_multithread, _glapi_check_multithread
- * _glapi_set_dispatch, and _glapi_get_dispatch
+ * _mesa_glapi_Dispatch,
+ * _mesa_glapi_tls_Dispatch, _mesa_glapi_tls_Context,
+ * _mesa_glapi_set_dispatch, and _mesa_glapi_get_dispatch
  * are defined in u_current.c.
  */
 
@@ -47,25 +44,9 @@
  * slots).
  */
 unsigned int
-_glapi_get_dispatch_table_size(void)
+_mesa_glapi_get_dispatch_table_size(void)
 {
-   return MAPI_TABLE_NUM_SLOTS;
-}
-
-/**
- * Initializes the glapi relocs table (no-op for shared-glapi), and returns the
- * offset of the given function in the dispatch table.
- */
-int
-_glapi_add_dispatch( const char * function_name )
-{
-   assert(function_name[0] == 'g' && function_name[1] == 'l');
-
-   const struct mapi_stub *stub = stub_find_public(function_name + 2);
-   if (!stub)
-      return -1;
-
-   return stub_get_slot(stub);
+   return _gloffset_COUNT;
 }
 
 static const struct mapi_stub *
@@ -82,7 +63,7 @@ _glapi_get_stub(const char *name)
  * Return offset of entrypoint for named function within dispatch table.
  */
 int
-_glapi_get_proc_offset(const char *funcName)
+_mesa_glapi_get_proc_offset(const char *funcName)
 {
    const struct mapi_stub *stub = _glapi_get_stub(funcName);
    return (stub) ? stub_get_slot(stub) : -1;
@@ -94,7 +75,7 @@ _glapi_get_proc_offset(const char *funcName)
  * the fly with assembly language.
  */
 _glapi_proc
-_glapi_get_proc_address(const char *funcName)
+_mesa_glapi_get_proc_address(const char *funcName)
 {
    const struct mapi_stub *stub = _glapi_get_stub(funcName);
    return (stub) ? (_glapi_proc) stub_get_addr(stub) : NULL;
@@ -113,16 +94,13 @@ _glapi_get_proc_name(unsigned int offset)
 
 /** Return pointer to new dispatch table filled with no-op functions */
 struct _glapi_table *
-_glapi_new_nop_table(unsigned num_entries)
+_glapi_new_nop_table(void)
 {
    struct _glapi_table *table;
 
-   if (num_entries > MAPI_TABLE_NUM_SLOTS)
-      num_entries = MAPI_TABLE_NUM_SLOTS;
-
-   table = malloc(num_entries * sizeof(mapi_func));
+   table = malloc(_gloffset_COUNT * sizeof(mapi_func));
    if (table) {
-      memcpy(table, table_noop_array, num_entries * sizeof(mapi_func));
+      memcpy(table, table_noop_array, _gloffset_COUNT * sizeof(mapi_func));
    }
    return table;
 }
@@ -131,24 +109,4 @@ void
 _glapi_set_nop_handler(_glapi_nop_handler_proc func)
 {
    table_set_noop_handler(func);
-}
-
-/**
- * This is a deprecated function which should not be used anymore.
- * It's only present to satisfy linking with older versions of libGL.
- */
-unsigned long
-_glthread_GetID(void)
-{
-   return 0;
-}
-
-void
-_glapi_noop_enable_warnings(unsigned char enable)
-{
-}
-
-void
-_glapi_set_warning_func(_glapi_proc func)
-{
 }

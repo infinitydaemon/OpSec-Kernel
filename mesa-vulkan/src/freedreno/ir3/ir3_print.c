@@ -1,24 +1,6 @@
 /*
- * Copyright (C) 2014 Rob Clark <robclark@freedesktop.org>
- *
- * Permission is hereby granted, free of charge, to any person obtaining a
- * copy of this software and associated documentation files (the "Software"),
- * to deal in the Software without restriction, including without limitation
- * the rights to use, copy, modify, merge, publish, distribute, sublicense,
- * and/or sell copies of the Software, and to permit persons to whom the
- * Software is furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice (including the next
- * paragraph) shall be included in all copies or substantial portions of the
- * Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
- * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
- * SOFTWARE.
+ * Copyright © 2014 Rob Clark <robclark@freedesktop.org>
+ * SPDX-License-Identifier: MIT
  *
  * Authors:
  *    Rob Clark <robclark@freedesktop.org>
@@ -36,6 +18,7 @@
 #define RESET   "\x1b[0m"
 #define RED     "\x1b[0;31m"
 #define GREEN   "\x1b[0;32m"
+#define YELLOW  "\x1b[0;33m"
 #define BLUE    "\x1b[0;34m"
 #define MAGENTA "\x1b[0;35m"
 
@@ -45,6 +28,7 @@
 #define SYN_REG(x)   RED x RESET
 #define SYN_IMMED(x) GREEN x RESET
 #define SYN_CONST(x) GREEN x RESET
+#define SYN_RT(x)    YELLOW x RESET
 #define SYN_SSA(x)   BLUE x RESET
 #define SYN_ARRAY(x) MAGENTA x RESET
 
@@ -96,6 +80,8 @@ print_instr_name(struct log_stream *stream, struct ir3_instruction *instr,
          mesa_log_stream_printf(stream, "(nop%d)", instr->nop);
       if (instr->flags & IR3_INSTR_UL)
          mesa_log_stream_printf(stream, "(ul)");
+      if (instr->flags & IR3_INSTR_SAT)
+         mesa_log_stream_printf(stream, "(sat)");
    } else {
       mesa_log_stream_printf(stream, " ");
    }
@@ -235,6 +221,58 @@ print_instr_name(struct log_stream *stream, struct ir3_instruction *instr,
       case OPC_BRAC:
          mesa_log_stream_printf(stream, ".%u", instr->cat0.idx);
          break;
+      case OPC_SHFL:
+         switch (instr->cat6.shfl_mode) {
+         case SHFL_XOR:
+            mesa_log_stream_printf(stream, ".xor");
+            break;
+         case SHFL_UP:
+            mesa_log_stream_printf(stream, ".up");
+            break;
+         case SHFL_DOWN:
+            mesa_log_stream_printf(stream, ".down");
+            break;
+         case SHFL_RUP:
+            mesa_log_stream_printf(stream, ".rup");
+            break;
+         case SHFL_RDOWN:
+            mesa_log_stream_printf(stream, ".rdown");
+            break;
+         default:
+            mesa_log_stream_printf(stream, ".%u", instr->cat6.shfl_mode);
+            break;
+         }
+
+         mesa_log_stream_printf(stream, ".%s", type_name(instr->cat6.type));
+         break;
+      case OPC_ALIAS:
+         switch (instr->cat7.alias_scope) {
+         case ALIAS_TEX:
+            mesa_log_stream_printf(stream, ".tex");
+            break;
+         case ALIAS_RT:
+            mesa_log_stream_printf(stream, ".rt");
+            break;
+         case ALIAS_MEM:
+            mesa_log_stream_printf(stream, ".mem");
+            break;
+         }
+
+         if (instr->cat7.alias_type_float) {
+            mesa_log_stream_printf(stream, ".f");
+         } else {
+            mesa_log_stream_printf(stream, ".b");
+         }
+
+         if (instr->srcs[0]->flags & IR3_REG_HALF) {
+            mesa_log_stream_printf(stream, "16");
+         } else {
+            mesa_log_stream_printf(stream, "32");
+         }
+
+         mesa_log_stream_printf(stream, ".%u",
+                                instr->cat7.alias_table_size_minus_one);
+         break;
       default:
          break;
       }
@@ -305,6 +343,13 @@ print_reg_name(struct log_stream *stream, struct ir3_instruction *instr,
    if (reg->tied)
       mesa_log_stream_printf(stream, "(tied)");
 
+   if (instr->opc == OPC_BR || instr->opc == OPC_BRAA ||
+       instr->opc == OPC_BRAO) {
+      bool inv = reg == instr->srcs[0] ? instr->cat0.inv1 : instr->cat0.inv2;
+      if (inv)
+         mesa_log_stream_printf(stream, "!");
+   }
+
    if (reg->flags & IR3_REG_SHARED)
       mesa_log_stream_printf(stream, "s");
    if (reg->flags & IR3_REG_HALF)
@@ -343,12 +388,15 @@ print_reg_name(struct log_stream *stream, struct ir3_instruction *instr,
       else if (reg->flags & IR3_REG_PREDICATE)
          mesa_log_stream_printf(stream, SYN_REG("p0.%c"),
                                 "xyzw"[reg_comp(reg)]);
+      else if (reg->flags & IR3_REG_RT)
+         mesa_log_stream_printf(stream, SYN_RT("rt%u.%c"), reg_num(reg),
+                                "xyzw"[reg_comp(reg)]);
       else
          mesa_log_stream_printf(stream, SYN_REG("r%u.%c"), reg_num(reg),
                                 "xyzw"[reg_comp(reg)]);
    }
 
-   if (reg->wrmask > 0x1)
+   if (reg->wrmask != 0x1)
       mesa_log_stream_printf(stream, " (wrmask=0x%x)", reg->wrmask);
 }
 
@@ -403,13 +451,22 @@ print_instr(struct log_stream *stream, struct ir3_instruction *instr, int lvl)
          continue;
       if (!first)
          mesa_log_stream_printf(stream, ", ");
+      if (reg->flags & IR3_REG_ALIAS)
+         mesa_log_stream_printf(stream, "@");
       print_reg_name(stream, instr, reg, true);
       first = false;
    }
    foreach_src_n (reg, n, instr) {
       if (!first)
          mesa_log_stream_printf(stream, ", ");
+      if (reg->flags & IR3_REG_FIRST_ALIAS)
+         mesa_log_stream_printf(stream, "@{");
       print_reg_name(stream, instr, reg, false);
+      if ((reg->flags & IR3_REG_ALIAS) &&
+          (n == instr->srcs_count - 1 ||
+           ir3_src_is_first_in_group(instr->srcs[n + 1]))) {
+         mesa_log_stream_printf(stream, "}");
+      }
       if (instr->opc == OPC_END || instr->opc == OPC_CHMASK)
          mesa_log_stream_printf(stream, " (%u)", instr->end.outidxs[n]);
       first = false;
@@ -455,6 +512,17 @@ print_instr(struct log_stream *stream, struct ir3_instruction *instr, int lvl)
             mesa_log_stream_printf(stream, ", ");
          mesa_log_stream_printf(stream, SYN_SSA("ssa_%u"),
                                 instr->deps[i]->serialno);
+      }
+   }
+
+   if (ir3_instr_is_rpt(instr)) {
+      mesa_log_stream_printf(stream, ", rpt: ");
+
+      if (ir3_instr_is_first_rpt(instr)) {
+         mesa_log_stream_printf(stream, "first");
+      } else {
+         mesa_log_stream_printf(stream, "%u",
+                                ir3_instr_prev_rpt(instr)->serialno);
       }
    }
 
@@ -528,6 +596,9 @@ print_block(struct ir3_block *block, int lvl)
       if (block->successors[1]) {
          mesa_log_stream_printf(stream, ", block%u",
                                 block_id(block->successors[1]));
+
+         mesa_log_stream_printf(stream, " (%s)",
+                                block->divergent_condition ? "div" : "con");
       }
       mesa_log_stream_printf(stream, " */\n");
    }

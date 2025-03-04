@@ -62,6 +62,7 @@ const struct nir_shader_compiler_options brw_scalar_nir_options = {
    .lower_pack_snorm_4x8 = true,
    .lower_pack_unorm_2x16 = true,
    .lower_pack_unorm_4x8 = true,
+   .lower_pack_64_4x16 = true,
    .lower_scmp = true,
    .lower_to_scalar = true,
    .lower_uadd_carry = true,
@@ -75,10 +76,13 @@ const struct nir_shader_compiler_options brw_scalar_nir_options = {
    .lower_usub_borrow = true,
    .max_unroll_iterations = 32,
    .support_16bit_alu = true,
-   .use_interpolated_input_intrinsics = true,
-   .vectorize_io = true,
    .vectorize_tess_levels = true,
    .vertex_id_zero_based = true,
+   .scalarize_ddx = true,
+   .support_indirect_inputs = (uint8_t)BITFIELD_MASK(PIPE_SHADER_TYPES),
+   .support_indirect_outputs = (uint8_t)BITFIELD_MASK(PIPE_SHADER_TYPES),
+   .per_view_unique_driver_locations = true,
+   .compact_view_index = true,
 };
 
 struct brw_compiler *
@@ -91,14 +95,13 @@ brw_compiler_create(void *mem_ctx, const struct intel_device_info *devinfo)
 
    brw_init_isa_info(&compiler->isa, devinfo);
 
-   brw_fs_alloc_reg_sets(compiler);
+   brw_alloc_reg_sets(compiler);
 
    compiler->precise_trig = debug_get_bool_option("INTEL_PRECISE_TRIG", false);
 
    compiler->use_tcs_multi_patch = devinfo->ver >= 12;
 
-   /* Default to the sampler since that's what we've done since forever */
-   compiler->indirect_ubos_use_sampler = true;
+   compiler->indirect_ubos_use_sampler = devinfo->ver < 12;
 
    compiler->lower_dpas = devinfo->verx10 < 125 ||
       intel_device_info_is_mtl(devinfo) ||
@@ -145,7 +148,7 @@ brw_compiler_create(void *mem_ctx, const struct intel_device_info *devinfo)
       int64_options |= (nir_lower_icmp64 | nir_lower_minmax64 |
                         nir_lower_logic64 | nir_lower_ufind_msb64 |
                         nir_lower_bit_count64 |
-                        nir_lower_bcsel64 | nir_lower_conv64 |
+                        nir_lower_bcsel64 |
                         nir_lower_extract64 | nir_lower_scan_reduce_bitwise64 |
                         nir_lower_scan_reduce_iadd64 | nir_lower_subgroup_shuffle64 |
                         nir_lower_iadd_sat64 | nir_lower_uadd_sat64);

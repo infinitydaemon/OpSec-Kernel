@@ -1,24 +1,6 @@
 /*
- * Copyright (C) 2017 Rob Clark <robclark@freedesktop.org>
- *
- * Permission is hereby granted, free of charge, to any person obtaining a
- * copy of this software and associated documentation files (the "Software"),
- * to deal in the Software without restriction, including without limitation
- * the rights to use, copy, modify, merge, publish, distribute, sublicense,
- * and/or sell copies of the Software, and to permit persons to whom the
- * Software is furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice (including the next
- * paragraph) shall be included in all copies or substantial portions of the
- * Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
- * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
- * SOFTWARE.
+ * Copyright © 2017 Rob Clark <robclark@freedesktop.org>
+ * SPDX-License-Identifier: MIT
  *
  * Authors:
  *    Rob Clark <robclark@freedesktop.org>
@@ -51,7 +33,7 @@ default_src_texture(struct pipe_sampler_view *src_templ,
                     struct pipe_resource *src, unsigned srclevel)
 {
    bool cube_as_2darray =
-      src->screen->get_param(src->screen, PIPE_CAP_SAMPLER_VIEW_TARGET);
+      src->screen->caps.sampler_view_target;
 
    memset(src_templ, 0, sizeof(*src_templ));
 
@@ -88,7 +70,7 @@ fd_blitter_pipe_begin(struct fd_context *ctx, bool render_cond) assert_dt
    util_blitter_save_tesseval_shader(ctx->blitter, ctx->prog.ds);
    util_blitter_save_geometry_shader(ctx->blitter, ctx->prog.gs);
    util_blitter_save_so_targets(ctx->blitter, ctx->streamout.num_targets,
-                                ctx->streamout.targets);
+                                ctx->streamout.targets, MESA_PRIM_UNKNOWN);
    util_blitter_save_rasterizer(ctx->blitter, ctx->rasterizer);
    util_blitter_save_viewport(ctx->blitter, &ctx->viewport[0]);
    util_blitter_save_scissor(ctx->blitter, &ctx->scissor[0]);
@@ -117,6 +99,7 @@ fd_blitter_pipe_begin(struct fd_context *ctx, bool render_cond) assert_dt
 static void
 fd_blitter_pipe_end(struct fd_context *ctx) assert_dt
 {
+   util_blitter_restore_constant_buffer_state(ctx->blitter);
 }
 
 static void
@@ -213,9 +196,6 @@ fd_blitter_clear(struct pipe_context *pctx, unsigned buffers,
     */
    fd_blitter_pipe_begin(ctx, false);
 
-   util_blitter_save_fragment_constant_buffer_slot(
-      ctx->blitter, ctx->constbuf[PIPE_SHADER_FRAGMENT].cb);
-
    util_blitter_common_clear_setup(blitter, pfb->width, pfb->height, buffers,
                                    NULL, NULL);
 
@@ -252,7 +232,7 @@ fd_blitter_clear(struct pipe_context *pctx, unsigned buffers,
    pctx->bind_vertex_elements_state(pctx, ctx->solid_vbuf_state.vtx);
    util_set_vertex_buffers(pctx, 1, false,
                            &ctx->solid_vbuf_state.vertexbuf.vb[0]);
-   pctx->set_stream_output_targets(pctx, 0, NULL, NULL);
+   pctx->set_stream_output_targets(pctx, 0, NULL, NULL, 0);
 
    if (pfb->layers > 1)
       pctx->bind_vs_state(pctx, ctx->solid_layered_prog.vs);
@@ -283,7 +263,6 @@ fd_blitter_clear(struct pipe_context *pctx, unsigned buffers,
    /* We expect that this should not have triggered a change in pfb: */
    assert(util_framebuffer_state_equal(pfb, &ctx->framebuffer));
 
-   util_blitter_restore_constant_buffer_state(blitter);
    util_blitter_restore_vertex_states(blitter);
    util_blitter_restore_fragment_states(blitter);
    util_blitter_restore_textures(blitter);
@@ -460,7 +439,7 @@ fd_resource_copy_region(struct pipe_context *pctx, struct pipe_resource *dst,
       info.mask = util_format_get_mask(src->format);
       info.filter = PIPE_TEX_FILTER_NEAREST;
       info.scissor_enable = 0;
-
+      info.swizzle_enable = 0;
       if (ctx->blit(ctx, &info))
          return;
    }

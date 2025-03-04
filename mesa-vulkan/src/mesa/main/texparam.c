@@ -248,6 +248,19 @@ _mesa_target_allows_setting_sampler_parameters(GLenum target)
    }
 }
 
+static bool
+is_valid_texture_tiling(struct gl_context *ctx, GLenum tiling)
+{
+   switch (tiling) {
+   case GL_OPTIMAL_TILING_EXT:
+   case GL_LINEAR_TILING_EXT:
+      return true;
+   case GL_CONST_BW_TILING_MESA:
+      return _mesa_has_MESA_texture_const_bandwidth(ctx);
+   default:
+      return false;
+   }
+}
 
 /**
  * Set an integer-valued texture parameter
@@ -655,13 +668,25 @@ set_tex_parameteri(struct gl_context *ctx,
       goto invalid_pname;
 
    case GL_TEXTURE_TILING_EXT:
-      if (ctx->Extensions.EXT_memory_object && !texObj->Immutable) {
-            texObj->TextureTiling = params[0];
+      if (_mesa_has_EXT_memory_object(ctx) && !texObj->Immutable) {
+         if (!is_valid_texture_tiling(ctx, params[0]))
+            goto invalid_param;
 
+         texObj->TextureTiling = params[0];
          return GL_TRUE;
       }
       goto invalid_pname;
-
+   case GL_TEXTURE_PROTECTED_EXT:
+      if (_mesa_has_EXT_protected_textures(ctx)) {
+         if (params[0] != GL_TRUE && params[0] != GL_FALSE) {
+            _mesa_error(ctx, GL_INVALID_VALUE, "glTex%sParameter(param)",
+                        suffix);
+            return GL_FALSE;
+         }
+         texObj->IsProtected = params[0];
+         return GL_TRUE;
+      }
+      goto invalid_pname;
    case GL_TEXTURE_SPARSE_ARB:
    case GL_VIRTUAL_PAGE_SIZE_INDEX_ARB:
       if (!_mesa_has_ARB_sparse_texture(ctx))
@@ -700,6 +725,19 @@ set_tex_parameteri(struct gl_context *ctx,
       } else
          texObj->VirtualPageSizeIndex = params[0];
 
+      return GL_TRUE;
+
+   case GL_TEXTURE_ASTC_DECODE_PRECISION_EXT:
+      if (!_mesa_has_EXT_texture_compression_astc_decode_mode(ctx))
+         goto invalid_pname;
+
+      if (texObj->AstcDecodePrecision == params[0])
+         return GL_FALSE;
+
+      if (params[0] != GL_RGBA16F && params[0] != GL_RGBA8)
+         goto invalid_param;
+
+      texObj->AstcDecodePrecision = params[0];
       return GL_TRUE;
 
    default:
@@ -862,12 +900,28 @@ set_tex_parameterf(struct gl_context *ctx,
       return GL_TRUE;
 
    case GL_TEXTURE_TILING_EXT:
-      if (ctx->Extensions.EXT_memory_object) {
+      if (_mesa_has_EXT_memory_object(ctx)) {
+         if (!is_valid_texture_tiling(ctx, (GLenum)params[0])) {
+            _mesa_error(ctx, GL_INVALID_VALUE, "glTex%sParameter(param)",
+                        suffix);
+            return GL_FALSE;
+         }
+
          texObj->TextureTiling = params[0];
          return GL_TRUE;
       }
       goto invalid_pname;
-
+   case GL_TEXTURE_PROTECTED_EXT:
+      if (_mesa_has_EXT_protected_textures(ctx)) {
+         if (params[0] != GL_TRUE && params[0] != GL_FALSE) {
+            _mesa_error(ctx, GL_INVALID_VALUE, "glTex%sParameter(param)",
+                        suffix);
+            return GL_FALSE;
+         }
+         texObj->IsProtected = params[0];
+         return GL_TRUE;
+      }
+      goto invalid_pname;
    default:
       goto invalid_pname;
    }
@@ -911,6 +965,7 @@ texparam_invalidates_sampler_views(GLenum pname)
    case GL_TEXTURE_SWIZZLE_RGBA:
    case GL_TEXTURE_BUFFER_SIZE:
    case GL_TEXTURE_BUFFER_OFFSET:
+   case GL_TEXTURE_ASTC_DECODE_PRECISION_EXT:
       return true;
    default:
       return false;
@@ -2489,7 +2544,7 @@ get_tex_parameterfv(struct gl_context *ctx,
          break;
 
       case GL_TEXTURE_TILING_EXT:
-         if (!ctx->Extensions.EXT_memory_object)
+         if (!_mesa_has_EXT_memory_object(ctx))
             goto invalid_pname;
          *params = ENUM_TO_FLOAT(obj->TextureTiling);
          break;
@@ -2510,6 +2565,12 @@ get_tex_parameterfv(struct gl_context *ctx,
          if (!_mesa_has_ARB_sparse_texture(ctx))
             goto invalid_pname;
          *params = (GLfloat) obj->NumSparseLevels;
+         break;
+
+      case GL_TEXTURE_PROTECTED_EXT:
+         if (!_mesa_has_EXT_protected_textures(ctx))
+            goto invalid_pname;
+         *params = (GLfloat) obj->IsProtected;
          break;
 
       default:
@@ -2774,7 +2835,7 @@ get_tex_parameteriv(struct gl_context *ctx,
          break;
 
       case GL_TEXTURE_TILING_EXT:
-         if (!ctx->Extensions.EXT_memory_object)
+         if (!_mesa_has_EXT_memory_object(ctx))
             goto invalid_pname;
          *params = (GLint) obj->TextureTiling;
          break;
@@ -2801,6 +2862,18 @@ get_tex_parameteriv(struct gl_context *ctx,
          if (!_mesa_has_EXT_texture_storage_compression(ctx))
             goto invalid_pname;
          *params = obj->CompressionRate;
+         break;
+
+      case GL_TEXTURE_ASTC_DECODE_PRECISION_EXT:
+         if (!_mesa_has_EXT_texture_compression_astc_decode_mode(ctx))
+            goto invalid_pname;
+         *params = obj->AstcDecodePrecision;
+         break;
+      
+      case GL_TEXTURE_PROTECTED_EXT:
+         if (!_mesa_has_EXT_protected_textures(ctx))
+            goto invalid_pname;
+         *params = obj->IsProtected;
          break;
 
       default:

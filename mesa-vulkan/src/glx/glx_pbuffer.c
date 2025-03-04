@@ -164,10 +164,10 @@ CreateDRIDrawable(Display *dpy, struct glx_config *config,
    }
 
    psc = priv->screens[config->screen];
-   if (psc->driScreen == NULL)
+   if (psc->driScreen.createDrawable == NULL)
       return GL_TRUE;
 
-   pdraw = psc->driScreen->createDrawable(psc, drawable, glxdrawable,
+   pdraw = psc->driScreen.createDrawable(psc, drawable, glxdrawable,
                                           type, config);
    if (pdraw == NULL) {
       fprintf(stderr, "failed to create drawable\n");
@@ -201,6 +201,14 @@ DestroyDRIDrawable(Display *dpy, GLXDrawable drawable)
    }
 #endif
 }
+
+/* TODO: delete these after more refactoring */
+#if defined(GLX_DIRECT_RENDERING) && !defined(GLX_USE_APPLEGL)
+int
+dri3_get_buffer_age(__GLXDRIdrawable *pdraw);
+int
+kopper_get_buffer_age(__GLXDRIdrawable *pdraw);
+#endif
 
 /**
  * Get a drawable's attribute.
@@ -278,22 +286,23 @@ __glXGetDrawableAttribute(Display * dpy, GLXDrawable drawable,
 
       psc = pdraw->psc;
 
-      if (psc->driScreen->getBufferAge != NULL)
-         *value = psc->driScreen->getBufferAge(pdraw);
+      if (psc->display->driver == GLX_DRIVER_DRI3)
+         *value = dri3_get_buffer_age(pdraw);
+      else if (psc->display->driver == GLX_DRIVER_ZINK_YES)
+         *value = kopper_get_buffer_age(pdraw);
 
       return 1;
    }
 
    if (pdraw) {
       if (attribute == GLX_SWAP_INTERVAL_EXT) {
-         *value = pdraw->psc->driScreen->getSwapInterval(pdraw);
+         *value = abs(pdraw->psc->driScreen.getSwapInterval(pdraw));
          return 1;
       } else if (attribute == GLX_MAX_SWAP_INTERVAL_EXT) {
-         *value = pdraw->psc->driScreen->maxSwapInterval;
+         *value = pdraw->psc->driScreen.maxSwapInterval;
          return 1;
       } else if (attribute == GLX_LATE_SWAPS_TEAR_EXT) {
-         *value = __glXExtensionBitIsEnabled(pdraw->psc,
-                                             EXT_swap_control_tear_bit);
+         *value = pdraw->psc->driScreen.getSwapInterval(pdraw) < 0;
          return 1;
       }
    }
@@ -993,7 +1002,7 @@ glXCreateGLXPixmap(Display * dpy, XVisualInfo * vis, Pixmap pixmap)
 
 #if defined(GLX_DIRECT_RENDERING) && !defined(GLX_USE_APPLEGL)
    do {
-      /* FIXME: Maybe delay __DRIdrawable creation until the drawable
+      /* FIXME: Maybe delay struct dri_drawable creation until the drawable
        * is actually bound to a context... */
 
       struct glx_screen *psc = GetGLXScreenConfigs(dpy, vis->screen);

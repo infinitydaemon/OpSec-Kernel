@@ -55,8 +55,13 @@ static const struct debug_control debug_control[] = {
    { "noshm",        WSI_DEBUG_NOSHM },
    { "linear",       WSI_DEBUG_LINEAR },
    { "dxgi",         WSI_DEBUG_DXGI },
+   { "nowlts",       WSI_DEBUG_NOWLTS },
    { NULL, },
 };
+
+static bool present_false(VkPhysicalDevice pdevice, int fd) {
+   return false;
+}
 
 VkResult
 wsi_device_init(struct wsi_device *wsi,
@@ -82,6 +87,7 @@ wsi_device_init(struct wsi_device *wsi,
    wsi->sw = device_options->sw_device || (WSI_DEBUG & WSI_DEBUG_SW);
    wsi->wants_linear = (WSI_DEBUG & WSI_DEBUG_LINEAR) != 0;
    wsi->x11.extra_xwayland_image = device_options->extra_xwayland_image;
+   wsi->wayland.disable_timestamps = (WSI_DEBUG & WSI_DEBUG_NOWLTS) != 0;
 #define WSI_GET_CB(func) \
    PFN_vk##func func = (PFN_vk##func)proc_addr(pdevice, "vk" #func)
    WSI_GET_CB(GetPhysicalDeviceExternalSemaphoreProperties);
@@ -206,7 +212,7 @@ wsi_device_init(struct wsi_device *wsi,
       WSI_GET_CB(WaitSemaphores);
 #undef WSI_GET_CB
 
-#ifdef VK_USE_PLATFORM_XCB_KHR
+#if defined(VK_USE_PLATFORM_XCB_KHR)
    result = wsi_x11_init_wsi(wsi, alloc, dri_options);
    if (result != VK_SUCCESS)
       goto fail;
@@ -226,6 +232,12 @@ wsi_device_init(struct wsi_device *wsi,
 
 #ifdef VK_USE_PLATFORM_DISPLAY_KHR
    result = wsi_display_init_wsi(wsi, alloc, display_fd);
+   if (result != VK_SUCCESS)
+      goto fail;
+#endif
+
+#ifdef VK_USE_PLATFORM_METAL_EXT
+   result = wsi_metal_init_wsi(wsi, alloc, pdevice);
    if (result != VK_SUCCESS)
       goto fail;
 #endif
@@ -270,6 +282,21 @@ wsi_device_init(struct wsi_device *wsi,
       }
    }
 
+   /* can_present_on_device is a function pointer used to determine if images
+    * can be presented directly on a given device file descriptor (fd).
+    * If HAVE_LIBDRM is defined, it will be initialized to a platform-specific
+    * function (wsi_device_matches_drm_fd). Otherwise, it is initialized to
+    * present_false to ensure that it always returns false, preventing potential
+    * segmentation faults from unchecked calls.
+    * Drivers for non-PCI based GPUs are expected to override this after calling
+    * wsi_device_init().
+    */
+#ifdef HAVE_LIBDRM
+   wsi->can_present_on_device = wsi_device_matches_drm_fd;
+#else
+   wsi->can_present_on_device = present_false;
+#endif
+
    return VK_SUCCESS;
 fail:
    wsi_device_finish(wsi, alloc);
@@ -292,8 +319,11 @@ wsi_device_finish(struct wsi_device *wsi,
 #ifdef VK_USE_PLATFORM_WIN32_KHR
    wsi_win32_finish_wsi(wsi, alloc);
 #endif
-#ifdef VK_USE_PLATFORM_XCB_KHR
+#if defined(VK_USE_PLATFORM_XCB_KHR)
    wsi_x11_finish_wsi(wsi, alloc);
+#endif
+#if defined(VK_USE_PLATFORM_METAL_EXT)
+   wsi_metal_finish_wsi(wsi, alloc);
 #endif
 }
 
@@ -412,6 +442,7 @@ wsi_swapchain_init(const struct wsi_device *wsi,
 
    vk_object_base_init(device, &chain->base, VK_OBJECT_TYPE_SWAPCHAIN_KHR);
 
+   chain->create_flags = pCreateInfo->flags;
    chain->wsi = wsi;
    chain->device = _device;
    chain->alloc = *pAllocator;
@@ -429,6 +460,9 @@ wsi_swapchain_init(const struct wsi_device *wsi,
    if (!chain->cmd_pools)
       return VK_ERROR_OUT_OF_HOST_MEMORY;
 
+   const VkCommandPoolCreateFlags cmd_pool_flags =
+      (pCreateInfo->flags & VK_SWAPCHAIN_CREATE_PROTECTED_BIT_KHR) ?
+      VK_COMMAND_POOL_CREATE_PROTECTED_BIT : 0;
    for (uint32_t i = 0; i < cmd_pools_count; i++) {
       int queue_family_index = i;
 
@@ -446,7 +480,7 @@ wsi_swapchain_init(const struct wsi_device *wsi,
       const VkCommandPoolCreateInfo cmd_pool_info = {
          .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
          .pNext = NULL,
-         .flags = 0,
+         .flags = cmd_pool_flags,
          .queueFamilyIndex = queue_family_index,
       };
       result = wsi->CreateCommandPool(_device, &cmd_pool_info, &chain->alloc,
@@ -504,7 +538,7 @@ fail:
       return supported;
 }
 
-enum VkPresentModeKHR
+VkPresentModeKHR
 wsi_swapchain_get_present_mode(struct wsi_device *wsi,
                                const VkSwapchainCreateInfoKHR *pCreateInfo)
 {
@@ -583,9 +617,13 @@ wsi_configure_image(const struct wsi_swapchain *chain,
       for (uint32_t i = 0; i < pCreateInfo->queueFamilyIndexCount; i++)
          queue_family_indices[i] = pCreateInfo->pQueueFamilyIndices[i];
 
+   const VkImageCreateFlags protected_flag =
+      (pCreateInfo->flags & VK_SWAPCHAIN_CREATE_PROTECTED_BIT_KHR) ?
+      VK_IMAGE_CREATE_PROTECTED_BIT : 0;
+
    info->create = (VkImageCreateInfo) {
       .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
-      .flags = VK_IMAGE_CREATE_ALIAS_BIT,
+      .flags = VK_IMAGE_CREATE_ALIAS_BIT | protected_flag,
       .imageType = VK_IMAGE_TYPE_2D,
       .format = pCreateInfo->imageFormat,
       .extent = {
@@ -1354,9 +1392,14 @@ wsi_common_queue_present(const struct wsi_device *wsi,
       uint32_t image_index = pPresentInfo->pImageIndices[i];
       VkResult result;
 
-      /* Update the present mode for this present and any subsequent present. */
-      if (present_mode_info && present_mode_info->pPresentModes && swapchain->set_present_mode)
+      /* Update the present mode for this present and any subsequent present.
+       * Only update the present mode when MESA_VK_WSI_PRESENT_MODE is not used.
+       * We should also turn any VkSwapchainPresentModesCreateInfoEXT into a nop,
+       * but none of the WSI backends use that currently. */
+      if (present_mode_info && present_mode_info->pPresentModes &&
+          swapchain->set_present_mode && wsi->override_present_mode == VK_PRESENT_MODE_MAX_ENUM_KHR) {
          swapchain->set_present_mode(swapchain, present_mode_info->pPresentModes[i]);
+      }
 
       if (swapchain->fences[image_index] == VK_NULL_HANDLE) {
          const VkFenceCreateInfo fence_info = {
@@ -1601,14 +1644,15 @@ wsi_GetDeviceGroupSurfacePresentModesKHR(VkDevice device,
 bool
 wsi_common_vk_instance_supports_present_wait(const struct vk_instance *instance)
 {
+#if DETECT_OS_ANDROID
+   /* Android's Vulkan loader does not provide KHR_present_wait or
+    * KHR_present_id for KHR_android_surface. */
+   return false;
+#else
    /* We can only expose KHR_present_wait and KHR_present_id
     * if we are guaranteed support on all potential VkSurfaceKHR objects. */
-   if (instance->enabled_extensions.KHR_win32_surface ||
-       instance->enabled_extensions.KHR_android_surface) {
-      return false;
-   }
-
-   return true;
+   return !instance->enabled_extensions.KHR_win32_surface;
+#endif
 }
 
 VkResult
@@ -1755,6 +1799,9 @@ wsi_create_buffer_blit_context(const struct wsi_swapchain *chain,
    const struct wsi_device *wsi = chain->wsi;
    VkResult result;
 
+   const VkBufferUsageFlags create_flags =
+      (chain->create_flags & VK_SWAPCHAIN_CREATE_PROTECTED_BIT_KHR) ?
+      VK_BUFFER_CREATE_PROTECTED_BIT : 0;
    const VkExternalMemoryBufferCreateInfo buffer_external_info = {
       .sType = VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_BUFFER_CREATE_INFO,
       .pNext = NULL,
@@ -1763,6 +1810,7 @@ wsi_create_buffer_blit_context(const struct wsi_swapchain *chain,
    const VkBufferCreateInfo buffer_info = {
       .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
       .pNext = &buffer_external_info,
+      .flags = create_flags,
       .size = info->linear_size,
       .usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT,
       .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
@@ -2217,4 +2265,16 @@ wsi_device_supports_explicit_sync(struct wsi_device *device)
    return !device->sw && device->has_timeline_semaphore &&
       (device->timeline_semaphore_export_handle_types &
        VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_FD_BIT);
+}
+
+VKAPI_ATTR void VKAPI_CALL
+wsi_SetHdrMetadataEXT(VkDevice device, uint32_t swapchainCount,
+                      const VkSwapchainKHR* pSwapchains,
+                      const VkHdrMetadataEXT* pMetadata)
+{
+   for (uint32_t i = 0; i < swapchainCount; i++) {
+      VK_FROM_HANDLE(wsi_swapchain, swapchain, pSwapchains[i]);
+      if (swapchain->set_hdr_metadata)
+         swapchain->set_hdr_metadata(swapchain, pMetadata);
+   }
 }

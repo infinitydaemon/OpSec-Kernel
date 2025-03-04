@@ -1,24 +1,6 @@
 /*
- * Copyright (C) 2014 Rob Clark <robclark@freedesktop.org>
- *
- * Permission is hereby granted, free of charge, to any person obtaining a
- * copy of this software and associated documentation files (the "Software"),
- * to deal in the Software without restriction, including without limitation
- * the rights to use, copy, modify, merge, publish, distribute, sublicense,
- * and/or sell copies of the Software, and to permit persons to whom the
- * Software is furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice (including the next
- * paragraph) shall be included in all copies or substantial portions of the
- * Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
- * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
- * SOFTWARE.
+ * Copyright © 2014 Rob Clark <robclark@freedesktop.org>
+ * SPDX-License-Identifier: MIT
  *
  * Authors:
  *    Rob Clark <robclark@freedesktop.org>
@@ -65,9 +47,13 @@ struct ir3_legalize_state {
    regmask_t needs_ss_scalar_full; /* half scalar ALU producer -> full scalar ALU consumer */
    regmask_t needs_ss_scalar_half; /* full scalar ALU producer -> half scalar ALU consumer */
    regmask_t needs_ss_war; /* write after read */
+   regmask_t needs_sy_war; /* WAR that can only be resolved using (sy) */
+   regmask_t needs_ss_or_sy_war;  /* WAR for sy-producer sources */
    regmask_t needs_ss_scalar_war; /* scalar ALU write -> ALU write */
+   regmask_t needs_ss_or_sy_scalar_war;
    regmask_t needs_sy;
    bool needs_ss_for_const;
+   bool needs_sy_for_const;
 
    /* Each of these arrays contains the cycle when the corresponding register
     * becomes "ready" i.e. does not require any more nops. There is a special
@@ -97,6 +83,31 @@ struct ir3_legalize_block_data {
    struct ir3_legalize_state state;
 };
 
+static inline bool
+needs_ss_war(struct ir3_legalize_state *state, struct ir3_register *dst,
+             bool is_scalar_alu)
+{
+   if (regmask_get(&state->needs_ss_war, dst))
+      return true;
+   if (regmask_get(&state->needs_ss_or_sy_war, dst))
+      return true;
+
+   if (!is_scalar_alu) {
+      if (regmask_get(&state->needs_ss_scalar_war, dst))
+         return true;
+      if (regmask_get(&state->needs_ss_or_sy_scalar_war, dst))
+         return true;
+   }
+
+   return false;
+}
+
+static inline bool
+needs_sy_war(struct ir3_legalize_state *state, struct ir3_register *dst)
+{
+   return regmask_get(&state->needs_sy_war, dst);
+}
+
 static inline void
 apply_ss(struct ir3_instruction *instr,
          struct ir3_legalize_state *state,
@@ -104,8 +115,10 @@ apply_ss(struct ir3_instruction *instr,
 {
    instr->flags |= IR3_INSTR_SS;
    regmask_init(&state->needs_ss_war, mergedregs);
+   regmask_init(&state->needs_ss_or_sy_war, mergedregs);
    regmask_init(&state->needs_ss, mergedregs);
    regmask_init(&state->needs_ss_scalar_war, mergedregs);
+   regmask_init(&state->needs_ss_or_sy_scalar_war, mergedregs);
    regmask_init(&state->needs_ss_scalar_full, mergedregs);
    regmask_init(&state->needs_ss_scalar_half, mergedregs);
    state->needs_ss_for_const = false;
@@ -118,6 +131,10 @@ apply_sy(struct ir3_instruction *instr,
 {
    instr->flags |= IR3_INSTR_SY;
    regmask_init(&state->needs_sy, mergedregs);
+   regmask_init(&state->needs_sy_war, mergedregs);
+   regmask_init(&state->needs_ss_or_sy_war, mergedregs);
+   regmask_init(&state->needs_ss_or_sy_scalar_war, mergedregs);
+   state->needs_sy_for_const = false;
 }
 
 static bool
@@ -169,7 +186,8 @@ get_ready_slot(struct ir3_legalize_state *state,
 }
 
 static unsigned
-delay_calc(struct ir3_legalize_state *state,
+delay_calc(struct ir3_legalize_ctx *ctx,
+           struct ir3_legalize_state *state,
            struct ir3_instruction *instr,
            unsigned cycle)
 {
@@ -184,19 +202,7 @@ delay_calc(struct ir3_legalize_state *state,
 
       unsigned elems = post_ra_reg_elems(src);
       unsigned num = post_ra_reg_num(src);
-      unsigned src_cycle = cycle;
-
-      /* gat and swz have scalar sources and each source is read in a
-       * subsequent cycle.
-       */
-      if (instr->opc == OPC_GAT || instr->opc == OPC_SWZ)
-         src_cycle += n;
-
-      /* cat3 instructions consume their last source two cycles later, so they
-       * only need a delay of 1.
-       */
-      if ((is_mad(instr->opc) || is_madsh(instr->opc)) && n == 2)
-         src_cycle += 2;
+      unsigned src_cycle = cycle + ir3_src_read_delay(ctx->compiler, instr, n);
 
       for (unsigned elem = 0; elem < elems; elem++, num++) {
          unsigned ready_cycle =
@@ -215,7 +221,8 @@ delay_calc(struct ir3_legalize_state *state,
 }
 
 static void
-delay_update(struct ir3_legalize_state *state,
+delay_update(struct ir3_legalize_ctx *ctx,
+             struct ir3_legalize_state *state,
              struct ir3_instruction *instr,
              unsigned cycle,
              bool mergedregs)
@@ -224,6 +231,9 @@ delay_update(struct ir3_legalize_state *state,
       return;
 
    foreach_dst_n (dst, n, instr) {
+      if (dst->flags & IR3_REG_RT)
+         continue;
+
       unsigned elems = post_ra_reg_elems(dst);
       unsigned num = post_ra_reg_num(dst);
       unsigned dst_cycle = cycle;
@@ -264,11 +274,13 @@ delay_update(struct ir3_legalize_state *state,
                   reset_ready_slot = true;
                } else if ((dst->flags & IR3_REG_PREDICATE) ||
                           reg_num(dst) == REG_A0) {
-                  delay = 6;
+                  delay = ctx->compiler->delay_slots.non_alu;
                   if (!matching_size)
                      continue;
                } else {
-                  delay = (consumer_alu && matching_size) ? 3 : 6;
+                  delay = (consumer_alu && matching_size)
+                             ? ctx->compiler->delay_slots.alu_to_alu
+                             : ctx->compiler->delay_slots.non_alu;
                }
 
                if (!matching_size) {
@@ -323,6 +335,7 @@ legalize_block(struct ir3_legalize_ctx *ctx, struct ir3_block *block)
    struct ir3_legalize_state *state = &bd->begin_state;
    bool last_input_needs_ss = false;
    bool mergedregs = ctx->so->mergedregs;
+   struct ir3_builder build = ir3_builder_at(ir3_after_block(block));
 
    /* Our input state is the OR of all predecessor blocks' state.
     *
@@ -344,8 +357,13 @@ legalize_block(struct ir3_legalize_ctx *ctx, struct ir3_block *block)
       regmask_or(&state->needs_ss, &state->needs_ss, &pstate->needs_ss);
       regmask_or(&state->needs_ss_war, &state->needs_ss_war,
                  &pstate->needs_ss_war);
+      regmask_or(&state->needs_sy_war, &state->needs_sy_war,
+                 &pstate->needs_sy_war);
+      regmask_or(&state->needs_ss_or_sy_war, &state->needs_ss_or_sy_war,
+                 &pstate->needs_ss_or_sy_war);
       regmask_or(&state->needs_sy, &state->needs_sy, &pstate->needs_sy);
       state->needs_ss_for_const |= pstate->needs_ss_for_const;
+      state->needs_sy_for_const |= pstate->needs_sy_for_const;
 
       /* Our nop state is the max of the predecessor blocks */
       for (unsigned i = 0; i < ARRAY_SIZE(state->pred_ready); i++)
@@ -380,6 +398,9 @@ legalize_block(struct ir3_legalize_ctx *ctx, struct ir3_block *block)
                         &pstate->needs_ss_scalar_half);
       regmask_or_shared(&state->needs_ss_scalar_war, &state->needs_ss_scalar_war,
                         &pstate->needs_ss_scalar_war);
+      regmask_or_shared(&state->needs_ss_or_sy_scalar_war,
+                        &state->needs_ss_or_sy_scalar_war,
+                        &pstate->needs_ss_or_sy_scalar_war);
    }
 
    memcpy(&bd->state, state, sizeof(*state));
@@ -423,7 +444,10 @@ legalize_block(struct ir3_legalize_ctx *ctx, struct ir3_block *block)
       if (is_input(n)) {
          struct ir3_register *inloc = n->srcs[0];
          assert(inloc->flags & IR3_REG_IMMED);
-         ctx->max_bary = MAX2(ctx->max_bary, inloc->iim_val);
+
+         int last_inloc =
+            inloc->iim_val + ((inloc->flags & IR3_REG_R) ? n->repeat : 0);
+         ctx->max_bary = MAX2(ctx->max_bary, last_inloc);
       }
 
       if ((last_n && is_barrier(last_n)) || n->opc == OPC_SHPE) {
@@ -451,7 +475,7 @@ legalize_block(struct ir3_legalize_ctx *ctx, struct ir3_block *block)
          else
             reg = n->srcs[i - n->dsts_count];
 
-         if (reg_gpr(reg)) {
+         if (is_reg_gpr(reg)) {
 
             /* TODO: we probably only need (ss) for alu
              * instr consuming sfu result.. need to make
@@ -498,6 +522,9 @@ legalize_block(struct ir3_legalize_ctx *ctx, struct ir3_block *block)
                apply_ss(n, state, mergedregs);
                last_input_needs_ss = false;
             }
+            if (state->needs_sy_for_const) {
+               apply_sy(n, state, mergedregs);
+            }
          } else if (reg_is_addr1(reg) && block->in_early_preamble) {
             if (regmask_get(&state->needs_ss, reg)) {
                apply_ss(n, state, mergedregs);
@@ -507,9 +534,12 @@ legalize_block(struct ir3_legalize_ctx *ctx, struct ir3_block *block)
       }
 
       foreach_dst (reg, n) {
-         if (regmask_get(&state->needs_ss_war, reg) ||
-             (!n_is_scalar_alu &&
-              regmask_get(&state->needs_ss_scalar_war, reg))) {
+         if (reg->flags & IR3_REG_RT)
+            continue;
+         if (needs_sy_war(state, reg)) {
+            apply_sy(n, state, mergedregs);
+         }
+         if (needs_ss_war(state, reg, n_is_scalar_alu)) {
             apply_ss(n, state, mergedregs);
             last_input_needs_ss = false;
          }
@@ -526,16 +556,16 @@ legalize_block(struct ir3_legalize_ctx *ctx, struct ir3_block *block)
        * clever if we were aware of this during scheduling, but
        * this should be a pretty rare case:
        */
-      if ((n->flags & IR3_INSTR_SS) && (opc_cat(n->opc) >= 5)) {
+      if ((n->flags & IR3_INSTR_SS) && !supports_ss(n)) {
          struct ir3_instruction *nop;
-         nop = ir3_NOP(block);
+         nop = ir3_NOP(&build);
          nop->flags |= IR3_INSTR_SS;
          n->flags &= ~IR3_INSTR_SS;
          last_n = nop;
          cycle++;
       }
 
-      unsigned delay = delay_calc(state, n, cycle);
+      unsigned delay = delay_calc(ctx, state, n, cycle);
 
       /* NOTE: I think the nopN encoding works for a5xx and
        * probably a4xx, but not a3xx.  So far only tested on
@@ -563,7 +593,7 @@ legalize_block(struct ir3_legalize_ctx *ctx, struct ir3_block *block)
 
       if (delay > 0) {
          assert(delay <= 6);
-         ir3_NOP(block)->repeat = delay - 1;
+         ir3_NOP(&build)->repeat = delay - 1;
          cycle += delay;
       }
 
@@ -585,7 +615,7 @@ legalize_block(struct ir3_legalize_ctx *ctx, struct ir3_block *block)
          list_addtail(&n->node, &block->instr_list);
       }
 
-      if (is_sfu(n))
+      if (is_sfu(n) || n->opc == OPC_SHFL)
          regmask_set(&state->needs_ss, n->dsts[0]);
 
       foreach_dst (dst, n) {
@@ -609,7 +639,7 @@ legalize_block(struct ir3_legalize_ctx *ctx, struct ir3_block *block)
             ctx->has_tex_prefetch = true;
       } else if (n->opc == OPC_RESINFO && n->dsts_count > 0) {
          regmask_set(&state->needs_ss, n->dsts[0]);
-         ir3_NOP(block)->flags |= IR3_INSTR_SS;
+         ir3_NOP(&build)->flags |= IR3_INSTR_SS;
          last_input_needs_ss = false;
       } else if (is_load(n)) {
          if (is_local_mem_load(n))
@@ -625,8 +655,10 @@ legalize_block(struct ir3_legalize_ctx *ctx, struct ir3_block *block)
          } else {
             regmask_set(&state->needs_ss, n->dsts[0]);
          }
-      } else if (n->opc == OPC_PUSH_CONSTS_LOAD_MACRO) {
+      } else if (n->opc == OPC_PUSH_CONSTS_LOAD_MACRO || n->opc == OPC_STC) {
          state->needs_ss_for_const = true;
+      } else if (n->opc == OPC_LDC_K) {
+         state->needs_sy_for_const = true;
       }
 
       if (is_ssbo(n->opc) || is_global_a3xx_atomic(n->opc) ||
@@ -636,21 +668,49 @@ legalize_block(struct ir3_legalize_ctx *ctx, struct ir3_block *block)
       /* both tex/sfu appear to not always immediately consume
        * their src register(s):
        */
-      if (is_tex(n) || is_mem(n) || is_ss_producer(n)) {
+      if (is_war_hazard_producer(n)) {
+         /* These WAR hazards can always be resolved with (ss). However, when
+          * the reader is a sy-producer, they can also be resolved using (sy)
+          * because once we have synced the reader's results using (sy), its
+          * sources have definitely been consumed. We track the two cases
+          * separately so that we don't add an unnecessary (ss) if a (sy) sync
+          * already happened.
+          * For example, this prevents adding the unnecessary (ss) in the
+          * following sequence:
+          * sam rd, rs, ...
+          * (sy)... ; sam synced so consumed its sources
+          * (ss)write rs ; (ss) unnecessary since rs has been consumed already
+          */
+         bool needs_ss = is_ss_producer(n) || is_store(n) || n->opc == OPC_STC;
+
+         /* It seems like ray_intersection WAR hazards cannot be resolved using
+          * (ss) and need a (sy) sync instead.
+          */
+         bool needs_sy = n->opc == OPC_RAY_INTERSECTION;
+
          if (n_is_scalar_alu) {
             /* Scalar ALU also does not immediately read its source because it
              * is not executed right away, but scalar ALU instructions are
              * executed in-order so subsequent scalar ALU instructions don't
              * need to wait for previous ones.
              */
+            regmask_t *mask = needs_ss ? &state->needs_ss_scalar_war
+                                       : &state->needs_ss_or_sy_scalar_war;
+
             foreach_src (reg, n) {
-               if (reg->flags & IR3_REG_SHARED) {
-                  regmask_set(&state->needs_ss_scalar_war, reg);
+               if ((reg->flags & IR3_REG_SHARED) || is_reg_a0(reg)) {
+                  regmask_set(mask, reg);
                }
             }
          } else {
+            regmask_t *mask = needs_sy   ? &state->needs_sy_war
+                              : needs_ss ? &state->needs_ss_war
+                                         : &state->needs_ss_or_sy_war;
+
             foreach_src (reg, n) {
-               regmask_set(&state->needs_ss_war, reg);
+               if (!(reg->flags & (IR3_REG_IMMED | IR3_REG_CONST))) {
+                  regmask_set(mask, reg);
+               }
             }
          }
       }
@@ -659,10 +719,10 @@ legalize_block(struct ir3_legalize_ctx *ctx, struct ir3_block *block)
       if (count)
          cycle += 1;
 
-      delay_update(state, n, cycle, mergedregs);
+      delay_update(ctx, state, n, cycle, mergedregs);
 
       if (count)
-         cycle += n->repeat;
+         cycle += n->repeat + n->nop;
 
       if (ctx->early_input_release && is_input(n)) {
          last_input_needs_ss |= (n->opc == OPC_LDLV);
@@ -682,7 +742,7 @@ legalize_block(struct ir3_legalize_ctx *ctx, struct ir3_block *block)
                struct ir3_instruction *baryf;
 
                /* (ss)bary.f (ei)r63.x, 0, r0.x */
-               baryf = ir3_instr_create(block, OPC_BARY_F, 1, 2);
+               baryf = ir3_build_instr(&build, OPC_BARY_F, 1, 2);
                ir3_dst_create(baryf, regid(63, 0), 0);
                ir3_src_create(baryf, 0, IR3_REG_IMMED)->iim_val = 0;
                ir3_src_create(baryf, regid(0, 0), 0);
@@ -711,7 +771,7 @@ legalize_block(struct ir3_legalize_ctx *ctx, struct ir3_block *block)
       struct ir3_instruction *baryf;
 
       /* (ss)bary.f (ei)r63.x, 0, r0.x */
-      baryf = ir3_instr_create(block, OPC_BARY_F, 1, 2);
+      baryf = ir3_build_instr(&build, OPC_BARY_F, 1, 2);
       ir3_dst_create(baryf, regid(63, 0), 0)->flags |= IR3_REG_EI;
       ir3_src_create(baryf, 0, IR3_REG_IMMED)->iim_val = 0;
       ir3_src_create(baryf, regid(0, 0), 0);
@@ -816,8 +876,8 @@ apply_push_consts_load_macro(struct ir3_legalize_ctx *ctx,
 {
    foreach_instr (n, &block->instr_list) {
       if (n->opc == OPC_PUSH_CONSTS_LOAD_MACRO) {
-         struct ir3_instruction *stsc = ir3_instr_create(block, OPC_STSC, 0, 2);
-         ir3_instr_move_after(stsc, n);
+         struct ir3_instruction *stsc =
+            ir3_instr_create_at(ir3_after_instr(n), OPC_STSC, 0, 2);
          ir3_src_create(stsc, 0, IR3_REG_IMMED)->iim_val =
             n->push_consts.dst_base;
          ir3_src_create(stsc, 0, IR3_REG_IMMED)->iim_val =
@@ -826,8 +886,8 @@ apply_push_consts_load_macro(struct ir3_legalize_ctx *ctx,
          stsc->cat6.type = TYPE_U32;
 
          if (ctx->compiler->stsc_duplication_quirk) {
-            struct ir3_instruction *nop = ir3_NOP(block);
-            ir3_instr_move_after(nop, stsc);
+            struct ir3_builder build = ir3_builder_at(ir3_after_instr(stsc));
+            struct ir3_instruction *nop = ir3_NOP(&build);
             nop->flags |= IR3_INSTR_SS;
             ir3_instr_move_after(ir3_instr_clone(stsc), nop);
          }
@@ -944,11 +1004,6 @@ retarget_jump(struct ir3_instruction *instr, struct ir3_block *new_target)
 
    /* and remove old_target's predecessor: */
    ir3_block_remove_predecessor(old_target, cur_block);
-
-   /* If we reconverged at the old target, we'll reconverge at the new target
-    * too:
-    */
-   new_target->reconvergence_point |= old_target->reconvergence_point;
 
    instr->cat0.target = new_target;
 
@@ -1141,7 +1196,8 @@ block_sched(struct ir3 *ir)
             br1 = terminator;
             br1->cat0.target = block->successors[1];
 
-            br2 = ir3_JUMP(block);
+            struct ir3_builder build = ir3_builder_at(ir3_after_block(block));
+            br2 = ir3_JUMP(&build);
             br2->cat0.target = block->successors[0];
          } else if (opc == OPC_BR || opc == OPC_BRAA || opc == OPC_BRAO ||
                     opc == OPC_BALL || opc == OPC_BANY) {
@@ -1173,6 +1229,33 @@ block_sched(struct ir3 *ir)
                 terminator->opc == OPC_PREDF);
          terminator->cat0.target = block->successors[0];
       }
+   }
+}
+
+/* Some gens have a hardware issue that needs to be worked around by 1)
+ * inserting 4 nops after the second pred[tf] of a pred[tf]/pred[ft] pair and/or
+ * inserting 6 nops after prede.
+ *
+ * This function should be called with the second pred[tf] of such a pair and
+ * NULL if there is only one pred[tf].
+ */
+static void
+add_predication_workaround(struct ir3_compiler *compiler,
+                           struct ir3_instruction *predtf,
+                           struct ir3_instruction *prede)
+{
+   if (predtf && compiler->predtf_nop_quirk) {
+      struct ir3_builder build = ir3_builder_at(ir3_after_block(predtf->block));
+      struct ir3_instruction *nop = ir3_NOP(&build);
+      nop->repeat = 4;
+      ir3_instr_move_after(nop, predtf);
+   }
+
+   if (compiler->prede_nop_quirk) {
+      struct ir3_builder build = ir3_builder_at(ir3_after_block(prede->block));
+      struct ir3_instruction *nop = ir3_NOP(&build);
+      nop->repeat = 6;
+      ir3_instr_move_after(nop, prede);
    }
 }
 
@@ -1245,7 +1328,10 @@ prede_sched(struct ir3 *ir)
        *        |----------|
        */
       if (!list_is_empty(&succ1->instr_list)) {
-         ir3_PREDE(succ1);
+         struct ir3_builder build =
+            ir3_builder_at(ir3_before_terminator(succ1));
+         struct ir3_instruction *prede = ir3_PREDE(&build);
+         add_predication_workaround(ir->compiler, succ0_terminator, prede);
          continue;
       }
 
@@ -1265,7 +1351,9 @@ prede_sched(struct ir3 *ir)
        *        |----------|
        */
       list_delinit(&succ0_terminator->node);
-      ir3_PREDE(succ0);
+      struct ir3_builder build = ir3_builder_at(ir3_before_terminator(succ0));
+      struct ir3_instruction *prede = ir3_PREDE(&build);
+      add_predication_workaround(ir->compiler, NULL, prede);
       remove_unused_block(succ1);
       block->successors[1] = succ0->successors[0];
       ir3_block_add_predecessor(succ0->successors[0], block);
@@ -1315,14 +1403,12 @@ kill_sched(struct ir3 *ir, struct ir3_shader_variant *so)
          if (instr->opc != OPC_KILL)
             continue;
 
-         struct ir3_instruction *br = ir3_instr_create(block, OPC_BR, 0, 1);
+         struct ir3_instruction *br =
+            ir3_instr_create_at(ir3_after_instr(instr), OPC_BR, 0, 1);
          ir3_src_create(br, instr->srcs[0]->num, instr->srcs[0]->flags)->wrmask =
             1;
          br->cat0.target =
             list_last_entry(&ir->block_list, struct ir3_block, node);
-
-         list_del(&br->node);
-         list_add(&br->node, &instr->node);
 
          added = true;
       }
@@ -1347,11 +1433,10 @@ dbg_sync_sched(struct ir3 *ir, struct ir3_shader_variant *so)
 {
    foreach_block (block, &ir->block_list) {
       foreach_instr_safe (instr, &block->instr_list) {
-         if (opc_cat(instr->opc) == 4 || opc_cat(instr->opc) == 5 ||
-             opc_cat(instr->opc) == 6) {
-            struct ir3_instruction *nop = ir3_NOP(block);
+         if (is_ss_producer(instr) || is_sy_producer(instr)) {
+            struct ir3_builder build = ir3_builder_at(ir3_after_instr(instr));
+            struct ir3_instruction *nop = ir3_NOP(&build);
             nop->flags |= IR3_INSTR_SS | IR3_INSTR_SY;
-            ir3_instr_move_after(nop, instr);
          }
       }
    }
@@ -1362,9 +1447,46 @@ dbg_nop_sched(struct ir3 *ir, struct ir3_shader_variant *so)
 {
    foreach_block (block, &ir->block_list) {
       foreach_instr_safe (instr, &block->instr_list) {
-         struct ir3_instruction *nop = ir3_NOP(block);
+         struct ir3_builder build = ir3_builder_at(ir3_before_instr(instr));
+         struct ir3_instruction *nop = ir3_NOP(&build);
          nop->repeat = 5;
-         ir3_instr_move_before(nop, instr);
+      }
+   }
+}
+
+static void
+dbg_expand_rpt(struct ir3 *ir)
+{
+   foreach_block (block, &ir->block_list) {
+      foreach_instr_safe (instr, &block->instr_list) {
+         if (instr->repeat == 0 || instr->opc == OPC_NOP ||
+             instr->opc == OPC_SWZ || instr->opc == OPC_GAT ||
+             instr->opc == OPC_SCT) {
+            continue;
+         }
+
+         for (unsigned i = 0; i <= instr->repeat; ++i) {
+            struct ir3_instruction *rpt = ir3_instr_clone(instr);
+            ir3_instr_move_before(rpt, instr);
+            rpt->repeat = 0;
+
+            foreach_dst (dst, rpt) {
+               dst->num += i;
+               dst->wrmask = 1;
+            }
+
+            foreach_src (src, rpt) {
+               if (!(src->flags & IR3_REG_R))
+                  continue;
+
+               src->num += i;
+               src->uim_val += i;
+               src->wrmask = 1;
+               src->flags &= ~IR3_REG_R;
+            }
+         }
+
+         list_delinit(&instr->node);
       }
    }
 }
@@ -1446,8 +1568,8 @@ helper_sched(struct ir3_legalize_ctx *ctx, struct ir3 *ir,
          if (!bd->uses_helpers_beginning)
             continue;
 
-         for (unsigned i = 0; i < block->predecessors_count; i++) {
-            struct ir3_block *pred = block->predecessors[i];
+         for (unsigned i = 0; i < block->physical_predecessors_count; i++) {
+            struct ir3_block *pred = block->physical_predecessors[i];
             struct ir3_helper_block_data *pred_bd = pred->data;
             if (!pred_bd->uses_helpers_end) {
                pred_bd->uses_helpers_end = true;
@@ -1514,8 +1636,8 @@ helper_sched(struct ir3_legalize_ctx *ctx, struct ir3 *ir,
        * helper invocations.
        */
       bool pred_uses_helpers = bd->uses_helpers_beginning;
-      for (unsigned i = 0; i < block->predecessors_count; i++) {
-         struct ir3_block *pred = block->predecessors[i];
+      for (unsigned i = 0; i < block->physical_predecessors_count; i++) {
+         struct ir3_block *pred = block->physical_predecessors[i];
          struct ir3_helper_block_data *pred_bd = pred->data;
          if (pred_bd->uses_helpers_end) {
             pred_uses_helpers = true;
@@ -1576,10 +1698,11 @@ helper_sched(struct ir3_legalize_ctx *ctx, struct ir3 *ir,
        */
       if (!killed && (expensive_instruction_in_block ||
                       block->successors[0] != ir3_end_block(ir))) {
-         struct ir3_instruction *nop = ir3_NOP(block);
+         struct ir3_cursor cursor = first_instr ? ir3_before_instr(first_instr)
+                                                : ir3_before_terminator(block);
+         struct ir3_builder build = ir3_builder_at(cursor);
+         struct ir3_instruction *nop = ir3_NOP(&build);
          nop->flags |= IR3_INSTR_EQ;
-         if (first_instr)
-            ir3_instr_move_before(nop, first_instr);
       }
    }
 }
@@ -1602,13 +1725,19 @@ ir3_legalize(struct ir3 *ir, struct ir3_shader_variant *so, int *max_bary)
          rzalloc(ctx, struct ir3_legalize_block_data);
 
       regmask_init(&bd->state.needs_ss_war, mergedregs);
+      regmask_init(&bd->state.needs_sy_war, mergedregs);
+      regmask_init(&bd->state.needs_ss_or_sy_war, mergedregs);
       regmask_init(&bd->state.needs_ss_scalar_war, mergedregs);
+      regmask_init(&bd->state.needs_ss_or_sy_scalar_war, mergedregs);
       regmask_init(&bd->state.needs_ss_scalar_full, mergedregs);
       regmask_init(&bd->state.needs_ss_scalar_half, mergedregs);
       regmask_init(&bd->state.needs_ss, mergedregs);
       regmask_init(&bd->state.needs_sy, mergedregs);
       regmask_init(&bd->begin_state.needs_ss_war, mergedregs);
+      regmask_init(&bd->begin_state.needs_sy_war, mergedregs);
+      regmask_init(&bd->begin_state.needs_ss_or_sy_war, mergedregs);
       regmask_init(&bd->begin_state.needs_ss_scalar_war, mergedregs);
+      regmask_init(&bd->begin_state.needs_ss_or_sy_scalar_war, mergedregs);
       regmask_init(&bd->begin_state.needs_ss_scalar_full, mergedregs);
       regmask_init(&bd->begin_state.needs_ss_scalar_half, mergedregs);
       regmask_init(&bd->begin_state.needs_ss, mergedregs);
@@ -1651,8 +1780,7 @@ ir3_legalize(struct ir3 *ir, struct ir3_shader_variant *so, int *max_bary)
 
          foreach_src (reg, instr) {
             if (in_preamble) {
-               if (!(reg->flags & (IR3_REG_IMMED | IR3_REG_CONST | IR3_REG_SHARED)) &&
-                   is_reg_gpr(reg))
+               if (!(reg->flags & IR3_REG_SHARED) && is_reg_gpr(reg))
                   gpr_in_preamble = true;
                if (reg->flags & IR3_REG_RELATIV)
                   relative_in_preamble = true;
@@ -1695,6 +1823,10 @@ ir3_legalize(struct ir3 *ir, struct ir3_shader_variant *so, int *max_bary)
 
    assert(ctx->early_input_release || ctx->compiler->gen >= 5);
 
+   if (ir3_shader_debug & IR3_DBG_EXPANDRPT) {
+      dbg_expand_rpt(ir);
+   }
+
    /* process each block: */
    do {
       progress = false;
@@ -1714,8 +1846,6 @@ ir3_legalize(struct ir3 *ir, struct ir3_shader_variant *so, int *max_bary)
    }
 
    block_sched(ir);
-   if (so->type == MESA_SHADER_FRAGMENT)
-      kill_sched(ir, so);
 
    foreach_block (block, &ir->block_list) {
       progress |= apply_fine_deriv_macro(ctx, block);
@@ -1729,10 +1859,17 @@ ir3_legalize(struct ir3 *ir, struct ir3_shader_variant *so, int *max_bary)
       dbg_nop_sched(ir, so);
    }
 
+   bool cfg_changed = false;
    while (opt_jump(ir))
-      ;
+      cfg_changed = true;
 
    prede_sched(ir);
+
+   if (cfg_changed)
+      ir3_calc_reconvergence(so);
+
+   if (so->type == MESA_SHADER_FRAGMENT)
+      kill_sched(ir, so);
 
    /* TODO: does (eq) exist before a6xx? */
    if (so->type == MESA_SHADER_FRAGMENT && so->need_pixlod &&
@@ -1743,6 +1880,7 @@ ir3_legalize(struct ir3 *ir, struct ir3_shader_variant *so, int *max_bary)
       progress |= expand_dummy_dests(block);
    }
 
+   ir3_insert_alias_tex(ir);
    ir3_count_instructions(ir);
    resolve_jumps(ir);
 

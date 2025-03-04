@@ -13,6 +13,7 @@
 #include "radv_pipeline_compute.h"
 #include "radv_pipeline_graphics.h"
 #include "radv_shader_object.h"
+#include "util/blob.h"
 
 static void
 radv_shader_object_destroy_variant(struct radv_device *device, VkShaderCodeTypeEXT code_type,
@@ -110,6 +111,9 @@ radv_shader_stage_init(const VkShaderCreateInfoEXT *sinfo, struct radv_shader_st
       out_stage->key.subgroup_require_full = 1;
    }
 
+   if (sinfo->flags & VK_SHADER_CREATE_INDIRECT_BINDABLE_BIT_EXT)
+      out_stage->key.indirect_bindable = 1;
+
    if (out_stage->stage == MESA_SHADER_MESH) {
       out_stage->key.has_task_shader = !(sinfo->flags & VK_SHADER_CREATE_NO_TASK_SHADER_BIT_EXT);
    }
@@ -119,12 +123,11 @@ static VkResult
 radv_shader_object_init_graphics(struct radv_shader_object *shader_obj, struct radv_device *device,
                                  const VkShaderCreateInfoEXT *pCreateInfo)
 {
-   const struct radv_physical_device *pdev = radv_device_physical(device);
    gl_shader_stage stage = vk_to_mesa_shader_stage(pCreateInfo->stage);
    struct radv_shader_stage stages[MESA_VULKAN_SHADER_STAGES];
 
    for (unsigned i = 0; i < MESA_VULKAN_SHADER_STAGES; i++) {
-      stages[i].entrypoint = NULL;
+      stages[i].stage = MESA_SHADER_NONE;
       stages[i].nir = NULL;
       stages[i].spirv.size = 0;
       stages[i].next_stage = MESA_SHADER_NONE;
@@ -140,9 +143,7 @@ radv_shader_object_init_graphics(struct radv_shader_object *shader_obj, struct r
    gfx_state.unknown_rast_prim = true;
    gfx_state.dynamic_provoking_vtx_mode = true;
    gfx_state.dynamic_line_rast_mode = true;
-
-   if (pdev->info.gfx_level >= GFX11)
-      gfx_state.ps.exports_mrtz_via_epilog = true;
+   gfx_state.ps.exports_mrtz_via_epilog = true;
 
    for (uint32_t i = 0; i < MAX_RTS; i++)
       gfx_state.ps.epilog.color_map[i] = i;
@@ -150,40 +151,11 @@ radv_shader_object_init_graphics(struct radv_shader_object *shader_obj, struct r
    struct radv_shader *shader = NULL;
    struct radv_shader_binary *binary = NULL;
 
-   VkShaderStageFlags next_stages = pCreateInfo->nextStage;
-   if (!next_stages) {
-      /* When next stage is 0, gather all valid next stages. */
-      switch (pCreateInfo->stage) {
-      case VK_SHADER_STAGE_VERTEX_BIT:
-         next_stages |=
-            VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT | VK_SHADER_STAGE_GEOMETRY_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
-         break;
-      case VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT:
-         next_stages |= VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT;
-         break;
-      case VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT:
-         next_stages |= VK_SHADER_STAGE_GEOMETRY_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
-         break;
-      case VK_SHADER_STAGE_GEOMETRY_BIT:
-      case VK_SHADER_STAGE_MESH_BIT_EXT:
-         next_stages |= VK_SHADER_STAGE_FRAGMENT_BIT;
-         break;
-      case VK_SHADER_STAGE_TASK_BIT_EXT:
-         next_stages |= VK_SHADER_STAGE_MESH_BIT_EXT;
-         break;
-      case VK_SHADER_STAGE_FRAGMENT_BIT:
-      case VK_SHADER_STAGE_COMPUTE_BIT:
-         break;
-      default:
-         unreachable("Invalid shader stage");
-      }
-   }
-
-   if (!next_stages) {
+   if (!pCreateInfo->nextStage) {
       struct radv_shader *shaders[MESA_VULKAN_SHADER_STAGES] = {NULL};
       struct radv_shader_binary *binaries[MESA_VULKAN_SHADER_STAGES] = {NULL};
 
-      radv_graphics_shaders_compile(device, NULL, stages, &gfx_state, true, false, false, NULL, false, shaders,
+      radv_graphics_shaders_compile(device, NULL, stages, &gfx_state, false, false, false, true, NULL, false, shaders,
                                     binaries, &shader_obj->gs.copy_shader, &shader_obj->gs.copy_binary);
 
       shader = shaders[stage];
@@ -194,6 +166,15 @@ radv_shader_object_init_graphics(struct radv_shader_object *shader_obj, struct r
       shader_obj->shader = shader;
       shader_obj->binary = binary;
    } else {
+      VkShaderStageFlags next_stages = pCreateInfo->nextStage;
+
+      /* The last VGT stage can always be used with rasterization enabled and a null fragment shader
+       * (ie. depth-only rendering). Because we don't want to have two variants for NONE and
+       * FRAGMENT, let's compile only one variant that works for both.
+       */
+      if (stage == MESA_SHADER_VERTEX || stage == MESA_SHADER_TESS_EVAL || stage == MESA_SHADER_GEOMETRY)
+         next_stages |= VK_SHADER_STAGE_FRAGMENT_BIT;
+
       radv_foreach_stage(next_stage, next_stages)
       {
          struct radv_shader *shaders[MESA_VULKAN_SHADER_STAGES] = {NULL};
@@ -202,8 +183,8 @@ radv_shader_object_init_graphics(struct radv_shader_object *shader_obj, struct r
          radv_shader_stage_init(pCreateInfo, &stages[stage]);
          stages[stage].next_stage = next_stage;
 
-         radv_graphics_shaders_compile(device, NULL, stages, &gfx_state, true, false, false, NULL, false, shaders,
-                                       binaries, &shader_obj->gs.copy_shader, &shader_obj->gs.copy_binary);
+         radv_graphics_shaders_compile(device, NULL, stages, &gfx_state, false, false, false, true, NULL, false,
+                                       shaders, binaries, &shader_obj->gs.copy_shader, &shader_obj->gs.copy_binary);
 
          shader = shaders[stage];
          binary = binaries[stage];
@@ -248,7 +229,7 @@ radv_shader_object_init_compute(struct radv_shader_object *shader_obj, struct ra
 
    radv_shader_stage_init(pCreateInfo, &stage);
 
-   struct radv_shader *cs_shader = radv_compile_cs(device, NULL, &stage, true, false, false, &cs_binary);
+   struct radv_shader *cs_shader = radv_compile_cs(device, NULL, &stage, false, false, false, true, &cs_binary);
 
    ralloc_free(stage.nir);
 
@@ -430,11 +411,10 @@ radv_shader_object_create_linked(VkDevice _device, uint32_t createInfoCount, con
                                  const VkAllocationCallbacks *pAllocator, VkShaderEXT *pShaders)
 {
    VK_FROM_HANDLE(radv_device, device, _device);
-   const struct radv_physical_device *pdev = radv_device_physical(device);
    struct radv_shader_stage stages[MESA_VULKAN_SHADER_STAGES];
 
    for (unsigned i = 0; i < MESA_VULKAN_SHADER_STAGES; i++) {
-      stages[i].entrypoint = NULL;
+      stages[i].stage = MESA_SHADER_NONE;
       stages[i].nir = NULL;
       stages[i].spirv.size = 0;
       stages[i].next_stage = MESA_SHADER_NONE;
@@ -448,9 +428,7 @@ radv_shader_object_create_linked(VkDevice _device, uint32_t createInfoCount, con
    gfx_state.unknown_rast_prim = true;
    gfx_state.dynamic_provoking_vtx_mode = true;
    gfx_state.dynamic_line_rast_mode = true;
-
-   if (pdev->info.gfx_level >= GFX11)
-      gfx_state.ps.exports_mrtz_via_epilog = true;
+   gfx_state.ps.exports_mrtz_via_epilog = true;
 
    for (uint32_t i = 0; i < MAX_RTS; i++)
       gfx_state.ps.epilog.color_map[i] = i;
@@ -464,16 +442,16 @@ radv_shader_object_create_linked(VkDevice _device, uint32_t createInfoCount, con
 
    /* Determine next stage. */
    for (unsigned i = 0; i < MESA_VULKAN_SHADER_STAGES; i++) {
-      if (!stages[i].entrypoint)
+      if (stages[i].stage == MESA_SHADER_NONE)
          continue;
 
       switch (stages[i].stage) {
       case MESA_SHADER_VERTEX:
-         if (stages[MESA_SHADER_TESS_CTRL].entrypoint) {
+         if (stages[MESA_SHADER_TESS_CTRL].stage != MESA_SHADER_NONE) {
             stages[i].next_stage = MESA_SHADER_TESS_CTRL;
-         } else if (stages[MESA_SHADER_GEOMETRY].entrypoint) {
+         } else if (stages[MESA_SHADER_GEOMETRY].stage != MESA_SHADER_NONE) {
             stages[i].next_stage = MESA_SHADER_GEOMETRY;
-         } else if (stages[MESA_SHADER_FRAGMENT].entrypoint) {
+         } else if (stages[MESA_SHADER_FRAGMENT].stage != MESA_SHADER_NONE) {
             stages[i].next_stage = MESA_SHADER_FRAGMENT;
          }
          break;
@@ -481,15 +459,15 @@ radv_shader_object_create_linked(VkDevice _device, uint32_t createInfoCount, con
          stages[i].next_stage = MESA_SHADER_TESS_EVAL;
          break;
       case MESA_SHADER_TESS_EVAL:
-         if (stages[MESA_SHADER_GEOMETRY].entrypoint) {
+         if (stages[MESA_SHADER_GEOMETRY].stage != MESA_SHADER_NONE) {
             stages[i].next_stage = MESA_SHADER_GEOMETRY;
-         } else if (stages[MESA_SHADER_FRAGMENT].entrypoint) {
+         } else if (stages[MESA_SHADER_FRAGMENT].stage != MESA_SHADER_NONE) {
             stages[i].next_stage = MESA_SHADER_FRAGMENT;
          }
          break;
       case MESA_SHADER_GEOMETRY:
       case MESA_SHADER_MESH:
-         if (stages[MESA_SHADER_FRAGMENT].entrypoint) {
+         if (stages[MESA_SHADER_FRAGMENT].stage != MESA_SHADER_NONE) {
             stages[i].next_stage = MESA_SHADER_FRAGMENT;
          }
          break;
@@ -509,8 +487,8 @@ radv_shader_object_create_linked(VkDevice _device, uint32_t createInfoCount, con
    struct radv_shader *gs_copy_shader = NULL;
    struct radv_shader_binary *gs_copy_binary = NULL;
 
-   radv_graphics_shaders_compile(device, NULL, stages, &gfx_state, true, false, false, NULL, false, shaders, binaries,
-                                 &gs_copy_shader, &gs_copy_binary);
+   radv_graphics_shaders_compile(device, NULL, stages, &gfx_state, false, false, false, true, NULL, false, shaders,
+                                 binaries, &gs_copy_shader, &gs_copy_binary);
 
    for (unsigned i = 0; i < createInfoCount; i++) {
       const VkShaderCreateInfoEXT *pCreateInfo = &pCreateInfos[i];
@@ -565,6 +543,45 @@ radv_shader_object_create_linked(VkDevice _device, uint32_t createInfoCount, con
    return VK_SUCCESS;
 }
 
+static bool
+radv_shader_object_linking_enabled(uint32_t createInfoCount, const VkShaderCreateInfoEXT *pCreateInfos)
+{
+   const bool has_linked_spirv = createInfoCount > 1 &&
+                                 !!(pCreateInfos[0].flags & VK_SHADER_CREATE_LINK_STAGE_BIT_EXT) &&
+                                 pCreateInfos[0].codeType == VK_SHADER_CODE_TYPE_SPIRV_EXT;
+
+   if (!has_linked_spirv)
+      return false;
+
+   /* Gather the available shader stages. */
+   VkShaderStageFlagBits stages = 0;
+   for (unsigned i = 0; i < createInfoCount; i++) {
+      const VkShaderCreateInfoEXT *pCreateInfo = &pCreateInfos[i];
+      stages |= pCreateInfo->stage;
+   }
+
+   for (unsigned i = 0; i < createInfoCount; i++) {
+      const VkShaderCreateInfoEXT *pCreateInfo = &pCreateInfos[i];
+
+      /* Force disable shaders linking when the next stage of VS/TES isn't present because the
+       * driver would need to compile all shaders twice due to shader variants. This is probably
+       * less optimal than compiling unlinked shaders.
+       */
+      if ((pCreateInfo->stage & VK_SHADER_STAGE_VERTEX_BIT) &&
+          (pCreateInfo->nextStage & (VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT | VK_SHADER_STAGE_GEOMETRY_BIT)) &&
+          !(stages & (VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT | VK_SHADER_STAGE_GEOMETRY_BIT)))
+         return false;
+
+      if ((pCreateInfo->stage & VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT) &&
+          (pCreateInfo->nextStage & VK_SHADER_STAGE_GEOMETRY_BIT) && !(stages & VK_SHADER_STAGE_GEOMETRY_BIT))
+         return false;
+
+      assert(pCreateInfo->flags & VK_SHADER_CREATE_LINK_STAGE_BIT_EXT);
+   }
+
+   return true;
+}
+
 VKAPI_ATTR VkResult VKAPI_CALL
 radv_CreateShadersEXT(VkDevice _device, uint32_t createInfoCount, const VkShaderCreateInfoEXT *pCreateInfos,
                       const VkAllocationCallbacks *pAllocator, VkShaderEXT *pShaders)
@@ -572,14 +589,8 @@ radv_CreateShadersEXT(VkDevice _device, uint32_t createInfoCount, const VkShader
    VkResult result = VK_SUCCESS;
    unsigned i = 0;
 
-   if (createInfoCount > 1 && !!(pCreateInfos[0].flags & VK_SHADER_CREATE_LINK_STAGE_BIT_EXT) &&
-       pCreateInfos[0].codeType == VK_SHADER_CODE_TYPE_SPIRV_EXT) {
-      for (unsigned j = 0; j < createInfoCount; j++) {
-         assert(pCreateInfos[i].flags & VK_SHADER_CREATE_LINK_STAGE_BIT_EXT);
-      }
-
+   if (radv_shader_object_linking_enabled(createInfoCount, pCreateInfos))
       return radv_shader_object_create_linked(_device, createInfoCount, pCreateInfos, pAllocator, pShaders);
-   }
 
    for (; i < createInfoCount; i++) {
       VkResult r;

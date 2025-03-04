@@ -226,20 +226,20 @@ static int si_init_surface(struct si_screen *sscreen, struct radeon_surf *surfac
             flags |= RADEON_SURF_NO_HTILE;
       }
 
-      /* TODO: Set these for scanout after display DCC is enabled. The reason these are not set is
-       * because they overlap DCC_OFFSET_256B and the kernel driver incorrectly reads DCC_OFFSET_256B
-       * on GFX12, which completely breaks the display code.
-       */
-      if (!is_imported && !(ptex->bind & PIPE_BIND_SCANOUT)) {
+      if (!is_imported && (!(ptex->bind & PIPE_BIND_SCANOUT) ||
+                           sscreen->info.gfx12_supports_display_dcc)) {
          enum pipe_format format = util_format_get_depth_only(ptex->format);
 
          /* These should be set for both color and Z/S. */
          surface->u.gfx9.color.dcc_number_type = ac_get_cb_number_type(format);
          surface->u.gfx9.color.dcc_data_format = ac_get_cb_format(sscreen->info.gfx_level, format);
+         surface->u.gfx9.color.dcc_write_compress_disable = false;
       }
 
-      if (surface->modifier == DRM_FORMAT_MOD_INVALID &&
+      if (modifier == DRM_FORMAT_MOD_INVALID &&
           (ptex->bind & PIPE_BIND_CONST_BW ||
+           ptex->bind & PIPE_BIND_PROTECTED ||
+           ptex->bind & PIPE_BIND_USE_FRONT_RENDERING ||
            sscreen->debug_flags & DBG(NO_DCC) ||
            (ptex->bind & PIPE_BIND_SCANOUT && sscreen->debug_flags & DBG(NO_DISPLAY_DCC))))
          flags |= RADEON_SURF_DISABLE_DCC;
@@ -287,6 +287,9 @@ static int si_init_surface(struct si_screen *sscreen, struct radeon_surf *surfac
 
          /* If constant (non-data-dependent) format is requested, disable DCC: */
          if (ptex->bind & PIPE_BIND_CONST_BW)
+            flags |= RADEON_SURF_DISABLE_DCC;
+
+         if (ptex->bind & PIPE_BIND_USE_FRONT_RENDERING)
             flags |= RADEON_SURF_DISABLE_DCC;
 
          switch (sscreen->info.gfx_level) {
@@ -380,6 +383,9 @@ static int si_init_surface(struct si_screen *sscreen, struct radeon_surf *surfac
 
    if (ptex->flags & PIPE_RESOURCE_FLAG_SPARSE)
       flags |= RADEON_SURF_PRT;
+
+   if (ptex->bind & (PIPE_BIND_VIDEO_DECODE_DPB | PIPE_BIND_VIDEO_ENCODE_DPB))
+      flags |= RADEON_SURF_VIDEO_REFERENCE;
 
    surface->modifier = modifier;
 
@@ -617,10 +623,10 @@ static void si_set_tex_bo_metadata(struct si_screen *sscreen, struct si_texture 
    bool is_array = util_texture_is_array(res->target);
    uint32_t desc[8];
 
-   sscreen->make_texture_descriptor(sscreen, tex, true, res->target,
-                                    tex->is_depth ? tex->db_render_format : res->format, swizzle, 0,
-                                    res->last_level, 0, is_array ? res->array_size - 1 : 0,
-                                    res->width0, res->height0, res->depth0, true, desc, NULL);
+   si_make_texture_descriptor(sscreen, tex, true, res->target,
+                              tex->is_depth ? tex->db_render_format : res->format, swizzle, 0,
+                              res->last_level, 0, is_array ? res->array_size - 1 : 0, res->width0,
+                              res->height0, res->depth0, true, desc, NULL);
    si_set_mutable_tex_desc_fields(sscreen, tex, &tex->surface.u.legacy.level[0], 0, 0,
                                   tex->surface.blk_w, false, 0, desc);
 
@@ -797,16 +803,33 @@ static bool si_texture_get_handle(struct pipe_screen *screen, struct pipe_contex
          assert(tex->surface.tile_swizzle == 0);
       }
 
-      /* Since shader image stores don't support DCC on GFX8,
-       * disable it for external clients that want write
-       * access.
+      const bool debug_disable_dcc = sscreen->debug_flags & DBG(NO_EXPORTED_DCC);
+      /* Disable DCC for external clients that might use shader image stores.
+       * They don't support DCC on GFX9 and older. GFX10/10.3 is also problematic
+       * if the view formats between clients are incompatible or if DCC clear is
+       * used.
        */
-      if (sscreen->debug_flags & DBG(NO_EXPORTED_DCC) ||
-          (usage & PIPE_HANDLE_USAGE_SHADER_WRITE && !tex->is_depth && tex->surface.meta_offset) ||
-          /* Displayable DCC requires an explicit flush. */
-          (!(usage & PIPE_HANDLE_USAGE_EXPLICIT_FLUSH) &&
-           si_displayable_dcc_needs_explicit_flush(tex))) {
-         if (si_texture_disable_dcc(sctx, tex)) {
+      const bool shader_write = sscreen->info.gfx_level < GFX11 &&
+                                usage & PIPE_HANDLE_USAGE_SHADER_WRITE &&
+                                !tex->is_depth &&
+                                tex->surface.meta_offset;
+       /* Another reason to disable display dcc is front buffer rendering.
+        * This can happens with Xorg. If the ddx driver uses GBM_BO_USE_FRONT_RENDERING,
+        * there's nothing to do because the texture is not using DCC.
+        * If the flag isn't set, we have to infer it to get correct rendering.
+        */
+      const bool front_buffer_rendering = !(usage & PIPE_HANDLE_USAGE_EXPLICIT_FLUSH) &&
+                                           tex->buffer.b.b.bind & PIPE_BIND_SCANOUT;
+
+      /* If display dcc requires a retiling step, drop dcc. */
+      const bool explicit_flush = !(usage & PIPE_HANDLE_USAGE_EXPLICIT_FLUSH) &&
+                                  si_displayable_dcc_needs_explicit_flush(tex);
+
+      if (debug_disable_dcc || shader_write || front_buffer_rendering || explicit_flush) {
+         if (sscreen->info.gfx_level >= GFX12) {
+            si_reallocate_texture_inplace(sctx, tex, PIPE_BIND_CONST_BW, false);
+            update_metadata = true;
+         } else if (si_texture_disable_dcc(sctx, tex)) {
             update_metadata = true;
             /* si_texture_disable_dcc flushes the context */
             flush = false;
@@ -1124,18 +1147,20 @@ static struct si_texture *si_texture_create_object(struct pipe_screen *screen,
    for (unsigned i = 0; i < ARRAY_SIZE(tex->depth_clear_value); i++)
       tex->depth_clear_value[i] = 1.0;
 
-   /* On GFX8, HTILE uses different tiling depending on the TC_COMPATIBLE_HTILE
-    * setting, so we have to enable it if we enabled it at allocation.
-    *
-    * GFX9 and later use the same tiling for both, so TC-compatible HTILE can be
-    * enabled on demand.
-    */
-   tex->tc_compatible_htile = (sscreen->info.gfx_level == GFX8 &&
-                               tex->surface.flags & RADEON_SURF_TC_COMPATIBLE_HTILE) ||
-                              /* Mipmapping always starts TC-compatible. */
-                              (sscreen->info.gfx_level >= GFX8 &&
-                               tex->surface.flags & RADEON_SURF_TC_COMPATIBLE_HTILE &&
-                               tex->buffer.b.b.last_level > 0);
+   if (tex->surface.flags & RADEON_SURF_TC_COMPATIBLE_HTILE) {
+      assert(sscreen->info.gfx_level < GFX12);
+
+      /* On GFX8, HTILE uses different tiling depending on the TC_COMPATIBLE_HTILE
+       * setting, so we have to enable it if we enabled it at allocation.
+       *
+       * GFX9+ and later use the same tiling for both, so TC-compatible HTILE can be
+       * enabled on demand.
+       */
+      tex->tc_compatible_htile = sscreen->info.gfx_level == GFX8 ||
+                                 /* Mipmapping always starts TC-compatible. */
+                                 (sscreen->info.gfx_level >= GFX9 &&
+                                  tex->buffer.b.b.last_level > 0);
+   }
 
    print_debug_tex(sscreen, tex);
 
@@ -1279,9 +1304,12 @@ static struct si_texture *si_texture_create_object(struct pipe_screen *screen,
 
    /* Execute the clears. */
    if (num_clears) {
-      si_execute_clears(si_get_aux_context(&sscreen->aux_context.general), clears, num_clears, 0,
-                        false);
-      si_put_aux_context_flush(&sscreen->aux_context.general);
+      struct si_aux_context *auxctx = tex->buffer.flags & RADEON_FLAG_ENCRYPTED ?
+         &sscreen->aux_context.general : &sscreen->aux_context.compute_resource_init;
+      struct si_context *sctx = si_get_aux_context(auxctx);
+
+      si_execute_clears(sctx, clears, num_clears, false);
+      si_put_aux_context_flush(auxctx);
    }
 
    /* Initialize the CMASK base register value. */
@@ -1380,17 +1408,10 @@ si_texture_create_with_modifier(struct pipe_screen *screen,
 
    bool is_flushed_depth = templ->flags & SI_RESOURCE_FLAG_FLUSHED_DEPTH ||
                            templ->flags & SI_RESOURCE_FLAG_FORCE_LINEAR;
-   bool tc_compatible_htile =
-      sscreen->info.has_tc_compatible_htile &&
-      /* There are issues with TC-compatible HTILE on Tonga (and
-       * Iceland is the same design), and documented bug workarounds
-       * don't help. For example, this fails:
-       *   piglit/bin/tex-miplevel-selection 'texture()' 2DShadow -auto
-       */
-      sscreen->info.family != CHIP_TONGA && sscreen->info.family != CHIP_ICELAND &&
-      (templ->flags & PIPE_RESOURCE_FLAG_TEXTURING_MORE_LIKELY) &&
-      !(sscreen->debug_flags & DBG(NO_HYPERZ)) && !is_flushed_depth &&
-      is_zs;
+   bool tc_compatible_htile = is_zs && !is_flushed_depth &&
+                              !(sscreen->debug_flags & DBG(NO_HYPERZ)) &&
+                              sscreen->info.has_tc_compatible_htile;
+
    enum radeon_surf_mode tile_mode = si_choose_tiling(sscreen, templ, tc_compatible_htile);
 
    /* This allocates textures with multiple planes like NV12 in 1 buffer. */
@@ -1614,6 +1635,16 @@ si_modifier_supports_resource(struct pipe_screen *screen,
        modifier != DRM_FORMAT_MOD_LINEAR)
       return false;
 
+   if ((templ->bind & PIPE_BIND_USE_FRONT_RENDERING) && ac_modifier_has_dcc(modifier))
+      return false;
+
+   /* Protected content doesn't support DCC on GFX12. */
+   if (sscreen->info.gfx_level >= GFX12 && templ->bind & PIPE_BIND_PROTECTED &&
+       IS_AMD_FMT_MOD(modifier) &&
+       AMD_FMT_MOD_GET(TILE_VERSION, modifier) >= AMD_FMT_MOD_TILE_VER_GFX12 &&
+       AMD_FMT_MOD_GET(DCC, modifier))
+      return false;
+
    ac_modifier_max_extent(&sscreen->info, modifier, &max_width, &max_height);
    return templ->width0 <= max_width && templ->height0 <= max_height;
 }
@@ -1677,6 +1708,7 @@ static struct pipe_resource *si_texture_from_winsys_buffer(struct si_screen *ssc
 {
    struct radeon_surf surface = {};
    struct radeon_bo_metadata metadata = {};
+   uint32_t md_version, md_flags;
    struct si_texture *tex;
    int r;
 
@@ -1686,6 +1718,21 @@ static struct pipe_resource *si_texture_from_winsys_buffer(struct si_screen *ssc
 
    if (dedicated) {
       sscreen->ws->buffer_get_metadata(sscreen->ws, buf, &metadata, &surface);
+
+      /* Refuse to import texture allocated with a overriden gfx family since
+       * the data will be garbage.
+       */
+      md_version = metadata.metadata[0] & 0xffff;
+      md_flags = metadata.metadata[0] >> 16;
+
+      if (metadata.mode != RADEON_SURF_MODE_LINEAR_ALIGNED &&
+          modifier == DRM_FORMAT_MOD_INVALID &&
+          md_version >= 3 &&
+          md_flags & (1u << AC_SURF_METADATA_FLAG_FAMILY_OVERRIDEN_BIT)) {
+         fprintf(stderr, "si_texture_from_winsys_buffer: fail texture import due to "
+                         "AC_SURF_METADATA_FLAG_FAMILY_OVERRIDEN_BIT being set.\n");
+         return NULL;
+      }
    } else {
       /**
        * The bo metadata is unset for un-dedicated images. So we fall
@@ -2019,7 +2066,8 @@ static void *si_texture_transfer_map(struct pipe_context *ctx, struct pipe_resou
             tex->buffer.domains & RADEON_DOMAIN_VRAM || tex->buffer.flags & RADEON_FLAG_GTT_WC;
       /* Write & linear only: */
       else if (si_cs_is_buffer_referenced(sctx, tex->buffer.buf, RADEON_USAGE_READWRITE) ||
-               !sctx->ws->buffer_wait(sctx->ws, tex->buffer.buf, 0, RADEON_USAGE_READWRITE)) {
+               !sctx->ws->buffer_wait(sctx->ws, tex->buffer.buf, 0,
+                                      RADEON_USAGE_READWRITE | RADEON_USAGE_DISALLOW_SLOW_REPLY)) {
          /* It's busy. */
          if (si_can_invalidate_texture(sctx->screen, tex, usage, box))
             si_texture_invalidate_storage(sctx, tex);
@@ -2208,7 +2256,7 @@ bool vi_dcc_formats_are_incompatible(struct pipe_resource *tex, unsigned level,
    struct si_texture *stex = (struct si_texture *)tex;
 
    return vi_dcc_enabled(stex, level) &&
-          !vi_dcc_formats_compatible((struct si_screen *)tex->screen, tex->format, view_format);
+          !vi_dcc_formats_compatible(si_screen(tex->screen), tex->format, view_format);
 }
 
 /* This can't be merged with the above function, because

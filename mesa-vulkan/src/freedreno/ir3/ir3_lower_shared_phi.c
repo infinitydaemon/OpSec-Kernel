@@ -1,24 +1,6 @@
 /*
- * Copyright (C) 2023 Valve Corporation.
- *
- * Permission is hereby granted, free of charge, to any person obtaining a
- * copy of this software and associated documentation files (the "Software"),
- * to deal in the Software without restriction, including without limitation
- * the rights to use, copy, modify, merge, publish, distribute, sublicense,
- * and/or sell copies of the Software, and to permit persons to whom the
- * Software is furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice (including the next
- * paragraph) shall be included in all copies or substantial portions of the
- * Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
- * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
- * SOFTWARE.
+ * Copyright © 2023 Valve Corporation.
+ * SPDX-License-Identifier: MIT
  */
 
 #include "ir3.h"
@@ -59,7 +41,8 @@ lower_phi(void *ctx, struct ir3_instruction *phi)
    for (unsigned i = 0; i < block->predecessors_count; i++) {
       struct ir3_block *pred = block->predecessors[i];
       if (phi->srcs[i]->def) {
-         struct ir3_instruction *pred_mov = ir3_instr_create(pred, OPC_MOV, 1, 1);
+         struct ir3_instruction *pred_mov =
+            ir3_instr_create_at(ir3_before_terminator(pred), OPC_MOV, 1, 1);
          pred_mov->uses = _mesa_pointer_set_create(ctx);
          __ssa_dst(pred_mov)->flags |= (phi->srcs[i]->flags & IR3_REG_HALF);
          unsigned src_flags = IR3_REG_SSA | IR3_REG_SHARED |
@@ -78,12 +61,11 @@ lower_phi(void *ctx, struct ir3_instruction *phi)
 
    phi->dsts[0]->flags &= ~IR3_REG_SHARED;
 
-   struct ir3_instruction *shared_mov =
-      ir3_MOV(block, phi,
-              (phi->dsts[0]->flags & IR3_REG_HALF) ? TYPE_U16 : TYPE_U32);
+   struct ir3_builder build = ir3_builder_at(ir3_after_phis(block));
+   struct ir3_instruction *shared_mov = ir3_MOV(
+      &build, phi, (phi->dsts[0]->flags & IR3_REG_HALF) ? TYPE_U16 : TYPE_U32);
    shared_mov->uses = _mesa_pointer_set_create(ctx);
    shared_mov->dsts[0]->flags |= IR3_REG_SHARED;
-   ir3_instr_move_after_phis(shared_mov, block);
 
    foreach_ssa_use (use, phi) {
       for (unsigned i = 0; i < use->srcs_count; i++) {

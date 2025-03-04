@@ -31,6 +31,7 @@
 #include "util/libdrm.h"
 
 #include "intel_device_info.h"
+#include "intel_hwconfig.h"
 #include "intel_wa.h"
 #include "i915/intel_device_info.h"
 #include "xe/intel_device_info.h"
@@ -76,6 +77,7 @@ static const struct {
    { "arl", 0x7d67 },
    { "lnl", 0x64a0 },
    { "bmg", 0xe202 },
+   { "ptl", 0xb080 },
 };
 
 /**
@@ -445,6 +447,14 @@ static const struct intel_device_info intel_device_info_hsw_gt3 = {
    .timestamp_frequency = 12500000,                 \
    .max_constant_urb_size_kb = 32
 
+#define GFX8_URB_MIN_ENTRIES                          \
+   .min_entries = {                                   \
+      [MESA_SHADER_VERTEX]    = 64,                   \
+      [MESA_SHADER_TESS_CTRL] = 1,                    \
+      [MESA_SHADER_TESS_EVAL] = 34,                   \
+      [MESA_SHADER_GEOMETRY]  = 2,                    \
+   }
+
 static const struct intel_device_info intel_device_info_bdw_gt1 = {
    GFX8_FEATURES, .gt = 1,
    .platform = INTEL_PLATFORM_BDW,
@@ -454,10 +464,7 @@ static const struct intel_device_info intel_device_info_bdw_gt1 = {
    .l3_banks = 2,
    .max_cs_threads = 42,
    .urb = {
-      .min_entries = {
-         [MESA_SHADER_VERTEX]    = 64,
-         [MESA_SHADER_TESS_EVAL] = 34,
-      },
+      GFX8_URB_MIN_ENTRIES,
       .max_entries = {
          [MESA_SHADER_VERTEX]    = 2560,
          [MESA_SHADER_TESS_CTRL] = 504,
@@ -478,10 +485,7 @@ static const struct intel_device_info intel_device_info_bdw_gt2 = {
    .l3_banks = 4,
    .max_cs_threads = 56,
    .urb = {
-      .min_entries = {
-         [MESA_SHADER_VERTEX]    = 64,
-         [MESA_SHADER_TESS_EVAL] = 34,
-      },
+      GFX8_URB_MIN_ENTRIES,
       .max_entries = {
          [MESA_SHADER_VERTEX]    = 2560,
          [MESA_SHADER_TESS_CTRL] = 504,
@@ -501,10 +505,7 @@ static const struct intel_device_info intel_device_info_bdw_gt3 = {
    .l3_banks = 8,
    .max_cs_threads = 56,
    .urb = {
-      .min_entries = {
-         [MESA_SHADER_VERTEX]    = 64,
-         [MESA_SHADER_TESS_EVAL] = 34,
-      },
+      GFX8_URB_MIN_ENTRIES,
       .max_entries = {
          [MESA_SHADER_VERTEX]    = 2560,
          [MESA_SHADER_TESS_CTRL] = 504,
@@ -554,10 +555,7 @@ static const struct intel_device_info intel_device_info_chv = {
    .max_cs_threads = 56,                            \
    .timestamp_frequency = 12000000,                 \
    .urb = {                                         \
-      .min_entries = {                              \
-         [MESA_SHADER_VERTEX]    = 64,              \
-         [MESA_SHADER_TESS_EVAL] = 34,              \
-      },                                            \
+      GFX8_URB_MIN_ENTRIES,                         \
       .max_entries = {                              \
          [MESA_SHADER_VERTEX]    = 1856,            \
          [MESA_SHADER_TESS_CTRL] = 672,             \
@@ -865,10 +863,7 @@ static const struct intel_device_info intel_device_info_cfl_gt3 = {
    }
 
 #define GFX11_URB_MIN_MAX_ENTRIES                     \
-   .min_entries = {                                   \
-      [MESA_SHADER_VERTEX]    = 64,                   \
-      [MESA_SHADER_TESS_EVAL] = 34,                   \
-   },                                                 \
+   GFX8_URB_MIN_ENTRIES,                              \
    .max_entries = {                                   \
       [MESA_SHADER_VERTEX]    = 2384,                 \
       [MESA_SHADER_TESS_CTRL] = 1032,                 \
@@ -963,10 +958,7 @@ static const struct intel_device_info intel_device_info_ehl_2x4 = {
    .max_cs_threads = 112, /* threads per DSS */     \
    .urb = {                                         \
       .size = 512, /* For intel_stub_gpu */         \
-      .min_entries = {                              \
-         [MESA_SHADER_VERTEX]    = 64,              \
-         [MESA_SHADER_TESS_EVAL] = 34,              \
-      },                                            \
+      GFX8_URB_MIN_ENTRIES,                         \
       .max_entries = {                              \
          [MESA_SHADER_VERTEX]    = 3576,            \
          [MESA_SHADER_TESS_CTRL] = 1548,            \
@@ -1080,10 +1072,7 @@ static const struct intel_device_info intel_device_info_sg1 = {
 };
 
 #define XEHP_URB_MIN_MAX_ENTRIES                        \
-   .min_entries = {                                     \
-      [MESA_SHADER_VERTEX]    = 64,                     \
-      [MESA_SHADER_TESS_EVAL] = 34,                     \
-   },                                                   \
+   GFX8_URB_MIN_ENTRIES,                                \
    .max_entries = {                                     \
       [MESA_SHADER_VERTEX]    = 3832, /* BSpec 47138 */ \
       [MESA_SHADER_TESS_CTRL] = 1548, /* BSpec 47137 */ \
@@ -1257,6 +1246,17 @@ static const struct intel_device_info intel_device_info_bmg = {
 static const struct intel_device_info intel_device_info_lnl = {
    XE2_FEATURES,
    .platform = INTEL_PLATFORM_LNL,
+   .has_local_mem = false,
+};
+
+#define XE3_FEATURES                                            \
+   XE2_FEATURES,                                                \
+   .ver = 30,                                                   \
+   .verx10 = 300
+
+static const struct intel_device_info intel_device_info_ptl = {
+   XE3_FEATURES,
+   .platform = INTEL_PLATFORM_PTL,
    .has_local_mem = false,
 };
 
@@ -1541,6 +1541,7 @@ intel_device_info_init_common(int pci_id, bool building,
       force_on = true;
    else
       scan_for_force_probe(pci_id, &force_on, &force_off);
+   devinfo->probe_forced = force_on;
    if (force_off) {
       mesa_logw("%s (0x%x) disabled with INTEL_FORCE_PROBE", devinfo->name,
                 pci_id);
@@ -1584,6 +1585,7 @@ intel_device_info_init_common(int pci_id, bool building,
    case 11:
    case 12:
    case 20:
+   case 30:
       devinfo->max_wm_threads = 128 /* threads-per-PSD */
                               * devinfo->num_slices
                               * 8; /* subslices per slice */
@@ -1639,6 +1641,9 @@ intel_device_info_apply_workarounds(struct intel_device_info *devinfo)
 {
    if (intel_needs_workaround(devinfo, 18012660806))
       devinfo->urb.max_entries[MESA_SHADER_GEOMETRY] = 1536;
+
+   if (intel_needs_workaround(devinfo, 18040209780))
+      devinfo->max_gs_threads = 312;
 
    /* Fixes issues with:
     * dEQP-GLES31.functional.geometry_shading.layered.render_with_default_layer_cubemap
@@ -1844,6 +1849,16 @@ intel_device_info_calc_engine_prefetch(const struct intel_device_info *devinfo,
    return 512;
 }
 
+static void
+intel_device_info_update_after_hwconfig(struct intel_device_info *devinfo)
+{
+   /* After applying hwconfig values, some items need to be recalculated. */
+   devinfo->max_cs_threads =
+      devinfo->max_eus_per_subslice * devinfo->num_thread_per_eu;
+
+   intel_device_info_update_cs_workgroup_threads(devinfo);
+}
+
 bool
 intel_get_device_info_from_fd(int fd, struct intel_device_info *devinfo, int min_ver, int max_ver)
 {
@@ -1918,8 +1933,10 @@ intel_get_device_info_from_fd(int fd, struct intel_device_info *devinfo, int min
       break;
    case INTEL_KMD_TYPE_XE:
       ret = intel_device_info_xe_get_info_from_fd(fd, devinfo);
-      if (devinfo->verx10 < 200)
-         mesa_logw("Support for this platform is experimental with Xe KMD, bug reports may be ignored.");
+      if (devinfo->verx10 < 200) {
+         if (!debug_get_bool_option("INTEL_XE_IGNORE_EXPERIMENTAL_WARNING", false))
+            mesa_logw("Support for this platform is experimental with Xe KMD, bug reports may be ignored.");
+      }
       break;
    default:
       ret = false;
@@ -1936,6 +1953,8 @@ intel_get_device_info_from_fd(int fd, struct intel_device_info *devinfo, int min
       return false;
    }
 
+   if (intel_hwconfig_is_required(devinfo))
+      intel_device_info_update_after_hwconfig(devinfo);
    intel_device_info_adjust_memory(devinfo);
 
    /* Gfx7 and older do not support EU/Subslice info */
@@ -1951,6 +1970,8 @@ intel_get_device_info_from_fd(int fd, struct intel_device_info *devinfo, int min
 
    intel_device_info_init_was(devinfo);
    intel_device_info_apply_workarounds(devinfo);
+
+   intel_check_hwconfig_items(fd, devinfo);
 
    return true;
 }
@@ -1973,16 +1994,6 @@ bool intel_device_info_update_memory_info(struct intel_device_info *devinfo, int
    if (ret)
       intel_device_info_adjust_memory(devinfo);
    return ret;
-}
-
-void
-intel_device_info_update_after_hwconfig(struct intel_device_info *devinfo)
-{
-   /* After applying hwconfig values, some items need to be recalculated. */
-   devinfo->max_cs_threads =
-      devinfo->max_eus_per_subslice * devinfo->num_thread_per_eu;
-
-   intel_device_info_update_cs_workgroup_threads(devinfo);
 }
 
 enum intel_wa_steppings
@@ -2037,15 +2048,17 @@ intel_device_info_wa_stepping(struct intel_device_info *devinfo)
 uint32_t
 intel_device_info_get_max_slm_size(const struct intel_device_info *devinfo)
 {
-   uint32_t k_bytes = 0;
+   uint32_t bytes = 0;
 
-   if (devinfo->verx10 >= 200) {
-      k_bytes = intel_device_info_get_max_preferred_slm_size(devinfo);
+   if (devinfo->verx10 >= 300) {
+      bytes = 128 * 1024;
+   } else if (devinfo->verx10 >= 200) {
+      bytes = intel_device_info_get_max_preferred_slm_size(devinfo);
    } else {
-      k_bytes = 64;
+      bytes = 64 * 1024;
    }
 
-   return k_bytes * 1024;
+   return bytes;
 }
 
 uint32_t
@@ -2053,7 +2066,9 @@ intel_device_info_get_max_preferred_slm_size(const struct intel_device_info *dev
 {
    uint32_t k_bytes = 0;
 
-   if (devinfo->verx10 >= 200) {
+   if (devinfo->verx10 >= 300) {
+      k_bytes = 192;
+   } else if (devinfo->verx10 >= 200) {
       if (intel_needs_workaround(devinfo, 16018610683))
          k_bytes = 128;
       else

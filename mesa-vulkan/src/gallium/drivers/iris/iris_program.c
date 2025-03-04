@@ -46,9 +46,11 @@
 #include "intel/compiler/brw_nir.h"
 #include "intel/compiler/intel_nir.h"
 #include "intel/compiler/brw_prim.h"
+#ifdef INTEL_USE_ELK
 #include "intel/compiler/elk/elk_compiler.h"
 #include "intel/compiler/elk/elk_nir.h"
 #include "intel/compiler/elk/elk_prim.h"
+#endif
 #include "iris_context.h"
 #include "iris_pipe.h"
 #include "nir/tgsi_to_nir.h"
@@ -59,9 +61,12 @@
 #define BRW_KEY_INIT(gen, prog_id, limit_trig_input)       \
    .base.program_string_id = prog_id,                      \
    .base.limit_trig_input_range = limit_trig_input
+
+#ifdef INTEL_USE_ELK
 #define ELK_KEY_INIT(gen, prog_id, limit_trig_input)       \
    .base.program_string_id = prog_id,                      \
    .base.limit_trig_input_range = limit_trig_input
+#endif
 
 struct iris_threaded_compile_job {
    struct iris_screen *screen;
@@ -150,6 +155,7 @@ iris_apply_brw_cs_prog_data(struct iris_compiled_shader *shader,
    iris->generate_local_id = brw->generate_local_id;
    iris->walk_order        = brw->walk_order;
    iris->uses_barrier      = brw->uses_barrier;
+   iris->uses_sampler      = brw->uses_sampler;
    iris->prog_mask         = brw->prog_mask;
 
    iris->first_param_is_builtin_subgroup_id =
@@ -283,6 +289,8 @@ iris_apply_brw_prog_data(struct iris_compiled_shader *shader,
    ralloc_steal(shader->brw_prog_data, (void *)brw->relocs);
    ralloc_steal(shader->brw_prog_data, brw->param);
 }
+
+#ifdef INTEL_USE_ELK
 
 static void
 iris_apply_elk_wm_prog_data(struct iris_compiled_shader *shader,
@@ -484,6 +492,8 @@ iris_apply_elk_prog_data(struct iris_compiled_shader *shader,
    ralloc_steal(shader->elk_prog_data, elk->param);
 }
 
+#endif
+
 void
 iris_finalize_program(struct iris_compiled_shader *shader,
                       uint32_t *streamout,
@@ -494,7 +504,11 @@ iris_finalize_program(struct iris_compiled_shader *shader,
                       const struct iris_binding_table *bt)
 {
    /* There can be only one. */
+#ifdef INTEL_USE_ELK
    assert((shader->brw_prog_data == NULL) != (shader->elk_prog_data == NULL));
+#else
+   assert(shader->brw_prog_data);
+#endif
 
    shader->streamout = streamout;
    shader->system_values = system_values;
@@ -563,10 +577,10 @@ iris_to_brw_fs_key(const struct iris_screen *screen,
       .nr_color_regions = key->nr_color_regions,
       .flat_shade = key->flat_shade,
       .alpha_test_replicate_alpha = key->alpha_test_replicate_alpha,
-      .alpha_to_coverage = key->alpha_to_coverage ? BRW_ALWAYS : BRW_NEVER,
+      .alpha_to_coverage = key->alpha_to_coverage ? INTEL_ALWAYS : INTEL_NEVER,
       .clamp_fragment_color = key->clamp_fragment_color,
-      .persample_interp = key->persample_interp ? BRW_ALWAYS : BRW_NEVER,
-      .multisample_fbo = key->multisample_fbo ? BRW_ALWAYS : BRW_NEVER,
+      .persample_interp = key->persample_interp ? INTEL_ALWAYS : INTEL_NEVER,
+      .multisample_fbo = key->multisample_fbo ? INTEL_ALWAYS : INTEL_NEVER,
       .force_dual_color_blend = key->force_dual_color_blend,
       .coherent_fb_fetch = key->coherent_fb_fetch,
       .color_outputs_valid = key->color_outputs_valid,
@@ -586,6 +600,8 @@ iris_to_brw_cs_key(const struct iris_screen *screen,
                    key->base.limit_trig_input_range),
    };
 }
+
+#ifdef INTEL_USE_ELK
 
 static struct elk_vs_prog_key
 iris_to_elk_vs_key(const struct iris_screen *screen,
@@ -671,6 +687,8 @@ iris_to_elk_cs_key(const struct iris_screen *screen,
    };
 }
 
+#endif
+
 static void *
 upload_state(struct u_upload_mgr *uploader,
              struct iris_state_ref *ref,
@@ -749,44 +767,42 @@ get_aoa_deref_offset(nir_builder *b,
    return nir_umin(b, offset, nir_imm_int(b, array_size - elem_size));
 }
 
+static bool
+iris_lower_storage_image_derefs_instr(nir_builder *b,
+                                      nir_intrinsic_instr *intrin,
+                                      UNUSED void *_)
+{
+   switch (intrin->intrinsic) {
+   case nir_intrinsic_image_deref_load:
+   case nir_intrinsic_image_deref_store:
+   case nir_intrinsic_image_deref_atomic:
+   case nir_intrinsic_image_deref_atomic_swap:
+   case nir_intrinsic_image_deref_size:
+   case nir_intrinsic_image_deref_samples:
+   case nir_intrinsic_image_deref_load_raw_intel:
+   case nir_intrinsic_image_deref_store_raw_intel: {
+      nir_deref_instr *deref = nir_src_as_deref(intrin->src[0]);
+      nir_variable *var = nir_deref_instr_get_variable(deref);
+
+      b->cursor = nir_before_instr(&intrin->instr);
+      nir_def *index =
+         nir_iadd_imm(b, get_aoa_deref_offset(b, deref, 1),
+                      var->data.driver_location);
+      nir_rewrite_image_intrinsic(intrin, index, false);
+      return true;
+   }
+
+   default:
+      return false;
+   }
+}
+
 static void
 iris_lower_storage_image_derefs(nir_shader *nir)
 {
-   nir_function_impl *impl = nir_shader_get_entrypoint(nir);
-
-   nir_builder b = nir_builder_create(impl);
-
-   nir_foreach_block(block, impl) {
-      nir_foreach_instr_safe(instr, block) {
-         if (instr->type != nir_instr_type_intrinsic)
-            continue;
-
-         nir_intrinsic_instr *intrin = nir_instr_as_intrinsic(instr);
-         switch (intrin->intrinsic) {
-         case nir_intrinsic_image_deref_load:
-         case nir_intrinsic_image_deref_store:
-         case nir_intrinsic_image_deref_atomic:
-         case nir_intrinsic_image_deref_atomic_swap:
-         case nir_intrinsic_image_deref_size:
-         case nir_intrinsic_image_deref_samples:
-         case nir_intrinsic_image_deref_load_raw_intel:
-         case nir_intrinsic_image_deref_store_raw_intel: {
-            nir_deref_instr *deref = nir_src_as_deref(intrin->src[0]);
-            nir_variable *var = nir_deref_instr_get_variable(deref);
-
-            b.cursor = nir_before_instr(&intrin->instr);
-            nir_def *index =
-               nir_iadd_imm(&b, get_aoa_deref_offset(&b, deref, 1),
-                                var->data.driver_location);
-            nir_rewrite_image_intrinsic(intrin, index, false);
-            break;
-         }
-
-         default:
-            break;
-         }
-      }
-   }
+   nir_shader_intrinsics_pass(nir, iris_lower_storage_image_derefs_instr,
+                              nir_metadata_control_flow,
+                              NULL);
 }
 
 static bool
@@ -843,9 +859,8 @@ iris_fix_edge_flags(nir_shader *nir)
    nir_fixup_deref_modes(nir);
 
    nir_foreach_function_impl(impl, nir) {
-      nir_metadata_preserve(impl, nir_metadata_control_flow |
-                                  nir_metadata_live_defs |
-                                  nir_metadata_loop_analysis);
+      nir_progress(true, impl,
+                   nir_metadata_control_flow | nir_metadata_live_defs | nir_metadata_loop_analysis);
    }
 
    return true;
@@ -910,6 +925,7 @@ static void
 setup_vec4_image_sysval(uint32_t *sysvals, uint32_t idx,
                         unsigned offset, unsigned n)
 {
+#ifdef INTEL_USE_ELK
    assert(offset % sizeof(uint32_t) == 0);
 
    for (unsigned i = 0; i < n; ++i)
@@ -917,6 +933,9 @@ setup_vec4_image_sysval(uint32_t *sysvals, uint32_t idx,
 
    for (unsigned i = n; i < 4; ++i)
       sysvals[i] = ELK_PARAM_BUILTIN_ZERO;
+#else
+   unreachable("no elk support");
+#endif
 }
 
 /**
@@ -1381,7 +1400,8 @@ iris_setup_binding_table(const struct intel_device_info *devinfo,
                          struct iris_binding_table *bt,
                          unsigned num_render_targets,
                          unsigned num_system_values,
-                         unsigned num_cbufs)
+                         unsigned num_cbufs,
+                         bool use_null_rt)
 {
    const struct shader_info *info = &nir->info;
 
@@ -1404,6 +1424,8 @@ iris_setup_binding_table(const struct intel_device_info *devinfo,
          bt->used_mask[IRIS_SURFACE_GROUP_RENDER_TARGET_READ] =
             BITFIELD64_MASK(num_render_targets);
       }
+
+      bt->use_null_rt = use_null_rt;
    } else if (info->stage == MESA_SHADER_COMPUTE) {
       bt->sizes[IRIS_SURFACE_GROUP_CS_WORK_GROUPS] = 1;
    }
@@ -1631,6 +1653,8 @@ iris_debug_recompile_brw(struct iris_screen *screen,
    brw_debug_key_recompile(c, dbg, info->stage, &old_key.base, key);
 }
 
+#ifdef INTEL_USE_ELK
+
 static void
 iris_debug_recompile_elk(struct iris_screen *screen,
                          struct util_debug_callback *dbg,
@@ -1681,6 +1705,7 @@ iris_debug_recompile_elk(struct iris_screen *screen,
    elk_debug_key_recompile(c, dbg, info->stage, &old_key.base, key);
 }
 
+#endif
 
 static void
 check_urb_size(struct iris_context *ice,
@@ -1858,7 +1883,7 @@ iris_compile_vs(struct iris_screen *screen,
 
    struct iris_binding_table bt;
    iris_setup_binding_table(devinfo, nir, &bt, /* num_render_targets */ 0,
-                            num_system_values, num_cbufs);
+                            num_system_values, num_cbufs, false);
 
    const char *error;
    const unsigned *program;
@@ -1894,6 +1919,7 @@ iris_compile_vs(struct iris_screen *screen,
          iris_debug_recompile_brw(screen, dbg, ish, &brw_key.base);
       }
    } else {
+#ifdef INTEL_USE_ELK
       struct elk_vs_prog_data *elk_prog_data =
          rzalloc(mem_ctx, struct elk_vs_prog_data);
 
@@ -1924,6 +1950,9 @@ iris_compile_vs(struct iris_screen *screen,
          iris_debug_recompile_elk(screen, dbg, ish, &elk_key.base);
          iris_apply_elk_prog_data(shader, &elk_prog_data->base.base);
       }
+#else
+      unreachable("no elk support");
+#endif
    }
 
    if (program == NULL) {
@@ -2067,7 +2096,9 @@ iris_compile_tcs(struct iris_screen *screen,
 
    const struct iris_tcs_prog_key *const key = &shader->key.tcs;
    struct brw_tcs_prog_key brw_key = iris_to_brw_tcs_key(screen, key);
+#ifdef INTEL_USE_ELK
    struct elk_tcs_prog_key elk_key = iris_to_elk_tcs_key(screen, key);
+#endif
    uint32_t source_hash;
 
    if (ish) {
@@ -2077,8 +2108,12 @@ iris_compile_tcs(struct iris_screen *screen,
       if (screen->brw) {
          nir = brw_nir_create_passthrough_tcs(mem_ctx, screen->brw, &brw_key);
       } else {
+#ifdef INTEL_USE_ELK
          assert(screen->elk);
          nir = elk_nir_create_passthrough_tcs(mem_ctx, screen->elk, &elk_key);
+#else
+         unreachable("no elk support");
+#endif
       }
       source_hash = *(uint32_t*)nir->info.source_blake3;
    }
@@ -2086,7 +2121,7 @@ iris_compile_tcs(struct iris_screen *screen,
    iris_setup_uniforms(devinfo, mem_ctx, nir, 0, &system_values,
                        &num_system_values, &num_cbufs);
    iris_setup_binding_table(devinfo, nir, &bt, /* num_render_targets */ 0,
-                            num_system_values, num_cbufs);
+                            num_system_values, num_cbufs, false);
 
    const char *error = NULL;
    const unsigned *program;
@@ -2114,6 +2149,7 @@ iris_compile_tcs(struct iris_screen *screen,
          iris_debug_recompile_brw(screen, dbg, ish, &brw_key.base);
       }
    } else {
+#ifdef INTEL_USE_ELK
       assert(screen->elk);
       struct elk_tcs_prog_data *elk_prog_data =
          rzalloc(mem_ctx, struct elk_tcs_prog_data);
@@ -2137,6 +2173,9 @@ iris_compile_tcs(struct iris_screen *screen,
          iris_debug_recompile_elk(screen, dbg, ish, &elk_key.base);
          iris_apply_elk_prog_data(shader, &elk_prog_data->base.base);
       }
+#else
+      unreachable("no elk support");
+#endif
    }
 
    if (program == NULL) {
@@ -2276,7 +2315,7 @@ iris_compile_tes(struct iris_screen *screen,
 
    struct iris_binding_table bt;
    iris_setup_binding_table(devinfo, nir, &bt, /* num_render_targets */ 0,
-                            num_system_values, num_cbufs);
+                            num_system_values, num_cbufs, false);
 
    const char *error;
    const unsigned *program;
@@ -2313,6 +2352,7 @@ iris_compile_tes(struct iris_screen *screen,
          iris_apply_brw_prog_data(shader, &brw_prog_data->base.base);
       }
    } else {
+#ifdef INTEL_USE_ELK
       struct elk_tes_prog_data *elk_prog_data =
          rzalloc(mem_ctx, struct elk_tes_prog_data);
 
@@ -2343,6 +2383,9 @@ iris_compile_tes(struct iris_screen *screen,
          iris_debug_recompile_elk(screen, dbg, ish, &elk_key.base);
          iris_apply_elk_prog_data(shader, &elk_prog_data->base.base);
       }
+#else
+      unreachable("no elk support");
+#endif
    }
 
    if (program == NULL) {
@@ -2458,7 +2501,7 @@ iris_compile_gs(struct iris_screen *screen,
 
    struct iris_binding_table bt;
    iris_setup_binding_table(devinfo, nir, &bt, /* num_render_targets */ 0,
-                            num_system_values, num_cbufs);
+                            num_system_values, num_cbufs, false);
 
    const char *error;
    const unsigned *program;
@@ -2492,6 +2535,7 @@ iris_compile_gs(struct iris_screen *screen,
          iris_apply_brw_prog_data(shader, &brw_prog_data->base.base);
       }
    } else {
+#ifdef INTEL_USE_ELK
       struct elk_gs_prog_data *elk_prog_data =
          rzalloc(mem_ctx, struct elk_gs_prog_data);
 
@@ -2520,6 +2564,9 @@ iris_compile_gs(struct iris_screen *screen,
          iris_debug_recompile_elk(screen, dbg, ish, &elk_key.base);
          iris_apply_elk_prog_data(shader, &elk_prog_data->base.base);
       }
+#else
+      unreachable("no elk support");
+#endif
    }
 
    if (program == NULL) {
@@ -2627,16 +2674,14 @@ iris_compile_fs(struct iris_screen *screen,
     */
    brw_nir_lower_fs_outputs(nir);
 
-   /* On Gfx11+, shader RT write messages have a "Null Render Target" bit
-    * and do not need a binding table entry with a null surface.  Earlier
-    * generations need an entry for a null surface.
-    */
-   int null_rts = devinfo->ver < 11 ? 1 : 0;
+   int null_rts = brw_nir_fs_needs_null_rt(devinfo, nir,
+                                           key->multisample_fbo,
+                                           key->alpha_to_coverage) ? 1 : 0;
 
    struct iris_binding_table bt;
    iris_setup_binding_table(devinfo, nir, &bt,
                             MAX2(key->nr_color_regions, null_rts),
-                            num_system_values, num_cbufs);
+                            num_system_values, num_cbufs, null_rts != 0);
 
    const char *error;
    const unsigned *program;
@@ -2673,6 +2718,7 @@ iris_compile_fs(struct iris_screen *screen,
          iris_apply_brw_prog_data(shader, &brw_prog_data->base);
       }
    } else {
+#ifdef INTEL_USE_ELK
       struct elk_wm_prog_data *elk_prog_data =
          rzalloc(mem_ctx, struct elk_wm_prog_data);
 
@@ -2703,6 +2749,9 @@ iris_compile_fs(struct iris_screen *screen,
          iris_debug_recompile_elk(screen, dbg, ish, &elk_key.base);
          iris_apply_elk_prog_data(shader, &elk_prog_data->base);
       }
+#else
+      unreachable("no elk support");
+#endif
    }
 
    if (program == NULL) {
@@ -2959,14 +3008,18 @@ iris_compile_cs(struct iris_screen *screen,
    if (screen->brw)
       NIR_PASS_V(nir, brw_nir_lower_cs_intrinsics, devinfo, NULL);
    else
+#ifdef INTEL_USE_ELK
       NIR_PASS_V(nir, elk_nir_lower_cs_intrinsics, devinfo, NULL);
+#else
+      unreachable("no elk support");
+#endif
 
    iris_setup_uniforms(devinfo, mem_ctx, nir, ish->kernel_input_size,
                        &system_values, &num_system_values, &num_cbufs);
 
    struct iris_binding_table bt;
    iris_setup_binding_table(devinfo, nir, &bt, /* num_render_targets */ 0,
-                            num_system_values, num_cbufs);
+                            num_system_values, num_cbufs, false);
 
    const char *error;
    const unsigned *program;
@@ -2995,6 +3048,7 @@ iris_compile_cs(struct iris_screen *screen,
          iris_apply_brw_prog_data(shader, &brw_prog_data->base);
       }
    } else {
+#ifdef INTEL_USE_ELK
       struct elk_cs_prog_key elk_key = iris_to_elk_cs_key(screen, key);
 
       struct elk_cs_prog_data *elk_prog_data =
@@ -3017,6 +3071,9 @@ iris_compile_cs(struct iris_screen *screen,
          iris_debug_recompile_elk(screen, dbg, ish, &elk_key.base);
          iris_apply_elk_prog_data(shader, &elk_prog_data->base);
       }
+#else
+      unreachable("no elk support");
+#endif
    }
 
    if (program == NULL) {
@@ -3234,23 +3291,12 @@ iris_create_compute_state(struct pipe_context *ctx,
    struct iris_context *ice = (void *) ctx;
    struct iris_screen *screen = (void *) ctx->screen;
    struct u_upload_mgr *uploader = ice->shaders.uploader_unsync;
-   const nir_shader_compiler_options *options =
-      screen->brw ? screen->brw->nir_options[MESA_SHADER_COMPUTE]
-                  : screen->elk->nir_options[MESA_SHADER_COMPUTE];
 
    nir_shader *nir;
    switch (state->ir_type) {
    case PIPE_SHADER_IR_NIR:
       nir = (void *)state->prog;
       break;
-
-   case PIPE_SHADER_IR_NIR_SERIALIZED: {
-      struct blob_reader reader;
-      const struct pipe_binary_program_header *hdr = state->prog;
-      blob_reader_init(&reader, hdr->blob, hdr->num_bytes);
-      nir = nir_deserialize(NULL, options, &reader);
-      break;
-   }
 
    default:
       unreachable("Unsupported IR");
@@ -3439,9 +3485,7 @@ iris_create_shader_state(struct pipe_context *ctx,
       break;
 
    case MESA_SHADER_GEOMETRY:
-      /* User clip planes */
-      if (info->clip_distance_array_size == 0)
-         ish->nos |= (1ull << IRIS_NOS_RASTERIZER);
+      ish->nos |= (1ull << IRIS_NOS_RASTERIZER);
 
       key.gs = (struct iris_gs_prog_key) { KEY_INIT(vue.base) };
       key_size = sizeof(key.gs);
@@ -3453,7 +3497,9 @@ iris_create_shader_state(struct pipe_context *ctx,
                   (1ull << IRIS_NOS_RASTERIZER) |
                   (1ull << IRIS_NOS_BLEND);
 
+#ifdef INTEL_USE_ELK
       STATIC_ASSERT(BRW_FS_VARYING_INPUT_MASK == ELK_FS_VARYING_INPUT_MASK);
+#endif
 
       /* The program key needs the VUE map if there are > 16 inputs */
       if (util_bitcount64(info->inputs_read & BRW_FS_VARYING_INPUT_MASK) > 16) {
@@ -3710,10 +3756,9 @@ iris_bind_cs_state(struct pipe_context *ctx, void *state)
 }
 
 static char *
-iris_finalize_nir(struct pipe_screen *_screen, void *nirptr)
+iris_finalize_nir(struct pipe_screen *_screen, struct nir_shader *nir)
 {
    struct iris_screen *screen = (struct iris_screen *)_screen;
-   struct nir_shader *nir = (struct nir_shader *) nirptr;
    const struct intel_device_info *devinfo = screen->devinfo;
 
    NIR_PASS_V(nir, iris_fix_edge_flags);
@@ -3729,6 +3774,7 @@ iris_finalize_nir(struct pipe_screen *_screen, void *nirptr)
                     .lower_stores = true,
                  });
    } else {
+#ifdef INTEL_USE_ELK
       assert(screen->elk);
 
       struct elk_nir_compiler_opts opts = {};
@@ -3745,6 +3791,9 @@ iris_finalize_nir(struct pipe_screen *_screen, void *nirptr)
                      */
                     .lower_get_size = true,
                  });
+#else
+      unreachable("no elk support");
+#endif
    }
 
    NIR_PASS_V(nir, iris_lower_storage_image_derefs);
@@ -3835,10 +3884,14 @@ iris_get_cs_dispatch_info(const struct intel_device_info *devinfo,
                                       brw_cs_prog_data(shader->brw_prog_data),
                                       block);
    } else {
+#ifdef INTEL_USE_ELK
       assert(shader->elk_prog_data);
       return elk_cs_get_dispatch_info(devinfo,
                                       elk_cs_prog_data(shader->elk_prog_data),
                                       block);
+#else
+      unreachable("no elk support");
+#endif
    }
 }
 
@@ -3850,9 +3903,13 @@ iris_cs_push_const_total_size(const struct iris_compiled_shader *shader,
       return brw_cs_push_const_total_size(brw_cs_prog_data(shader->brw_prog_data),
                                           threads);
    } else {
+#ifdef INTEL_USE_ELK
       assert(shader->elk_prog_data);
       return elk_cs_push_const_total_size(elk_cs_prog_data(shader->elk_prog_data),
                                           threads);
+#else
+      unreachable("no elk support");
+#endif
    }
 }
 
@@ -3864,9 +3921,13 @@ iris_fs_barycentric_modes(const struct iris_compiled_shader *shader,
       return wm_prog_data_barycentric_modes(brw_wm_prog_data(shader->brw_prog_data),
                                             pushed_msaa_flags);
    } else {
+#ifdef INTEL_USE_ELK
       assert(shader->elk_prog_data);
       return elk_wm_prog_data_barycentric_modes(elk_wm_prog_data(shader->elk_prog_data),
                                                 pushed_msaa_flags);
+#else
+      unreachable("no elk support");
+#endif
    }
 }
 
@@ -3879,7 +3940,16 @@ iris_use_tcs_multi_patch(struct iris_screen *screen)
 bool
 iris_indirect_ubos_use_sampler(struct iris_screen *screen)
 {
-   return screen->devinfo->ver < 12;
+   if (screen->brw) {
+      return screen->brw->indirect_ubos_use_sampler;
+   } else {
+#ifdef INTEL_USE_ELK
+      assert(screen->elk);
+      return screen->elk->indirect_ubos_use_sampler;
+#else
+      unreachable("no elk support");
+#endif
+   }
 }
 
 static void
@@ -3926,27 +3996,34 @@ iris_get_compiler_options(struct pipe_screen *pscreen,
    gl_shader_stage stage = stage_from_pipe(pstage);
    assert(ir == PIPE_SHADER_IR_NIR);
 
+#ifdef INTEL_USE_ELK
    return screen->brw ? screen->brw->nir_options[stage]
                       : screen->elk->nir_options[stage];
+#else
+   return screen->brw->nir_options[stage];
+#endif
 }
 
 void
 iris_compiler_init(struct iris_screen *screen)
 {
-   STATIC_ASSERT(IRIS_MAX_DRAW_BUFFERS == BRW_MAX_DRAW_BUFFERS);
-   STATIC_ASSERT(IRIS_MAX_DRAW_BUFFERS == ELK_MAX_DRAW_BUFFERS);
-   STATIC_ASSERT(IRIS_MAX_SOL_BINDINGS == ELK_MAX_SOL_BINDINGS);
-
    if (screen->devinfo->ver >= 9) {
+      STATIC_ASSERT(IRIS_MAX_DRAW_BUFFERS == BRW_MAX_DRAW_BUFFERS);
+
       screen->brw = brw_compiler_create(screen, screen->devinfo);
       screen->brw->shader_debug_log = iris_shader_debug_log;
       screen->brw->shader_perf_log = iris_shader_perf_log;
-      screen->brw->indirect_ubos_use_sampler = iris_indirect_ubos_use_sampler(screen);
    } else {
+#ifdef INTEL_USE_ELK
+      STATIC_ASSERT(IRIS_MAX_DRAW_BUFFERS == ELK_MAX_DRAW_BUFFERS);
+      STATIC_ASSERT(IRIS_MAX_SOL_BINDINGS == ELK_MAX_SOL_BINDINGS);
+
       screen->elk = elk_compiler_create(screen, screen->devinfo);
       screen->elk->shader_debug_log = iris_shader_debug_log;
       screen->elk->shader_perf_log = iris_shader_perf_log;
       screen->elk->supports_shader_constants = true;
-      screen->elk->indirect_ubos_use_sampler = iris_indirect_ubos_use_sampler(screen);
+#else
+      unreachable("no elk support");
+#endif
    }
 }

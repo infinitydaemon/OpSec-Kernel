@@ -315,11 +315,7 @@ gcm_pin_instructions(nir_function_impl *impl, struct gcm_state *state)
          case nir_instr_type_alu: {
             nir_alu_instr *alu = nir_instr_as_alu(instr);
 
-            if (nir_op_is_derivative(alu->op)) {
-               /* These can only go in uniform control flow */
-               instr->pass_flags = GCM_INSTR_SCHEDULE_EARLIER_ONLY;
-            } else if (alu->op == nir_op_mov &&
-                       !is_src_scalarizable(&alu->src[0].src)) {
+            if (alu->op == nir_op_mov && !is_src_scalarizable(&alu->src[0].src)) {
                instr->pass_flags = GCM_INSTR_PINNED;
             } else {
                instr->pass_flags = 0;
@@ -861,8 +857,12 @@ opt_gcm_impl(nir_shader *shader, nir_function_impl *impl, bool value_number)
    ralloc_free(state.blocks);
    ralloc_free(state.instr_infos);
 
-   nir_metadata_preserve(impl, nir_metadata_control_flow |
-                                  nir_metadata_loop_analysis);
+   if (state.progress) {
+      nir_progress(true, impl, nir_metadata_control_flow);
+   } else {
+      nir_progress(true, impl,
+                   nir_metadata_control_flow | nir_metadata_loop_analysis);
+   }
 
    return state.progress;
 }

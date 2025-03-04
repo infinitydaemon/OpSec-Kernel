@@ -1,25 +1,7 @@
 /*
- * Copyright (C) 2018 Rob Clark <robclark@freedesktop.org>
+ * Copyright © 2018 Rob Clark <robclark@freedesktop.org>
  * Copyright © 2018 Google, Inc.
- *
- * Permission is hereby granted, free of charge, to any person obtaining a
- * copy of this software and associated documentation files (the "Software"),
- * to deal in the Software without restriction, including without limitation
- * the rights to use, copy, modify, merge, publish, distribute, sublicense,
- * and/or sell copies of the Software, and to permit persons to whom the
- * Software is furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice (including the next
- * paragraph) shall be included in all copies or substantial portions of the
- * Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
- * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
- * SOFTWARE.
+ * SPDX-License-Identifier: MIT
  *
  * Authors:
  *    Rob Clark <robclark@freedesktop.org>
@@ -42,11 +24,15 @@
  * it can be tiled doesn't mean it can be compressed.
  */
 static bool
-ok_ubwc_format(struct pipe_screen *pscreen, enum pipe_format pfmt)
+ok_ubwc_format(struct pipe_screen *pscreen, enum pipe_format pfmt, unsigned nr_samples)
 {
    const struct fd_dev_info *info = fd_screen(pscreen)->info;
 
    switch (pfmt) {
+   case PIPE_FORMAT_Z24X8_UNORM:
+      /* MSAA+UBWC does not work without FMT6_Z24_UINT_S8_UINT: */
+      return info->a6xx.has_z24uint_s8uint || (nr_samples <= 1);
+
    case PIPE_FORMAT_X24S8_UINT:
    case PIPE_FORMAT_Z24_UNORM_S8_UINT:
       /* We can't sample stencil with UBWC on a630, and we may need to be able
@@ -132,7 +118,7 @@ can_do_ubwc(struct pipe_resource *prsc)
       return false;
    if (prsc->target != PIPE_TEXTURE_2D)
       return false;
-   if (!ok_ubwc_format(prsc->screen, prsc->format))
+   if (!ok_ubwc_format(prsc->screen, prsc->format, prsc->nr_samples))
       return false;
    return true;
 }
@@ -155,6 +141,7 @@ static bool
 valid_ubwc_format_cast(struct fd_resource *rsc, enum pipe_format format)
 {
    const struct fd_dev_info *info = fd_screen(rsc->b.b.screen)->info;
+   enum pipe_format orig_format = rsc->b.b.format;
 
    assert(rsc->layout.ubwc);
 
@@ -165,12 +152,14 @@ valid_ubwc_format_cast(struct fd_resource *rsc, enum pipe_format format)
    /* If we support z24s8 ubwc then allow casts between the various
     * permutations of z24s8:
     */
-   if (fd_screen(rsc->b.b.screen)->info->a6xx.has_z24uint_s8uint &&
-         is_z24s8(format) && is_z24s8(rsc->b.b.format))
+   if (info->a6xx.has_z24uint_s8uint && is_z24s8(format) && is_z24s8(orig_format))
       return true;
 
-   return fd6_ubwc_compat_mode(info, format) ==
-       fd6_ubwc_compat_mode(info, rsc->b.b.format);
+   enum fd6_ubwc_compat_type type = fd6_ubwc_compat_mode(info, orig_format);
+   if (type == FD6_UBWC_UNKNOWN_COMPAT)
+      return false;
+
+   return fd6_ubwc_compat_mode(info, format) == type;
 }
 
 /**
@@ -204,7 +193,7 @@ fd6_check_valid_format(struct fd_resource *rsc, enum pipe_format format)
    if (!rsc->layout.ubwc)
       return FORMAT_OK;
 
-   if (ok_ubwc_format(rsc->b.b.screen, format) &&
+   if (ok_ubwc_format(rsc->b.b.screen, format, rsc->b.b.nr_samples) &&
        valid_ubwc_format_cast(rsc, format))
       return FORMAT_OK;
 
@@ -247,65 +236,30 @@ static void
 setup_lrz(struct fd_resource *rsc)
 {
    struct fd_screen *screen = fd_screen(rsc->b.b.screen);
-   unsigned width0 = rsc->b.b.width0;
-   unsigned height0 = rsc->b.b.height0;
+   uint32_t nr_layers = 1;
+   fdl6_lrz_layout_init<CHIP>(&rsc->lrz_layout, &rsc->layout, screen->info, 0,
+                              nr_layers);
 
-   /* LRZ buffer is super-sampled: */
-   switch (rsc->b.b.nr_samples) {
-   case 4:
-      width0 *= 2;
-      FALLTHROUGH;
-   case 2:
-      height0 *= 2;
-   }
-
-   unsigned lrz_pitch = align(DIV_ROUND_UP(width0, 8), 32);
-   unsigned lrz_height = align(DIV_ROUND_UP(height0, 8), 16);
-
-   rsc->lrz_height = lrz_height;
-   rsc->lrz_width = lrz_pitch;
-   rsc->lrz_pitch = lrz_pitch;
-
-   unsigned lrz_size = lrz_pitch * lrz_height * 2;
-
-   unsigned nblocksx = DIV_ROUND_UP(DIV_ROUND_UP(width0, 8), 16);
-   unsigned nblocksy = DIV_ROUND_UP(DIV_ROUND_UP(height0, 8), 4);
-
-   /* Fast-clear buffer is 1bit/block */
-   unsigned lrz_fc_size = DIV_ROUND_UP(nblocksx * nblocksy, 8);
-
-   /* Fast-clear buffer cannot be larger than 512 bytes on A6XX and 1024 bytes
-    * on A7XX (HW limitation)
-    */
-   bool has_lrz_fc = screen->info->a6xx.enable_lrz_fast_clear &&
-                     lrz_fc_size <= fd_lrzfc_layout<CHIP>::FC_SIZE;
-
-   /* Allocate a LRZ fast-clear buffer even if we aren't using FC, if the
-    * hw is re-using this buffer for direction tracking
-    */
-   if (has_lrz_fc || screen->info->a6xx.has_lrz_dir_tracking) {
-      rsc->lrz_fc_offset = lrz_size;
-      lrz_size += sizeof(fd_lrzfc_layout<CHIP>);
-   }
-
-   rsc->lrz = fd_bo_new(screen->dev, lrz_size, FD_BO_NOMAP, "lrz");
+   rsc->lrz = fd_bo_new(screen->dev, rsc->lrz_layout.lrz_total_size,
+                        FD_BO_NOMAP, "lrz");
 }
 
+template <chip CHIP>
 static uint32_t
 fd6_setup_slices(struct fd_resource *rsc)
 {
    struct pipe_resource *prsc = &rsc->b.b;
    struct fd_screen *screen = fd_screen(prsc->screen);
 
-   if (!FD_DBG(NOLRZ) && has_depth(prsc->format) && !is_z32(prsc->format))
-      FD_CALLX(screen->info, setup_lrz)(rsc);
-
-   if (rsc->layout.ubwc && !ok_ubwc_format(prsc->screen, prsc->format))
+   if (rsc->layout.ubwc && !ok_ubwc_format(prsc->screen, prsc->format, prsc->nr_samples))
       rsc->layout.ubwc = false;
 
-   fdl6_layout(&rsc->layout, prsc->format, fd_resource_nr_samples(prsc),
+   fdl6_layout(&rsc->layout, screen->info, prsc->format, fd_resource_nr_samples(prsc),
                prsc->width0, prsc->height0, prsc->depth0, prsc->last_level + 1,
-               prsc->array_size, prsc->target == PIPE_TEXTURE_3D, NULL);
+               prsc->array_size, prsc->target == PIPE_TEXTURE_3D, false, NULL);
+
+   if (!FD_DBG(NOLRZ) && has_depth(prsc->format) && !is_z32(prsc->format))
+      setup_lrz<CHIP>(rsc);
 
    return rsc->layout.size;
 }
@@ -314,6 +268,7 @@ static int
 fill_ubwc_buffer_sizes(struct fd_resource *rsc)
 {
    struct pipe_resource *prsc = &rsc->b.b;
+   struct fd_screen *screen = fd_screen(prsc->screen);
    struct fdl_explicit_layout l = {
       .offset = rsc->layout.slices[0].offset,
       .pitch = rsc->layout.pitch0,
@@ -325,9 +280,9 @@ fill_ubwc_buffer_sizes(struct fd_resource *rsc)
    rsc->layout.ubwc = true;
    rsc->layout.tile_mode = TILE6_3;
 
-   if (!fdl6_layout(&rsc->layout, prsc->format, fd_resource_nr_samples(prsc),
+   if (!fdl6_layout(&rsc->layout, screen->info, prsc->format, fd_resource_nr_samples(prsc),
                     prsc->width0, prsc->height0, prsc->depth0,
-                    prsc->last_level + 1, prsc->array_size, false, &l))
+                    prsc->last_level + 1, prsc->array_size, false, false, &l))
       return -1;
 
    if (rsc->layout.size > fd_bo_size(rsc->bo))
@@ -376,7 +331,10 @@ fd6_is_format_supported(struct pipe_screen *pscreen,
    case DRM_FORMAT_MOD_LINEAR:
       return true;
    case DRM_FORMAT_MOD_QCOM_COMPRESSED:
-      return ok_ubwc_format(pscreen, fmt);
+      /* screen->is_format_supported() is used only for dma-buf modifier queries,
+       * so no super-sampled images:
+       */
+      return ok_ubwc_format(pscreen, fmt, 0);
    case DRM_FORMAT_MOD_QCOM_TILED3:
       return fd6_tile_mode_for_format(fmt) == TILE6_3;
    default:
@@ -384,12 +342,14 @@ fd6_is_format_supported(struct pipe_screen *pscreen,
    }
 }
 
+template <chip CHIP>
 void
 fd6_resource_screen_init(struct pipe_screen *pscreen)
 {
    struct fd_screen *screen = fd_screen(pscreen);
 
-   screen->setup_slices = fd6_setup_slices;
+   screen->setup_slices = fd6_setup_slices<CHIP>;
    screen->layout_resource_for_modifier = fd6_layout_resource_for_modifier;
    screen->is_format_supported = fd6_is_format_supported;
 }
+FD_GENX(fd6_resource_screen_init);

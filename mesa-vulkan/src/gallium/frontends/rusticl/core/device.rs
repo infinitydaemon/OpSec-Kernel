@@ -13,6 +13,7 @@ use mesa_rust::pipe::device::load_screens;
 use mesa_rust::pipe::fence::*;
 use mesa_rust::pipe::resource::*;
 use mesa_rust::pipe::screen::*;
+use mesa_rust::pipe::transfer::PipeTransfer;
 use mesa_rust_gen::*;
 use mesa_rust_util::math::SetBitIndices;
 use mesa_rust_util::static_assert;
@@ -23,7 +24,7 @@ use std::cmp::min;
 use std::collections::HashMap;
 use std::convert::TryInto;
 use std::env;
-use std::ffi::CString;
+use std::ffi::CStr;
 use std::mem::transmute;
 use std::os::raw::*;
 use std::sync::Arc;
@@ -36,21 +37,23 @@ pub struct Device {
     pub cl_version: CLVersion,
     pub clc_version: CLVersion,
     pub clc_versions: Vec<cl_name_version>,
-    pub custom: bool,
+    pub device_type: u32,
     pub embedded: bool,
     pub extension_string: String,
     pub extensions: Vec<cl_name_version>,
-    pub spirv_extensions: Vec<CString>,
+    pub spirv_extensions: Vec<&'static CStr>,
     pub clc_features: Vec<cl_name_version>,
     pub formats: HashMap<cl_image_format, HashMap<cl_mem_object_type, cl_mem_flags>>,
     pub lib_clc: NirShader,
     pub caps: DeviceCaps,
     helper_ctx: Mutex<PipeContext>,
+    reusable_ctx: Mutex<Vec<PipeContext>>,
 }
 
 #[derive(Default)]
 pub struct DeviceCaps {
     pub has_3d_image_writes: bool,
+    pub has_depth_images: bool,
     pub has_images: bool,
     pub has_rw_images: bool,
     pub has_timestamp: bool,
@@ -62,17 +65,15 @@ pub struct DeviceCaps {
 
 impl DeviceCaps {
     fn new(screen: &PipeScreen) -> Self {
-        let cap_timestamp = screen.param(pipe_cap::PIPE_CAP_QUERY_TIMESTAMP) != 0;
-        let timer_resolution = screen.param(pipe_cap::PIPE_CAP_TIMER_RESOLUTION) as u32;
+        let cap_timestamp = screen.caps().query_timestamp;
+        let timer_resolution = screen.caps().timer_resolution;
 
-        let max_write_images =
-            Self::shader_param(screen, pipe_shader_cap::PIPE_SHADER_CAP_MAX_SHADER_IMAGES) as u32;
-        let max_read_images =
-            Self::shader_param(screen, pipe_shader_cap::PIPE_SHADER_CAP_MAX_SAMPLER_VIEWS) as u32;
-        let image_2d_size = screen.param(pipe_cap::PIPE_CAP_MAX_TEXTURE_2D_SIZE) as u32;
+        let max_write_images = Self::shader_caps(screen).max_shader_images;
+        let max_read_images = Self::shader_caps(screen).max_sampler_views;
+        let image_2d_size = screen.caps().max_texture_2d_size;
 
-        let has_images = screen.param(pipe_cap::PIPE_CAP_TEXTURE_SAMPLER_INDEPENDENT) != 0 &&
-            screen.param(pipe_cap::PIPE_CAP_IMAGE_STORE_FORMATTED) != 0 &&
+        let has_images = screen.caps().texture_sampler_independent &&
+            screen.caps().image_store_formatted &&
             // The minimum value is 8 if CL_DEVICE_IMAGE_SUPPORT is CL_TRUE
             max_read_images >= 8 &&
             // The minimum value is 8 if CL_DEVICE_IMAGE_SUPPORT is CL_TRUE
@@ -91,8 +92,8 @@ impl DeviceCaps {
         }
     }
 
-    fn shader_param(screen: &PipeScreen, cap: pipe_shader_cap) -> i32 {
-        screen.shader_param(pipe_shader_type::PIPE_SHADER_COMPUTE, cap)
+    fn shader_caps(screen: &PipeScreen) -> &pipe_shader_caps {
+        screen.shader_caps(pipe_shader_type::PIPE_SHADER_COMPUTE)
     }
 }
 
@@ -107,6 +108,21 @@ pub trait HelperContextWrapper {
     fn compute_state_info(&self, state: *mut c_void) -> pipe_compute_state_object_info;
     fn compute_state_subgroup_size(&self, state: *mut c_void, block: &[u32; 3]) -> u32;
 
+    fn map_buffer_unsynchronized(
+        &self,
+        res: &PipeResource,
+        offset: i32,
+        size: i32,
+        rw: RWFlags,
+    ) -> Option<PipeTransfer>;
+
+    fn map_texture_unsynchronized(
+        &self,
+        res: &PipeResource,
+        bx: &pipe_box,
+        rw: RWFlags,
+    ) -> Option<PipeTransfer>;
+
     fn is_create_fence_fd_supported(&self) -> bool;
     fn import_fence(&self, fence_fd: &FenceFd) -> PipeFence;
 }
@@ -115,17 +131,7 @@ pub struct HelperContext<'a> {
     lock: MutexGuard<'a, PipeContext>,
 }
 
-impl<'a> HelperContext<'a> {
-    pub fn resource_copy_region(
-        &self,
-        src: &PipeResource,
-        dst: &PipeResource,
-        dst_offset: &[u32; 3],
-        bx: &pipe_box,
-    ) {
-        self.lock.resource_copy_region(src, dst, dst_offset, bx);
-    }
-
+impl HelperContext<'_> {
     pub fn buffer_subdata(
         &self,
         res: &PipeResource,
@@ -149,7 +155,7 @@ impl<'a> HelperContext<'a> {
     }
 }
 
-impl<'a> HelperContextWrapper for HelperContext<'a> {
+impl HelperContextWrapper for HelperContext<'_> {
     fn exec<F>(&self, func: F) -> PipeFence
     where
         F: Fn(&HelperContext),
@@ -172,6 +178,31 @@ impl<'a> HelperContextWrapper for HelperContext<'a> {
 
     fn compute_state_subgroup_size(&self, state: *mut c_void, block: &[u32; 3]) -> u32 {
         self.lock.compute_state_subgroup_size(state, block)
+    }
+
+    fn map_buffer_unsynchronized(
+        &self,
+        res: &PipeResource,
+        offset: i32,
+        size: i32,
+        rw: RWFlags,
+    ) -> Option<PipeTransfer> {
+        self.lock.buffer_map_flags(
+            res,
+            offset,
+            size,
+            pipe_map_flags::PIPE_MAP_UNSYNCHRONIZED | rw.into(),
+        )
+    }
+
+    fn map_texture_unsynchronized(
+        &self,
+        res: &PipeResource,
+        bx: &pipe_box,
+        rw: RWFlags,
+    ) -> Option<PipeTransfer> {
+        self.lock
+            .texture_map_flags(res, bx, pipe_map_flags::PIPE_MAP_UNSYNCHRONIZED | rw.into())
     }
 
     fn is_create_fence_fd_supported(&self) -> bool {
@@ -208,7 +239,7 @@ impl Device {
             cl_version: CLVersion::Cl3_0,
             clc_version: CLVersion::Cl3_0,
             clc_versions: Vec::new(),
-            custom: false,
+            device_type: 0,
             embedded: false,
             extension_string: String::from(""),
             extensions: Vec::new(),
@@ -216,13 +247,13 @@ impl Device {
             clc_features: Vec::new(),
             formats: HashMap::new(),
             lib_clc: lib_clc?,
+            reusable_ctx: Mutex::new(Vec::new()),
         };
 
         // check if we are embedded or full profile first
         d.embedded = d.check_embedded_profile();
 
-        // check if we have to report it as a custom device
-        d.custom = d.check_custom();
+        d.set_device_type();
 
         d.fill_format_tables();
 
@@ -250,6 +281,13 @@ impl Device {
         for f in FORMATS {
             let mut fs = HashMap::new();
             for t in CL_IMAGE_TYPES {
+                // depth images are only valid for 2D and 2DArray
+                if [CL_DEPTH, CL_DEPTH_STENCIL].contains(&f.cl_image_format.image_channel_order)
+                    && ![CL_MEM_OBJECT_IMAGE2D, CL_MEM_OBJECT_IMAGE2D_ARRAY].contains(&t)
+                {
+                    continue;
+                }
+
                 // the CTS doesn't test them, so let's not advertize them by accident if they are
                 // broken
                 if t == CL_MEM_OBJECT_IMAGE1D_BUFFER
@@ -293,6 +331,14 @@ impl Device {
 
                 fs.insert(t, flags as cl_mem_flags);
             }
+
+            // Restrict supported formats with 1DBuffer images. This is an OpenCL CTS workaround.
+            // See https://github.com/KhronosGroup/OpenCL-CTS/issues/1889
+            let image1d_mask = fs.get(&CL_MEM_OBJECT_IMAGE1D).copied().unwrap_or_default();
+            if let Some(entry) = fs.get_mut(&CL_MEM_OBJECT_IMAGE1D_BUFFER) {
+                *entry &= image1d_mask;
+            }
+
             self.formats.insert(f.cl_image_format, fs);
         }
 
@@ -309,6 +355,13 @@ impl Device {
             .map(|f| self.formats[&f.cl_image_format][&CL_MEM_OBJECT_IMAGE3D])
             .any(|f| f & cl_mem_flags::from(CL_MEM_WRITE_ONLY) == 0);
 
+        self.caps.has_depth_images = self
+            .formats
+            .iter()
+            .filter_map(|(k, v)| (k.image_channel_order == CL_DEPTH).then_some(v.values()))
+            .flatten()
+            .any(|mask| *mask != 0);
+
         // if we can't advertize 3d image write ext, we have to disable them all
         if !self.caps.has_3d_image_writes {
             for f in &mut self.formats.values_mut() {
@@ -319,7 +372,7 @@ impl Device {
         }
 
         // we require formatted loads
-        if self.screen.param(pipe_cap::PIPE_CAP_IMAGE_LOAD_FORMATTED) != 0 {
+        if self.screen.caps().image_load_formatted {
             // "For embedded profiles devices that support reading from and writing to the same
             // image object from the same kernel instance (see CL_DEVICE_MAX_READ_WRITE_IMAGE_ARGS)
             // there is no required minimum list of supported image formats."
@@ -349,11 +402,11 @@ impl Device {
     }
 
     fn check_valid(screen: &PipeScreen) -> bool {
-        if screen.param(pipe_cap::PIPE_CAP_COMPUTE) == 0
-            || screen.shader_param(
-                pipe_shader_type::PIPE_SHADER_COMPUTE,
-                pipe_shader_cap::PIPE_SHADER_CAP_SUPPORTED_IRS,
-            ) & (1 << (pipe_shader_ir::PIPE_SHADER_IR_NIR as i32))
+        if !screen.caps().compute
+            || screen
+                .shader_caps(pipe_shader_type::PIPE_SHADER_COMPUTE)
+                .supported_irs
+                & (1 << (pipe_shader_ir::PIPE_SHADER_IR_NIR as i32))
                 == 0
         {
             return false;
@@ -361,10 +414,9 @@ impl Device {
 
         // CL_DEVICE_MAX_PARAMETER_SIZE
         // For this minimum value, only a maximum of 128 arguments can be passed to a kernel
-        if (screen.shader_param(
-            pipe_shader_type::PIPE_SHADER_COMPUTE,
-            pipe_shader_cap::PIPE_SHADER_CAP_MAX_CONST_BUFFER0_SIZE,
-        ) as u32)
+        if screen
+            .shader_caps(pipe_shader_type::PIPE_SHADER_COMPUTE)
+            .max_const_buffer0_size
             < 128
         {
             return false;
@@ -452,7 +504,7 @@ impl Device {
             // The minimum value is 2048 if CL_DEVICE_IMAGE_SUPPORT is CL_TRUE
             self.image_array_size() < 2048 ||
             // The minimum value is 65536 if CL_DEVICE_IMAGE_SUPPORT is CL_TRUE
-            self.image_buffer_size() < 65536
+            self.image_buffer_max_size_pixels() < 65536
             {
                 return true;
             }
@@ -460,21 +512,6 @@ impl Device {
             // TODO check req formats
         }
         !self.int64_supported()
-    }
-
-    fn parse_env_device_type() -> Option<cl_device_type> {
-        let mut val = env::var("RUSTICL_DEVICE_TYPE").ok()?;
-        val.make_ascii_lowercase();
-        Some(
-            match &*val {
-                "accelerator" => CL_DEVICE_TYPE_ACCELERATOR,
-                "cpu" => CL_DEVICE_TYPE_CPU,
-                "custom" => CL_DEVICE_TYPE_CUSTOM,
-                "gpu" => CL_DEVICE_TYPE_GPU,
-                _ => return None,
-            }
-            .into(),
-        )
     }
 
     fn parse_env_version() -> Option<CLVersion> {
@@ -509,7 +546,7 @@ impl Device {
             // The minimum value is 256 if CL_DEVICE_IMAGE_SUPPORT is CL_TRUE
             if self.image_array_size() < 256 ||
             // The minimum value is 2048 if CL_DEVICE_IMAGE_SUPPORT is CL_TRUE
-            self.image_buffer_size() < 2048
+            self.image_buffer_max_size_pixels() < 2048
             {
                 res = CLVersion::Cl1_1;
             }
@@ -571,7 +608,7 @@ impl Device {
 
     fn fill_extensions(&mut self) {
         let mut exts_str: Vec<String> = Vec::new();
-        let mut exts = PLATFORM_EXTENSIONS.to_vec();
+        let mut exts = Vec::new();
         let mut feats = Vec::new();
         let mut spirv_exts = Vec::new();
         let mut add_ext = |major, minor, patch, ext: &str| {
@@ -581,28 +618,41 @@ impl Device {
         let mut add_feat = |major, minor, patch, feat: &str| {
             feats.push(mk_cl_version_ext(major, minor, patch, feat));
         };
-        let mut add_spirv = |ext: &str| {
-            spirv_exts.push(CString::new(ext).unwrap());
+        let mut add_spirv = |ext| {
+            spirv_exts.push(ext);
         };
 
         // add extensions all drivers support for now
+        add_ext(1, 0, 0, "cl_khr_byte_addressable_store");
+        add_ext(1, 0, 0, "cl_khr_create_command_queue");
+        add_ext(1, 0, 0, "cl_khr_expect_assume");
+        add_ext(1, 0, 0, "cl_khr_extended_versioning");
         add_ext(1, 0, 0, "cl_khr_global_int32_base_atomics");
         add_ext(1, 0, 0, "cl_khr_global_int32_extended_atomics");
+        add_ext(1, 0, 0, "cl_khr_il_program");
+        add_ext(1, 0, 0, "cl_khr_local_int32_base_atomics");
+        add_ext(1, 0, 0, "cl_khr_local_int32_extended_atomics");
         add_ext(2, 0, 0, "cl_khr_integer_dot_product");
+        add_ext(1, 0, 0, "cl_khr_spirv_no_integer_wrap_decoration");
+        add_ext(1, 0, 0, "cl_khr_suggested_local_work_size");
+
+        add_feat(2, 0, 0, "__opencl_c_integer_dot_product_input_4x8bit");
         add_feat(
             2,
             0,
             0,
             "__opencl_c_integer_dot_product_input_4x8bit_packed",
         );
-        add_feat(2, 0, 0, "__opencl_c_integer_dot_product_input_4x8bit");
-        add_ext(1, 0, 0, "cl_khr_local_int32_base_atomics");
-        add_ext(1, 0, 0, "cl_khr_local_int32_extended_atomics");
 
-        add_spirv("SPV_KHR_expect_assume");
-        add_spirv("SPV_KHR_float_controls");
-        add_spirv("SPV_KHR_integer_dot_product");
-        add_spirv("SPV_KHR_no_integer_wrap_decoration");
+        add_spirv(c"SPV_KHR_expect_assume");
+        add_spirv(c"SPV_KHR_float_controls");
+        add_spirv(c"SPV_KHR_integer_dot_product");
+        add_spirv(c"SPV_KHR_no_integer_wrap_decoration");
+
+        if self.linkonce_supported() {
+            add_ext(1, 0, 0, "cl_khr_spirv_linkonce_odr");
+            add_spirv(c"SPV_KHR_linkonce_odr");
+        }
 
         if self.fp16_supported() {
             add_ext(1, 0, 0, "cl_khr_fp16");
@@ -640,6 +690,10 @@ impl Device {
                 add_ext(1, 0, 0, "cl_khr_3d_image_writes");
                 add_feat(1, 0, 0, "__opencl_c_3d_image_writes");
             }
+
+            if self.caps.has_depth_images {
+                add_ext(1, 0, 0, "cl_khr_depth_images");
+            }
         }
 
         if self.pci_info().is_some() {
@@ -669,22 +723,53 @@ impl Device {
 
         self.extensions = exts;
         self.clc_features = feats;
-        self.extension_string = format!("{} {}", PLATFORM_EXTENSION_STR, exts_str.join(" "));
+        self.extension_string = exts_str.join(" ");
         self.spirv_extensions = spirv_exts;
     }
 
-    fn shader_param(&self, cap: pipe_shader_cap) -> i32 {
+    fn shader_caps(&self) -> &pipe_shader_caps {
         self.screen
-            .shader_param(pipe_shader_type::PIPE_SHADER_COMPUTE, cap)
+            .shader_caps(pipe_shader_type::PIPE_SHADER_COMPUTE)
     }
 
-    pub fn all() -> impl Iterator<Item = Device> {
-        load_screens().filter_map(Device::new)
+    pub fn all() -> Vec<Device> {
+        let mut devs: Vec<_> = load_screens().filter_map(Device::new).collect();
+
+        // Pick a default device. One must be the default one no matter what. And custom devices can
+        // only be that one if they are the only devices available.
+        //
+        // The entry with the highest value will be the default device.
+        let default = devs.iter_mut().max_by_key(|dev| {
+            let mut val = if dev.device_type == CL_DEVICE_TYPE_CUSTOM {
+                // needs to be small enough so it's always going to be the smallest value
+                -100
+            } else if dev.device_type == CL_DEVICE_TYPE_CPU {
+                0
+            } else if dev.unified_memory() {
+                // we give unified memory devices max priority, because we don't want to spin up the
+                // discrete GPU on laptops by default.
+                100
+            } else {
+                10
+            };
+
+            // we deprioritize zink for now.
+            if dev.screen.driver_name() == c"zink" {
+                val -= 1;
+            }
+
+            val
+        });
+
+        if let Some(default) = default {
+            default.device_type |= CL_DEVICE_TYPE_DEFAULT;
+        }
+
+        devs
     }
 
     pub fn address_bits(&self) -> cl_uint {
-        self.screen
-            .compute_param(pipe_compute_cap::PIPE_COMPUTE_CAP_ADDRESS_BITS)
+        self.screen.compute_caps().address_bits
     }
 
     pub fn const_max_size(&self) -> cl_ulong {
@@ -697,36 +782,65 @@ impl Device {
             1 << 26,
             min(
                 self.max_mem_alloc(),
-                self.screen
-                    .param(pipe_cap::PIPE_CAP_MAX_SHADER_BUFFER_SIZE_UINT) as u64,
+                self.screen.caps().max_shader_buffer_size as u64,
             ),
         )
     }
 
     pub fn const_max_count(&self) -> cl_uint {
-        self.shader_param(pipe_shader_cap::PIPE_SHADER_CAP_MAX_CONST_BUFFERS) as cl_uint
+        self.shader_caps().max_const_buffers
     }
 
-    pub fn device_type(&self, internal: bool) -> cl_device_type {
-        if let Some(env) = Self::parse_env_device_type() {
-            return env;
-        }
+    fn set_device_type(&mut self) {
+        let env = env::var("RUSTICL_DEVICE_TYPE").ok().and_then(|env| {
+            Some(match &*env.to_ascii_lowercase() {
+                "accelerator" => CL_DEVICE_TYPE_ACCELERATOR,
+                "cpu" => CL_DEVICE_TYPE_CPU,
+                "custom" => CL_DEVICE_TYPE_CUSTOM,
+                "gpu" => CL_DEVICE_TYPE_GPU,
+                // if no valid string is set we treat is as no value was set
+                _ => return None,
+            })
+        });
 
-        if self.custom {
-            return CL_DEVICE_TYPE_CUSTOM as cl_device_type;
-        }
-        let mut res = match self.screen.device_type() {
-            pipe_loader_device_type::PIPE_LOADER_DEVICE_SOFTWARE => CL_DEVICE_TYPE_CPU,
-            pipe_loader_device_type::PIPE_LOADER_DEVICE_PCI => CL_DEVICE_TYPE_GPU,
-            pipe_loader_device_type::PIPE_LOADER_DEVICE_PLATFORM => CL_DEVICE_TYPE_GPU,
-            pipe_loader_device_type::NUM_PIPE_LOADER_DEVICE_TYPES => CL_DEVICE_TYPE_CUSTOM,
+        self.device_type = if let Some(env) = env {
+            env
+        } else if self.check_custom() {
+            CL_DEVICE_TYPE_CUSTOM
+        } else {
+            match self.screen.device_type() {
+                pipe_loader_device_type::PIPE_LOADER_DEVICE_SOFTWARE => CL_DEVICE_TYPE_CPU,
+                pipe_loader_device_type::PIPE_LOADER_DEVICE_PCI => CL_DEVICE_TYPE_GPU,
+                pipe_loader_device_type::PIPE_LOADER_DEVICE_PLATFORM => CL_DEVICE_TYPE_GPU,
+                pipe_loader_device_type::NUM_PIPE_LOADER_DEVICE_TYPES => CL_DEVICE_TYPE_CUSTOM,
+            }
+        };
+    }
+
+    pub fn linkonce_supported(&self) -> bool {
+        let version = unsafe {
+            match CStr::from_ptr(clc_spirv_tools_version()).to_str() {
+                Ok(v) => v,
+                Err(_) => return false,
+            }
         };
 
-        if internal && res == CL_DEVICE_TYPE_GPU && self.screen.driver_name() != "zink" {
-            res |= CL_DEVICE_TYPE_DEFAULT;
+        // check format and compare to "v2025.1"
+        if !version.starts_with('v') {
+            return false;
         }
 
-        res as cl_device_type
+        let version = &version[1..];
+        if let Some((year_str, minor_version_str)) = version.split_once('.') {
+            let year = year_str.parse::<u32>();
+            let minor_version = minor_version_str.parse::<u32>();
+
+            if year_str.len() == 4 && year.is_ok() && minor_version.is_ok() {
+                return version >= "2025.1";
+            }
+        }
+
+        false
     }
 
     pub fn fp16_supported(&self) -> bool {
@@ -734,7 +848,7 @@ impl Device {
             return false;
         }
 
-        self.shader_param(pipe_shader_cap::PIPE_SHADER_CAP_FP16) != 0
+        self.shader_caps().fp16
     }
 
     pub fn fp64_supported(&self) -> bool {
@@ -742,12 +856,12 @@ impl Device {
             return false;
         }
 
-        self.screen.param(pipe_cap::PIPE_CAP_DOUBLES) == 1
+        self.screen.caps().doubles
     }
 
     pub fn is_gl_sharing_supported(&self) -> bool {
-        self.screen.param(pipe_cap::PIPE_CAP_CL_GL_SHARING) != 0
-            && self.screen.param(pipe_cap::PIPE_CAP_DMABUF) != 0
+        self.screen.caps().cl_gl_sharing
+            && self.screen.caps().dmabuf != 0
             && !self.is_device_software()
             && self.screen.is_res_handle_supported()
             && self.screen.device_uuid().is_some()
@@ -802,7 +916,7 @@ impl Device {
     }
 
     pub fn int64_supported(&self) -> bool {
-        self.screen.param(pipe_cap::PIPE_CAP_INT64) == 1
+        self.screen.caps().int64
     }
 
     pub fn global_mem_size(&self) -> cl_ulong {
@@ -814,27 +928,25 @@ impl Device {
             };
             memory * 1024
         } else {
-            self.screen
-                .compute_param(pipe_compute_cap::PIPE_COMPUTE_CAP_MAX_GLOBAL_SIZE)
+            self.screen.compute_caps().max_global_size
         }
     }
 
     pub fn image_3d_size(&self) -> usize {
         if self.caps.has_images {
-            1 << (self.screen.param(pipe_cap::PIPE_CAP_MAX_TEXTURE_3D_LEVELS) - 1)
+            1 << (self.screen.caps().max_texture_3d_levels - 1)
         } else {
             0
         }
     }
 
     pub fn image_3d_supported(&self) -> bool {
-        self.caps.has_images && self.screen.param(pipe_cap::PIPE_CAP_MAX_TEXTURE_3D_LEVELS) != 0
+        self.caps.has_images && self.screen.caps().max_texture_3d_levels != 0
     }
 
     pub fn image_array_size(&self) -> usize {
         if self.caps.has_images {
-            self.screen
-                .param(pipe_cap::PIPE_CAP_MAX_TEXTURE_ARRAY_LAYERS) as usize
+            self.screen.caps().max_texture_array_layers as usize
         } else {
             0
         }
@@ -842,8 +954,7 @@ impl Device {
 
     pub fn image_pitch_alignment(&self) -> cl_uint {
         if self.caps.has_images {
-            self.screen
-                .param(pipe_cap::PIPE_CAP_LINEAR_IMAGE_PITCH_ALIGNMENT) as u32
+            self.screen.caps().linear_image_pitch_alignment
         } else {
             0
         }
@@ -851,21 +962,25 @@ impl Device {
 
     pub fn image_base_address_alignment(&self) -> cl_uint {
         if self.caps.has_images {
-            self.screen
-                .param(pipe_cap::PIPE_CAP_LINEAR_IMAGE_BASE_ADDRESS_ALIGNMENT) as u32
+            self.screen.caps().linear_image_base_address_alignment
         } else {
             0
         }
     }
 
-    pub fn image_buffer_size(&self) -> usize {
+    pub fn image_buffer_max_size_pixels(&self) -> usize {
         if self.caps.has_images {
             min(
-                // the CTS requires it to not exceed `CL_MAX_MEM_ALLOC_SIZE`
-                self.max_mem_alloc(),
-                self.screen
-                    .param(pipe_cap::PIPE_CAP_MAX_TEXEL_BUFFER_ELEMENTS_UINT)
-                    as cl_ulong,
+                // The CTS requires it to not exceed `CL_MAX_MEM_ALLOC_SIZE`, also we need to divide
+                // by the max pixel size, because this cap is in pixels, not bytes.
+                //
+                // The CTS also casts this to int in a couple of places,
+                // see: https://github.com/KhronosGroup/OpenCL-CTS/issues/2056
+                min(
+                    self.max_mem_alloc() / MAX_PIXEL_SIZE_BYTES,
+                    c_int::MAX as cl_ulong,
+                ),
+                self.screen.caps().max_texel_buffer_elements as cl_ulong,
             ) as usize
         } else {
             0
@@ -877,74 +992,54 @@ impl Device {
     }
 
     pub fn little_endian(&self) -> bool {
-        let endianness = self.screen.param(pipe_cap::PIPE_CAP_ENDIANNESS);
-        endianness == (pipe_endian::PIPE_ENDIAN_LITTLE as i32)
+        let endianness = self.screen.caps().endianness;
+        endianness == pipe_endian::PIPE_ENDIAN_LITTLE
     }
 
     pub fn local_mem_size(&self) -> cl_ulong {
-        self.screen
-            .compute_param(pipe_compute_cap::PIPE_COMPUTE_CAP_MAX_LOCAL_SIZE)
+        self.screen.compute_caps().max_local_size as cl_ulong
     }
 
     pub fn max_block_sizes(&self) -> Vec<usize> {
-        let v: Vec<u64> = self
-            .screen
-            .compute_param(pipe_compute_cap::PIPE_COMPUTE_CAP_MAX_BLOCK_SIZE);
+        let v: [u32; 3] = self.screen.compute_caps().max_block_size;
         v.into_iter().map(|v| v as usize).collect()
     }
 
-    pub fn max_grid_size(&self) -> Vec<u64> {
-        let v: Vec<u64> = self
-            .screen
-            .compute_param(pipe_compute_cap::PIPE_COMPUTE_CAP_MAX_GRID_SIZE);
-
+    pub fn max_grid_size(&self) -> Vec<usize> {
+        let v: [u32; 3] = self.screen.compute_caps().max_grid_size;
         v.into_iter()
             .map(|a| min(a, Platform::dbg().max_grid_size))
+            .map(|v| v as usize)
             .collect()
     }
 
     pub fn max_clock_freq(&self) -> cl_uint {
-        self.screen
-            .compute_param(pipe_compute_cap::PIPE_COMPUTE_CAP_MAX_CLOCK_FREQUENCY)
+        self.screen.compute_caps().max_clock_frequency
     }
 
     pub fn max_compute_units(&self) -> cl_uint {
-        self.screen
-            .compute_param(pipe_compute_cap::PIPE_COMPUTE_CAP_MAX_COMPUTE_UNITS)
+        self.screen.compute_caps().max_compute_units
     }
 
     pub fn max_grid_dimensions(&self) -> cl_uint {
-        ComputeParam::<u64>::compute_param(
-            self.screen.as_ref(),
-            pipe_compute_cap::PIPE_COMPUTE_CAP_GRID_DIMENSION,
-        ) as cl_uint
+        self.screen.compute_caps().grid_dimension
     }
 
     pub fn max_mem_alloc(&self) -> cl_ulong {
         // TODO: at the moment gallium doesn't support bigger buffers
-        min(
-            self.screen
-                .compute_param(pipe_compute_cap::PIPE_COMPUTE_CAP_MAX_MEM_ALLOC_SIZE),
-            0x80000000,
-        )
+        min(self.screen.compute_caps().max_mem_alloc_size, 0x80000000)
     }
 
     pub fn max_samplers(&self) -> cl_uint {
-        self.shader_param(pipe_shader_cap::PIPE_SHADER_CAP_MAX_TEXTURE_SAMPLERS) as cl_uint
+        self.shader_caps().max_texture_samplers
     }
 
     pub fn max_threads_per_block(&self) -> usize {
-        ComputeParam::<u64>::compute_param(
-            self.screen.as_ref(),
-            pipe_compute_cap::PIPE_COMPUTE_CAP_MAX_THREADS_PER_BLOCK,
-        ) as usize
+        self.screen.compute_caps().max_threads_per_block as usize
     }
 
     pub fn param_max_size(&self) -> usize {
-        min(
-            self.shader_param(pipe_shader_cap::PIPE_SHADER_CAP_MAX_CONST_BUFFER0_SIZE) as u32,
-            4 * 1024,
-        ) as usize
+        min(self.shader_caps().max_const_buffer0_size, 4 * 1024) as usize
     }
 
     pub fn printf_buffer_size(&self) -> usize {
@@ -956,10 +1051,10 @@ impl Device {
             return None;
         }
 
-        let pci_domain = self.screen.param(pipe_cap::PIPE_CAP_PCI_GROUP) as cl_uint;
-        let pci_bus = self.screen.param(pipe_cap::PIPE_CAP_PCI_BUS) as cl_uint;
-        let pci_device = self.screen.param(pipe_cap::PIPE_CAP_PCI_DEVICE) as cl_uint;
-        let pci_function = self.screen.param(pipe_cap::PIPE_CAP_PCI_FUNCTION) as cl_uint;
+        let pci_domain = self.screen.caps().pci_group as cl_uint;
+        let pci_bus = self.screen.caps().pci_bus as cl_uint;
+        let pci_device = self.screen.caps().pci_device as cl_uint;
+        let pci_function = self.screen.caps().pci_function as cl_uint;
 
         Some(cl_device_pci_bus_info_khr {
             pci_domain,
@@ -969,15 +1064,28 @@ impl Device {
         })
     }
 
+    fn reusable_ctx(&self) -> MutexGuard<Vec<PipeContext>> {
+        self.reusable_ctx.lock().unwrap()
+    }
+
     pub fn screen(&self) -> &Arc<PipeScreen> {
         &self.screen
     }
 
+    pub fn create_context(&self) -> Option<PipeContext> {
+        self.reusable_ctx()
+            .pop()
+            .or_else(|| self.screen.create_context())
+    }
+
+    pub fn recycle_context(&self, ctx: PipeContext) {
+        if Platform::dbg().reuse_context {
+            self.reusable_ctx().push(ctx);
+        }
+    }
+
     pub fn subgroup_sizes(&self) -> Vec<usize> {
-        let subgroup_size = ComputeParam::<u32>::compute_param(
-            self.screen.as_ref(),
-            pipe_compute_cap::PIPE_COMPUTE_CAP_SUBGROUP_SIZES,
-        );
+        let subgroup_size = self.screen.compute_caps().subgroup_sizes;
 
         SetBitIndices::from_msb(subgroup_size)
             .map(|bit| 1 << bit)
@@ -985,10 +1093,7 @@ impl Device {
     }
 
     pub fn max_subgroups(&self) -> u32 {
-        ComputeParam::<u32>::compute_param(
-            self.screen.as_ref(),
-            pipe_compute_cap::PIPE_COMPUTE_CAP_MAX_SUBGROUPS,
-        )
+        self.screen.compute_caps().max_subgroups
     }
 
     pub fn subgroups_supported(&self) -> bool {
@@ -1001,37 +1106,35 @@ impl Device {
     }
 
     pub fn svm_supported(&self) -> bool {
-        self.screen.param(pipe_cap::PIPE_CAP_SYSTEM_SVM) == 1
+        self.screen.caps().system_svm
     }
 
     pub fn unified_memory(&self) -> bool {
-        self.screen.param(pipe_cap::PIPE_CAP_UMA) == 1
+        self.screen.caps().uma
     }
 
     pub fn vendor_id(&self) -> cl_uint {
-        let id = self.screen.param(pipe_cap::PIPE_CAP_VENDOR_ID);
-        if id == -1 {
+        let id = self.screen.caps().vendor_id;
+        if id == 0xFFFFFFFF {
             return 0;
         }
-        id as u32
+        id
     }
 
     pub fn prefers_real_buffer_in_cb0(&self) -> bool {
-        self.screen
-            .param(pipe_cap::PIPE_CAP_PREFER_REAL_BUFFER_IN_CONSTBUF0)
-            == 1
+        self.screen.caps().prefer_real_buffer_in_constbuf0
     }
 
     pub fn shareable_shaders(&self) -> bool {
-        self.screen.param(pipe_cap::PIPE_CAP_SHAREABLE_SHADERS) == 1
+        self.screen.caps().shareable_shaders
     }
 
     pub fn images_as_deref(&self) -> bool {
-        self.screen.param(pipe_cap::PIPE_CAP_NIR_IMAGES_AS_DEREF) == 1
+        self.screen.caps().nir_images_as_deref
     }
 
     pub fn samplers_as_deref(&self) -> bool {
-        self.screen.param(pipe_cap::PIPE_CAP_NIR_SAMPLERS_AS_DEREF) == 1
+        self.screen.caps().nir_samplers_as_deref
     }
 
     pub fn helper_ctx(&self) -> impl HelperContextWrapper + '_ {
@@ -1047,6 +1150,7 @@ impl Device {
             fp64: self.fp64_supported(),
             int64: self.int64_supported(),
             images: self.caps.has_images,
+            images_depth: self.caps.has_depth_images,
             images_read_write: self.caps.has_rw_images,
             images_write_3d: self.caps.has_3d_image_writes,
             integer_dot_product: true,
@@ -1065,7 +1169,7 @@ pub fn devs() -> &'static Vec<Device> {
 pub fn get_devs_for_type(device_type: cl_device_type) -> Vec<&'static Device> {
     devs()
         .iter()
-        .filter(|d| device_type & d.device_type(true) != 0)
+        .filter(|d| device_type & d.device_type as cl_device_type != 0)
         .collect()
 }
 

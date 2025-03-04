@@ -50,7 +50,6 @@ hk_files = files(
 )
 
 hk_entrypoints = custom_target(
-  'hk_entrypoints',
   input : [vk_entrypoints_gen, vk_api_xml],
   output : ['hk_entrypoints.h', 'hk_entrypoints.c'],
   command : [
@@ -69,6 +68,8 @@ hk_deps = [
   idep_vulkan_wsi,
   idep_vulkan_wsi_headers,
   idep_agx_pack,
+  idep_libagx,
+  idep_libagx_shaders_h,
 ]
 
 libhk = static_library(
@@ -76,7 +77,6 @@ libhk = static_library(
   [
     hk_entrypoints,
     hk_files,
-    libagx_shaders,
     sha1_h,
   ],
   include_directories : [
@@ -85,6 +85,8 @@ libhk = static_library(
     inc_include,
     inc_src,
     inc_asahi,
+    inc_virtio_gpu,
+    inc_virtio_vdrm,
   ],
   link_with : [libasahi_lib, libasahi_layout, libasahi_compiler],
   c_args : ['-Wno-c2x-extensions'],
@@ -108,12 +110,11 @@ if with_platform_windows
 endif
 
 asahi_icd = custom_target(
-  'asahi_icd',
   input : [vk_icd_gen, vk_api_xml],
   output : 'asahi_icd.@0@.json'.format(host_machine.cpu()),
   command : [
     prog_python, '@INPUT0@',
-    '--api-version', '1.3', '--xml', '@INPUT1@',
+    '--api-version', '1.4', '--xml', '@INPUT1@',
     '--lib-path', join_paths(icd_lib_path, icd_file_name),
     '--out', '@OUTPUT@',
   ],
@@ -125,12 +126,11 @@ asahi_icd = custom_target(
 
 _dev_icdname = 'asahi_devenv_icd.@0@.json'.format(host_machine.cpu())
 custom_target(
-  'asahi_devenv_icd',
   input : [vk_icd_gen, vk_api_xml],
   output : _dev_icdname,
   command : [
     prog_python, '@INPUT0@',
-    '--api-version', '1.3', '--xml', '@INPUT1@',
+    '--api-version', '1.4', '--xml', '@INPUT1@',
     '--lib-path', meson.current_build_dir() / icd_file_name,
     '--out', '@OUTPUT@',
   ],

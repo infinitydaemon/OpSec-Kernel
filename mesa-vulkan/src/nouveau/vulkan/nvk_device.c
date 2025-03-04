@@ -55,7 +55,7 @@ nvk_slm_area_ensure(struct nvk_device *dev,
                     uint32_t slm_bytes_per_lane,
                     uint32_t crs_bytes_per_warp)
 {
-   struct nvk_physical_device *pdev = nvk_device_physical(dev);
+   const struct nvk_physical_device *pdev = nvk_device_physical(dev);
    VkResult result;
 
    assert(slm_bytes_per_lane < (1 << 24));
@@ -102,7 +102,7 @@ nvk_slm_area_ensure(struct nvk_device *dev,
    simple_mtx_lock(&area->mutex);
    if (bytes_per_tpc <= area->bytes_per_tpc) {
       /* We lost the race, throw away our BO */
-      assert(area->bytes_per_warp == bytes_per_warp);
+      assert(area->bytes_per_warp >= bytes_per_warp);
       unref_mem = mem;
    } else {
       unref_mem = area->mem;
@@ -115,6 +115,14 @@ nvk_slm_area_ensure(struct nvk_device *dev,
    if (unref_mem)
       nvkmd_mem_unref(unref_mem);
 
+   return VK_SUCCESS;
+}
+
+static VkResult
+nvk_device_get_timestamp(struct vk_device *vk_dev, uint64_t *timestamp)
+{
+   struct nvk_device *dev = container_of(vk_dev, struct nvk_device, vk);
+   *timestamp = nvkmd_dev_get_gpu_timestamp(dev->nvkmd);
    return VK_SUCCESS;
 }
 
@@ -153,6 +161,8 @@ nvk_CreateDevice(VkPhysicalDevice physicalDevice,
    vk_device_set_drm_fd(&dev->vk, nvkmd_dev_get_drm_fd(dev->nvkmd));
    dev->vk.command_buffer_ops = &nvk_cmd_buffer_ops;
 
+   dev->vk.get_timestamp = nvk_device_get_timestamp;
+
    result = nvk_upload_queue_init(dev, &dev->upload);
    if (result != VK_SUCCESS)
       goto fail_nvkmd;
@@ -164,7 +174,7 @@ nvk_CreateDevice(VkPhysicalDevice physicalDevice,
       goto fail_upload;
 
    memset(dev->zero_page->map, 0, 0x1000);
-   nvkmd_mem_unmap(dev->zero_page);
+   nvkmd_mem_unmap(dev->zero_page, 0);
 
    result = nvk_descriptor_table_init(dev, &dev->images,
                                       8 * 4 /* tic entry size */,
@@ -189,6 +199,13 @@ nvk_CreateDevice(VkPhysicalDevice physicalDevice,
    if (result != VK_SUCCESS)
       goto fail_images;
 
+   if (dev->vk.enabled_features.descriptorBuffer ||
+       nvk_use_edb_buffer_views(pdev)) {
+      result = nvk_edb_bview_cache_init(dev, &dev->edb_bview_cache);
+      if (result != VK_SUCCESS)
+         goto fail_samplers;
+   }
+
    /* If we have a full BAR, go ahead and do shader uploads on the CPU.
     * Otherwise, we fall back to doing shader uploads via the upload queue.
     *
@@ -203,7 +220,7 @@ nvk_CreateDevice(VkPhysicalDevice physicalDevice,
                           2048 /* overalloc */,
                           pdev->info.cls_eng3d < VOLTA_A);
    if (result != VK_SUCCESS)
-      goto fail_samplers;
+      goto fail_edb_bview_cache;
 
    result = nvk_heap_init(dev, &dev->event_heap,
                           NVKMD_MEM_LOCAL, NVKMD_MEM_MAP_WR,
@@ -257,6 +274,8 @@ fail_slm:
    nvk_heap_finish(dev, &dev->event_heap);
 fail_shader_heap:
    nvk_heap_finish(dev, &dev->shader_heap);
+fail_edb_bview_cache:
+   nvk_edb_bview_cache_finish(dev, &dev->edb_bview_cache);
 fail_samplers:
    nvk_descriptor_table_finish(dev, &dev->samplers);
 fail_images:
@@ -282,6 +301,9 @@ nvk_DestroyDevice(VkDevice _device, const VkAllocationCallbacks *pAllocator)
    if (!dev)
       return;
 
+   if (dev->copy_queries)
+      vk_shader_destroy(&dev->vk, &dev->copy_queries->vk, &dev->vk.alloc);
+
    nvk_device_finish_meta(dev);
 
    vk_pipeline_cache_destroy(dev->vk.mem_cache, NULL);
@@ -296,63 +318,13 @@ nvk_DestroyDevice(VkDevice _device, const VkAllocationCallbacks *pAllocator)
    nvk_slm_area_finish(&dev->slm);
    nvk_heap_finish(dev, &dev->event_heap);
    nvk_heap_finish(dev, &dev->shader_heap);
+   nvk_edb_bview_cache_finish(dev, &dev->edb_bview_cache);
    nvk_descriptor_table_finish(dev, &dev->samplers);
    nvk_descriptor_table_finish(dev, &dev->images);
    nvkmd_mem_unref(dev->zero_page);
    nvk_upload_queue_finish(dev, &dev->upload);
    nvkmd_dev_destroy(dev->nvkmd);
    vk_free(&dev->vk.alloc, dev);
-}
-
-VKAPI_ATTR VkResult VKAPI_CALL
-nvk_GetCalibratedTimestampsKHR(VkDevice _device,
-                               uint32_t timestampCount,
-                               const VkCalibratedTimestampInfoKHR *pTimestampInfos,
-                               uint64_t *pTimestamps,
-                               uint64_t *pMaxDeviation)
-{
-   VK_FROM_HANDLE(nvk_device, dev, _device);
-   uint64_t max_clock_period = 0;
-   uint64_t begin, end;
-   int d;
-
-#ifdef CLOCK_MONOTONIC_RAW
-   begin = vk_clock_gettime(CLOCK_MONOTONIC_RAW);
-#else
-   begin = vk_clock_gettime(CLOCK_MONOTONIC);
-#endif
-
-   for (d = 0; d < timestampCount; d++) {
-      switch (pTimestampInfos[d].timeDomain) {
-      case VK_TIME_DOMAIN_DEVICE_KHR:
-         pTimestamps[d] = nvkmd_dev_get_gpu_timestamp(dev->nvkmd);
-         max_clock_period = MAX2(max_clock_period, 1); /* FIXME: Is timestamp period actually 1? */
-         break;
-      case VK_TIME_DOMAIN_CLOCK_MONOTONIC_KHR:
-         pTimestamps[d] = vk_clock_gettime(CLOCK_MONOTONIC);
-         max_clock_period = MAX2(max_clock_period, 1);
-         break;
-
-#ifdef CLOCK_MONOTONIC_RAW
-      case VK_TIME_DOMAIN_CLOCK_MONOTONIC_RAW_KHR:
-         pTimestamps[d] = begin;
-         break;
-#endif
-      default:
-         pTimestamps[d] = 0;
-         break;
-      }
-   }
-
-#ifdef CLOCK_MONOTONIC_RAW
-   end = vk_clock_gettime(CLOCK_MONOTONIC_RAW);
-#else
-   end = vk_clock_gettime(CLOCK_MONOTONIC);
-#endif
-
-   *pMaxDeviation = vk_time_max_deviation(begin, end, max_clock_period);
-
-   return VK_SUCCESS;
 }
 
 VkResult

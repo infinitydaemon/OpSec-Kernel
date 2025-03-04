@@ -193,10 +193,9 @@ radv_load_output(struct radv_shader_context *ctx, unsigned index, unsigned chan)
 }
 
 static void
-ac_llvm_finalize_module(struct radv_shader_context *ctx, LLVMPassManagerRef passmgr)
+ac_llvm_finalize_module(struct radv_shader_context *ctx, struct ac_midend_optimizer *meo)
 {
-   LLVMRunPassManager(passmgr, ctx->ac.module);
-
+   ac_llvm_optimize_module(meo, ctx->ac.module);
    ac_llvm_context_dispose(&ctx->ac);
 }
 
@@ -214,18 +213,6 @@ declare_esgs_ring(struct radv_shader_context *ctx)
       LLVMAddGlobalInAddressSpace(ctx->ac.module, LLVMArrayType(ctx->ac.i32, 0), "esgs_ring", AC_ADDR_SPACE_LDS);
    LLVMSetLinkage(esgs_ring, LLVMExternalLinkage);
    LLVMSetAlignment(esgs_ring, 64 * 1024);
-}
-
-static LLVMValueRef
-radv_intrinsic_load(struct ac_shader_abi *abi, nir_intrinsic_instr *intrin)
-{
-   switch (intrin->intrinsic) {
-   case nir_intrinsic_load_base_vertex:
-   case nir_intrinsic_load_first_vertex:
-      return radv_load_base_vertex(abi, intrin->intrinsic == nir_intrinsic_load_base_vertex);
-   default:
-      return NULL;
-   }
 }
 
 static LLVMModuleRef
@@ -281,7 +268,6 @@ ac_translate_nir_to_llvm(struct ac_llvm_compiler *ac_llvm, const struct radv_nir
 
    create_function(&ctx, shaders[shader_count - 1]->info.stage, shader_count >= 2);
 
-   ctx.abi.intrinsic_load = radv_intrinsic_load;
    ctx.abi.load_ubo = radv_load_ubo;
    ctx.abi.load_ssbo = radv_load_ssbo;
    ctx.abi.load_sampler_desc = radv_get_sampler_desc;
@@ -292,16 +278,6 @@ ac_translate_nir_to_llvm(struct ac_llvm_compiler *ac_llvm, const struct radv_nir
    bool is_ngg = is_pre_gs_stage(shaders[0]->info.stage) && info->is_ngg;
    if (shader_count >= 2 || is_ngg)
       ac_init_exec_full_mask(&ctx.ac);
-
-   if (args->ac.vertex_id.used)
-      ctx.abi.vertex_id = ac_get_arg(&ctx.ac, args->ac.vertex_id);
-   if (args->ac.vs_rel_patch_id.used)
-      ctx.abi.vs_rel_patch_id = ac_get_arg(&ctx.ac, args->ac.vs_rel_patch_id);
-   if (args->ac.instance_id.used)
-      ctx.abi.instance_id = ac_get_arg(&ctx.ac, args->ac.instance_id);
-
-   if (options->info->has_ls_vgpr_init_bug && shaders[shader_count - 1]->info.stage == MESA_SHADER_TESS_CTRL)
-      ac_fixup_ls_hs_input_vgprs(&ctx.ac, &ctx.abi, &args->ac);
 
    if (is_ngg) {
       if (!info->is_ngg_passthrough)
@@ -390,7 +366,7 @@ ac_translate_nir_to_llvm(struct ac_llvm_compiler *ac_llvm, const struct radv_nir
       fprintf(stderr, "\n");
    }
 
-   ac_llvm_finalize_module(&ctx, ac_llvm->passmgr);
+   ac_llvm_finalize_module(&ctx, ac_llvm->meo);
 
    free(name);
 

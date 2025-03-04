@@ -215,7 +215,7 @@ faster personal machine as a runner.  You can find the gitlab-runner
 package in Debian, or use GitLab's own builds.
 
 To do so, follow `GitLab's instructions
-<https://docs.gitlab.com/ee/ci/runners/runners_scope.html#create-a-project-runner-with-a-runner-authentication-token>`__
+<https://docs.gitlab.com/ci/runners/runners_scope/#create-a-project-runner-with-a-runner-authentication-token>`__
 to register your personal GitLab runner in your Mesa fork.  Then, tell
 Mesa how many jobs it should serve (``concurrent=``) and how many
 cores those jobs should use (``FDO_CI_CONCURRENT=``) by editing these
@@ -334,6 +334,17 @@ instructions on how to uprev Linux Kernel in the GitLab CI ecosystem.
 
   kernel
 
+Structured tagging
+------------------
+
+Some build scripts can be tagged with a deterministic tag to allow for
+testing and validation of the build output. This section lists the
+documentation pages for the structured tagging feature.
+
+.. toctree::
+  :maxdepth: 1
+
+  structured-tagging
 
 Reusing CI scripts for other projects
 --------------------------------------

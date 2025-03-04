@@ -23,9 +23,11 @@
 #ifndef VK_UTIL_H
 #define VK_UTIL_H
 
+#include "compiler/shader_enums.h"
 #include "util/bitscan.h"
 #include "util/macros.h"
-#include "compiler/shader_enums.h"
+#include "c99_compat.h"
+
 #include <stdlib.h>
 #include <string.h>
 
@@ -306,7 +308,9 @@ struct vk_pipeline_cache_header {
 
 #define typed_memcpy(dest, src, count) do { \
    STATIC_ASSERT(sizeof(*(src)) == sizeof(*(dest))); \
-   memcpy((dest), (src), (count) * sizeof(*(src))); \
+   if ((dest) != NULL && (src) != NULL && (count) > 0) { \
+       memcpy((dest), (src), (count) * sizeof(*(src))); \
+   } \
 } while (0)
 
 static inline gl_shader_stage
@@ -360,7 +364,7 @@ vk_spec_info_to_nir_spirv(const VkSpecializationInfo *spec_info,
    if (name != _stack_##name) free(name)
 
 static inline uint8_t
-vk_index_type_to_bytes(enum VkIndexType type)
+vk_index_type_to_bytes(VkIndexType type)
 {
    switch (type) {
    case VK_INDEX_TYPE_NONE_KHR:  return 0;
@@ -372,7 +376,7 @@ vk_index_type_to_bytes(enum VkIndexType type)
 }
 
 static inline uint32_t
-vk_index_to_restart(enum VkIndexType type)
+vk_index_to_restart(VkIndexType type)
 {
    switch (type) {
    case VK_INDEX_TYPE_UINT8_KHR: return 0xff;
@@ -381,6 +385,32 @@ vk_index_to_restart(enum VkIndexType type)
    default:                      unreachable("unexpected index type");
    }
 }
+
+static inline bool
+vk_descriptor_type_is_dynamic(VkDescriptorType type)
+{
+   switch (type) {
+   case VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC:
+   case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC:
+      return true;
+
+   default:
+      return false;
+   }
+}
+
+#define VK_PRINT_STR(field, ...) do {                          \
+   memset(field, 0, sizeof(field));                            \
+   UNUSED int i = snprintf(field, sizeof(field), __VA_ARGS__); \
+   assert(i > 0 && i < sizeof(field));                         \
+} while(0)
+
+#define VK_COPY_STR(field, str) do {                           \
+   int len = strlen(str);                                      \
+   assert(len > 0 && len < sizeof(field));                     \
+   memcpy(field, str, len);                                    \
+   memset(field + len, 0, sizeof(field) - len);                \
+} while(0)
 
 #ifdef __cplusplus
 }

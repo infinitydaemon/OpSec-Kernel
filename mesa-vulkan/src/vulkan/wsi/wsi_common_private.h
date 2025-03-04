@@ -40,6 +40,7 @@ struct wsi_swapchain;
 #define WSI_DEBUG_NOSHM       (1ull << 2)
 #define WSI_DEBUG_LINEAR      (1ull << 3)
 #define WSI_DEBUG_DXGI        (1ull << 4)
+#define WSI_DEBUG_NOWLTS      (1ull << 5)
 
 extern uint64_t WSI_DEBUG;
 
@@ -120,7 +121,7 @@ enum wsi_explicit_sync_timelines
    WSI_ES_ACQUIRE,
    WSI_ES_RELEASE,
 
-   WSI_ES_COUNT, 
+   WSI_ES_COUNT,
 };
 
 struct wsi_image_explicit_sync_timeline {
@@ -172,6 +173,8 @@ struct wsi_swapchain {
 
    const struct wsi_device *wsi;
 
+   VkSwapchainCreateFlagsKHR create_flags;
+
    VkDevice device;
    VkAllocationCallbacks alloc;
    VkFence* fences;
@@ -183,7 +186,7 @@ struct wsi_swapchain {
 
    struct wsi_image_info image_info;
    uint32_t image_count;
-   
+
    uint64_t present_serial;
 
    struct {
@@ -222,10 +225,12 @@ struct wsi_swapchain {
                               const uint32_t *indices);
    void (*set_present_mode)(struct wsi_swapchain *swap_chain,
                             VkPresentModeKHR mode);
+   void (*set_hdr_metadata)(struct wsi_swapchain *swap_chain,
+                            const VkHdrMetadataEXT* pMetadata);
 };
 
 bool
-wsi_device_matches_drm_fd(const struct wsi_device *wsi, int drm_fd);
+wsi_device_matches_drm_fd(VkPhysicalDevice pdevice, int drm_fd);
 
 void
 wsi_wl_surface_destroy(VkIcdSurfaceBase *icd_surface, VkInstance _instance,
@@ -243,7 +248,7 @@ wsi_swapchain_init(const struct wsi_device *wsi,
                    const struct wsi_base_image_params *image_params,
                    const VkAllocationCallbacks *pAllocator);
 
-enum VkPresentModeKHR
+VkPresentModeKHR
 wsi_swapchain_get_present_mode(struct wsi_device *wsi,
                                const VkSwapchainCreateInfoKHR *pCreateInfo);
 
@@ -416,6 +421,11 @@ VkResult wsi_win32_init_wsi(struct wsi_device *wsi_device,
                          VkPhysicalDevice physical_device);
 void wsi_win32_finish_wsi(struct wsi_device *wsi_device,
                        const VkAllocationCallbacks *alloc);
+VkResult wsi_metal_init_wsi(struct wsi_device *wsi_device,
+                           const VkAllocationCallbacks *alloc,
+                           VkPhysicalDevice physical_device);
+void wsi_metal_finish_wsi(struct wsi_device *wsi_device,
+                          const VkAllocationCallbacks *alloc);
 
 
 VkResult

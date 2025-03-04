@@ -23,8 +23,6 @@
 #include "amd_family.h"
 
 struct radeon_info;
-struct ac_surf_info;
-struct radeon_surf;
 struct vk_sync_type;
 struct vk_sync_wait;
 struct vk_sync_signal;
@@ -51,6 +49,7 @@ enum radeon_bo_flag { /* bitfield */
                       RADEON_FLAG_ZERO_VRAM = (1 << 10),
                       RADEON_FLAG_REPLAYABLE = (1 << 11),
                       RADEON_FLAG_DISCARDABLE = (1 << 12),
+                      RADEON_FLAG_GFX12_ALLOW_DCC = (1 << 13),
 };
 
 enum radeon_ctx_priority {
@@ -147,6 +146,15 @@ struct radeon_bo_metadata {
          bool dcc_independent_128b_blocks;
          unsigned dcc_max_compressed_block_size;
       } gfx9;
+
+      struct {
+         unsigned swizzle_mode : 3;
+         unsigned dcc_max_compressed_block : 3;
+         unsigned dcc_data_format : 6;
+         unsigned dcc_number_type : 3;
+         bool dcc_write_compress_disable;
+         bool scanout;
+      } gfx12;
    } u;
 
    /* Additional metadata associated with the buffer, in bytes.
@@ -167,7 +175,9 @@ struct radeon_winsys_bo {
    bool vram_no_cpu_access;
    /* buffer is added to the BO list of all submissions */
    bool use_global_list;
+   bool gfx12_allow_dcc;
    enum radeon_bo_domain initial_domain;
+   uint64_t obj_id;
 };
 
 struct radv_winsys_submit_info {
@@ -292,20 +302,21 @@ struct radeon_winsys {
    void (*cs_execute_ib)(struct radeon_cmdbuf *cs, struct radeon_winsys_bo *bo, const uint64_t va, const uint32_t cdw,
                          const bool predicate);
 
+   void (*cs_chain_dgc_ib)(struct radeon_cmdbuf *cs, uint64_t va, uint32_t cdw, uint64_t trailer_va,
+                           const bool predicate);
+
    void (*cs_dump)(struct radeon_cmdbuf *cs, FILE *file, const int *trace_ids, int trace_id_count,
                    enum radv_cs_dump_type type);
 
    void (*cs_annotate)(struct radeon_cmdbuf *cs, const char *marker);
 
+   void (*cs_pad)(struct radeon_cmdbuf *cs, unsigned leave_dw_space);
+
    void (*dump_bo_ranges)(struct radeon_winsys *ws, FILE *file);
 
    void (*dump_bo_log)(struct radeon_winsys *ws, FILE *file);
 
-   int (*surface_init)(struct radeon_winsys *ws, const struct ac_surf_info *surf_info, struct radeon_surf *surf);
-
    int (*get_fd)(struct radeon_winsys *ws);
-
-   struct ac_addrlib *(*get_addrlib)(struct radeon_winsys *ws);
 
    const struct vk_sync_type *const *(*get_sync_types)(struct radeon_winsys *ws);
 };

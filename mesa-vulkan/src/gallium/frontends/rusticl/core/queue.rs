@@ -6,11 +6,13 @@ use crate::core::platform::*;
 use crate::impl_cl_type_trait;
 
 use mesa_rust::pipe::context::PipeContext;
+use mesa_rust_gen::*;
 use mesa_rust_util::properties::*;
 use rusticl_opencl_gen::*;
 
 use std::cmp;
 use std::mem;
+use std::mem::ManuallyDrop;
 use std::ops::Deref;
 use std::sync::mpsc;
 use std::sync::Arc;
@@ -23,19 +25,19 @@ use std::thread::JoinHandle;
 ///
 /// Used for tracking bound GPU state to lower CPU overhead and centralize state tracking
 pub struct QueueContext {
-    ctx: PipeContext,
+    // need to use ManuallyDrop so we can recycle the context without cloning
+    ctx: ManuallyDrop<PipeContext>,
+    pub dev: &'static Device,
     use_stream: bool,
 }
 
 impl QueueContext {
-    fn new_for(device: &Device) -> CLResult<Self> {
-        let ctx = device
-            .screen()
-            .create_context()
-            .ok_or(CL_OUT_OF_HOST_MEMORY)?;
+    fn new_for(device: &'static Device) -> CLResult<Self> {
+        let ctx = device.create_context().ok_or(CL_OUT_OF_HOST_MEMORY)?;
 
         Ok(Self {
-            ctx: ctx,
+            ctx: ManuallyDrop::new(ctx),
+            dev: device,
             use_stream: device.prefers_real_buffer_in_cb0(),
         })
     }
@@ -66,7 +68,9 @@ impl Deref for QueueContext {
 
 impl Drop for QueueContext {
     fn drop(&mut self) {
-        self.ctx.set_constant_buffer(0, &[])
+        let ctx = unsafe { ManuallyDrop::take(&mut self.ctx) };
+        ctx.set_constant_buffer(0, &[]);
+        self.dev.recycle_context(ctx);
     }
 }
 
@@ -83,18 +87,27 @@ pub struct Queue {
     pub context: Arc<Context>,
     pub device: &'static Device,
     pub props: cl_command_queue_properties,
-    pub props_v2: Option<Properties<cl_queue_properties>>,
+    pub props_v2: Properties<cl_queue_properties>,
     state: Mutex<QueueState>,
-    _thrd: JoinHandle<()>,
+    thrd: JoinHandle<()>,
 }
 
 impl_cl_type_trait!(cl_command_queue, Queue, CL_INVALID_COMMAND_QUEUE);
 
-fn flush_events(evs: &mut Vec<Arc<Event>>, pipe: &PipeContext) {
+fn flush_events(evs: &mut Vec<Arc<Event>>, pipe: &PipeContext) -> cl_int {
     if !evs.is_empty() {
         pipe.flush().wait();
-        evs.drain(..).for_each(|e| e.signal());
+        if pipe.device_reset_status() != pipe_reset_status::PIPE_NO_RESET {
+            // if the context reset while executing, simply put all events into error state.
+            evs.drain(..)
+                .for_each(|e| e.set_user_status(CL_OUT_OF_RESOURCES));
+            return CL_OUT_OF_RESOURCES;
+        } else {
+            evs.drain(..).for_each(|e| e.signal());
+        }
     }
+
+    CL_SUCCESS as cl_int
 }
 
 impl Queue {
@@ -102,7 +115,7 @@ impl Queue {
         context: Arc<Context>,
         device: &'static Device,
         props: cl_command_queue_properties,
-        props_v2: Option<Properties<cl_queue_properties>>,
+        props_v2: Properties<cl_queue_properties>,
     ) -> CLResult<Arc<Queue>> {
         // we assume that memory allocation is the only possible failure. Any other failure reason
         // should be detected earlier (e.g.: checking for CAPs).
@@ -119,7 +132,7 @@ impl Queue {
                 last: Weak::new(),
                 chan_in: tx_q,
             }),
-            _thrd: thread::Builder::new()
+            thrd: thread::Builder::new()
                 .name("rusticl queue thread".into())
                 .spawn(move || {
                     // Track the error of all executed events. This is only needed for in-order
@@ -149,7 +162,8 @@ impl Queue {
                             // If we hit any deps from another queue, flush so we don't risk a dead
                             // lock.
                             if e.deps.iter().any(|ev| ev.queue != e.queue) {
-                                flush_events(&mut flushed, &ctx);
+                                let dep_err = flush_events(&mut flushed, &ctx);
+                                last_err = cmp::min(last_err, dep_err);
                             }
 
                             // check if any dependency has an error
@@ -181,20 +195,23 @@ impl Queue {
                             if e.is_user() {
                                 // On each user event we flush our events as application might
                                 // wait on them before signaling user events.
-                                flush_events(&mut flushed, &ctx);
+                                last_err = flush_events(&mut flushed, &ctx);
 
-                                // Wait on user events as they are synchronization points in the
-                                // application's control.
-                                e.wait();
+                                if last_err >= 0 {
+                                    // Wait on user events as they are synchronization points in the
+                                    // application's control.
+                                    e.wait();
+                                }
                             } else if Platform::dbg().sync_every_event {
                                 flushed.push(e);
-                                flush_events(&mut flushed, &ctx);
+                                last_err = flush_events(&mut flushed, &ctx);
                             } else {
                                 flushed.push(e);
                             }
                         }
 
-                        flush_events(&mut flushed, &ctx);
+                        let flush_err = flush_events(&mut flushed, &ctx);
+                        last_err = cmp::min(last_err, flush_err);
                     }
                 })
                 .unwrap(),
@@ -242,9 +259,16 @@ impl Queue {
             // Waiting on the last event is good enough here as the queue will process it in order
             // It's not a problem if the weak ref is invalid as that means the work is already done
             // and waiting isn't necessary anymore.
-            last.upgrade().map(|e| e.wait());
+            let err = last.upgrade().map(|e| e.wait()).unwrap_or_default();
+            if err < 0 {
+                return Err(err);
+            }
         }
         Ok(())
+    }
+
+    pub fn is_dead(&self) -> bool {
+        self.thrd.is_finished()
     }
 
     pub fn is_profiling_enabled(&self) -> bool {

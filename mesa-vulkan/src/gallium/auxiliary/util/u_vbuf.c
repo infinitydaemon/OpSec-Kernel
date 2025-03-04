@@ -305,35 +305,37 @@ void u_vbuf_get_caps(struct pipe_screen *screen, struct u_vbuf_caps *caps,
       }
    }
 
-   caps->buffer_offset_unaligned =
-      !screen->get_param(screen,
-                         PIPE_CAP_VERTEX_BUFFER_OFFSET_4BYTE_ALIGNED_ONLY);
-   caps->buffer_stride_unaligned =
-     !screen->get_param(screen,
-                        PIPE_CAP_VERTEX_BUFFER_STRIDE_4BYTE_ALIGNED_ONLY);
-   caps->velem_src_offset_unaligned =
-      !screen->get_param(screen,
-                         PIPE_CAP_VERTEX_ELEMENT_SRC_OFFSET_4BYTE_ALIGNED_ONLY);
-   caps->attrib_component_unaligned =
-      !screen->get_param(screen,
-                         PIPE_CAP_VERTEX_ATTRIB_ELEMENT_ALIGNED_ONLY);
-   assert(caps->attrib_component_unaligned ||
-          (caps->velem_src_offset_unaligned && caps->buffer_stride_unaligned && caps->buffer_offset_unaligned));
-   caps->user_vertex_buffers =
-      screen->get_param(screen, PIPE_CAP_USER_VERTEX_BUFFERS);
-   caps->max_vertex_buffers =
-      screen->get_param(screen, PIPE_CAP_MAX_VERTEX_BUFFERS);
+   /* by default, all of these are supported */
+   caps->attrib_4byte_unaligned = 1;
+   caps->attrib_element_unaligned = 1;
 
-   if (screen->get_param(screen, PIPE_CAP_PRIMITIVE_RESTART) ||
-       screen->get_param(screen, PIPE_CAP_PRIMITIVE_RESTART_FIXED_INDEX)) {
-      caps->rewrite_restart_index = screen->get_param(screen, PIPE_CAP_EMULATE_NONFIXED_PRIMITIVE_RESTART);
-      caps->supported_restart_modes = screen->get_param(screen, PIPE_CAP_SUPPORTED_PRIM_MODES_WITH_RESTART);
+   /* pipe cap removes capabilities */
+   switch (screen->caps.vertex_input_alignment) {
+   case PIPE_VERTEX_INPUT_ALIGNMENT_4BYTE:
+      caps->attrib_4byte_unaligned = 0;
+      break;
+   case PIPE_VERTEX_INPUT_ALIGNMENT_ELEMENT:
+      caps->attrib_element_unaligned = 0;
+      break;
+   default:
+      break;
+   }
+
+   caps->user_vertex_buffers =
+      screen->caps.user_vertex_buffers;
+   caps->max_vertex_buffers =
+      screen->caps.max_vertex_buffers;
+
+   if (screen->caps.primitive_restart ||
+       screen->caps.primitive_restart_fixed_index) {
+      caps->rewrite_restart_index = screen->caps.emulate_nonfixed_primitive_restart;
+      caps->supported_restart_modes = screen->caps.supported_prim_modes_with_restart;
       caps->supported_restart_modes |= BITFIELD_BIT(MESA_PRIM_PATCHES);
       if (caps->supported_restart_modes != BITFIELD_MASK(MESA_PRIM_COUNT))
          caps->fallback_always = true;
       caps->fallback_always |= caps->rewrite_restart_index;
    }
-   caps->supported_prim_modes = screen->get_param(screen, PIPE_CAP_SUPPORTED_PRIM_MODES);
+   caps->supported_prim_modes = screen->caps.supported_prim_modes;
    if (caps->supported_prim_modes != BITFIELD_MASK(MESA_PRIM_COUNT))
       caps->fallback_always = true;
 
@@ -344,10 +346,7 @@ void u_vbuf_get_caps(struct pipe_screen *screen, struct u_vbuf_caps *caps,
    if (caps->max_vertex_buffers < 16)
       caps->fallback_always = true;
 
-   if (!caps->buffer_offset_unaligned ||
-       !caps->buffer_stride_unaligned ||
-       !caps->attrib_component_unaligned ||
-       !caps->velem_src_offset_unaligned)
+   if (!caps->attrib_4byte_unaligned || !caps->attrib_element_unaligned)
       caps->fallback_always = true;
 
    if (!caps->fallback_always && !caps->user_vertex_buffers)
@@ -376,8 +375,7 @@ u_vbuf_create(struct pipe_context *pipe, struct u_vbuf_caps *caps)
    mgr->allowed_vb_mask = u_bit_consecutive(0, mgr->caps.max_vertex_buffers);
 
    mgr->has_signed_vb_offset =
-      pipe->screen->get_param(pipe->screen,
-                              PIPE_CAP_SIGNED_VERTEX_BUFFER_OFFSET);
+      pipe->screen->caps.signed_vertex_buffer_offset;
 
    cso_cache_init(&mgr->cso_cache, pipe);
    cso_cache_set_delete_cso_callback(&mgr->cso_cache,
@@ -784,7 +782,7 @@ u_vbuf_translate_begin(struct u_vbuf *mgr,
       te->output_format = output_format;
       te->output_offset = k->output_stride;
       unsigned adjustment = 0;
-      if (!mgr->caps.attrib_component_unaligned &&
+      if (!mgr->caps.attrib_element_unaligned &&
           te->output_offset % mgr->ve->component_size[i] != 0) {
          unsigned aligned = align(te->output_offset, mgr->ve->component_size[i]);
          adjustment = aligned - te->output_offset;
@@ -800,7 +798,7 @@ u_vbuf_translate_begin(struct u_vbuf *mgr,
    for (type = 0; type < VB_NUM; type++) {
       if (key[type].nr_elements) {
          enum pipe_error err;
-         if (!mgr->caps.attrib_component_unaligned)
+         if (!mgr->caps.attrib_element_unaligned)
             key[type].output_stride = align(key[type].output_stride, min_alignment[type]);
          err = u_vbuf_translate_buffers(mgr, &key[type], info, draw,
                                         mask[type], mgr->fallback_vbs[type],
@@ -922,9 +920,9 @@ u_vbuf_create_vertex_elements(struct u_vbuf *mgr, unsigned count,
       ve->component_size[i] = component_size;
 
       if (ve->ve[i].src_format != format ||
-          (!mgr->caps.velem_src_offset_unaligned &&
+          (!mgr->caps.attrib_4byte_unaligned &&
            ve->ve[i].src_offset % 4 != 0) ||
-          (!mgr->caps.attrib_component_unaligned &&
+          (!mgr->caps.attrib_element_unaligned &&
            ve->ve[i].src_offset % component_size != 0)) {
          ve->incompatible_elem_mask |= 1 << i;
          ve->incompatible_vb_mask_any |= vb_index_bit;
@@ -932,20 +930,17 @@ u_vbuf_create_vertex_elements(struct u_vbuf *mgr, unsigned count,
          ve->compatible_vb_mask_any |= vb_index_bit;
          if (component_size == 2) {
             ve->vb_align_mask[0] |= vb_index_bit;
-            if (ve->ve[i].src_stride % 2 != 0)
-               ve->incompatible_vb_mask |= vb_index_bit;
          }
          else if (component_size == 4) {
             ve->vb_align_mask[1] |= vb_index_bit;
-            if (ve->ve[i].src_stride % 4 != 0)
-               ve->incompatible_vb_mask |= vb_index_bit;
          }
       }
       ve->strides[ve->ve[i].vertex_buffer_index] = ve->ve[i].src_stride;
       if (ve->ve[i].src_stride) {
          ve->nonzero_stride_vb_mask |= 1 << ve->ve[i].vertex_buffer_index;
       }
-      if (!mgr->caps.buffer_stride_unaligned && ve->ve[i].src_stride % 4 != 0)
+      if ((!mgr->caps.attrib_4byte_unaligned && ve->ve[i].src_stride % 4 != 0) ||
+          (!mgr->caps.attrib_element_unaligned && ve->ve[i].src_stride % component_size != 0))
          ve->incompatible_vb_mask |= vb_index_bit;
    }
 
@@ -965,7 +960,7 @@ u_vbuf_create_vertex_elements(struct u_vbuf *mgr, unsigned count,
    ve->incompatible_vb_mask_all = ~ve->compatible_vb_mask_any & used_buffers;
 
    /* Align the formats and offsets to the size of DWORD if needed. */
-   if (!mgr->caps.velem_src_offset_unaligned) {
+   if (!mgr->caps.attrib_4byte_unaligned) {
       for (i = 0; i < count; i++) {
          ve->native_format_size[i] = align(ve->native_format_size[i], 4);
          driver_attribs[i].src_offset = align(ve->ve[i].src_offset, 4);
@@ -1061,7 +1056,7 @@ void u_vbuf_set_vertex_buffers(struct u_vbuf *mgr,
 
       enabled_vb_mask |= 1 << i;
 
-      if ((!mgr->caps.buffer_offset_unaligned && vb->buffer_offset % 4 != 0)) {
+      if ((!mgr->caps.attrib_4byte_unaligned && vb->buffer_offset % 4 != 0)) {
          incompatible_vb_mask |= 1 << i;
          real_vb->buffer_offset = vb->buffer_offset;
          pipe_vertex_buffer_unreference(real_vb);
@@ -1069,7 +1064,7 @@ void u_vbuf_set_vertex_buffers(struct u_vbuf *mgr,
          continue;
       }
 
-      if (!mgr->caps.attrib_component_unaligned) {
+      if (!mgr->caps.attrib_element_unaligned) {
          if (vb->buffer_offset % 2 != 0)
             unaligned_vb_mask[0] |= BITFIELD_BIT(i);
          if (vb->buffer_offset % 4 != 0)
@@ -1460,7 +1455,7 @@ void u_vbuf_draw_vbo(struct pipe_context *pipe, const struct pipe_draw_info *inf
    unsigned fixed_restart_index = info->index_size ? util_prim_restart_index_from_size(info->index_size) : 0;
 
    uint32_t misaligned = 0;
-   if (!mgr->caps.attrib_component_unaligned) {
+   if (!mgr->caps.attrib_element_unaligned) {
       for (unsigned i = 0; i < ARRAY_SIZE(mgr->unaligned_vb_mask); i++) {
          misaligned |= mgr->ve->vb_align_mask[i] & mgr->unaligned_vb_mask[i];
       }

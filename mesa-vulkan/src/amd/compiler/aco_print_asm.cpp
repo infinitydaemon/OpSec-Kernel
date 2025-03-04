@@ -42,7 +42,9 @@ void
 print_block_markers(FILE* output, Program* program, const std::vector<bool>& referenced_blocks,
                     unsigned* next_block, unsigned pos)
 {
-   while (*next_block < program->blocks.size() && pos == program->blocks[*next_block].offset) {
+   while (*next_block < program->blocks.size() && pos >= program->blocks[*next_block].offset) {
+      assert(pos == program->blocks[*next_block].offset ||
+             program->blocks[*next_block].instructions.empty());
       if (referenced_blocks[*next_block])
          fprintf(output, "BB%u:\n", *next_block);
       (*next_block)++;
@@ -128,6 +130,7 @@ to_clrx_device_name(amd_gfx_level gfx_level, radeon_family family)
       switch (family) {
       case CHIP_NAVI10: return "gfx1010";
       case CHIP_NAVI12: return "gfx1011";
+      case CHIP_GFX1013: return "gfx1013";
       default: return nullptr;
       }
    default: return nullptr;
@@ -161,6 +164,7 @@ print_asm_clrx(Program* program, std::vector<uint32_t>& binary, unsigned exec_si
 #else
    char path[] = "/tmp/fileXXXXXX";
    char line[2048], command[128];
+   bool ret = false;
    FILE* p;
    int fd;
 
@@ -172,8 +176,10 @@ print_asm_clrx(Program* program, std::vector<uint32_t>& binary, unsigned exec_si
       return true;
 
    for (unsigned i = 0; i < exec_size; i++) {
-      if (write(fd, &binary[i], 4) == -1)
+      if (write(fd, &binary[i], 4) == -1) {
+         ret = true;
          goto fail;
+      }
    }
 
    sprintf(command, "clrxdisasm --gpuType=%s -r %s", gpu_type, path);
@@ -183,6 +189,7 @@ print_asm_clrx(Program* program, std::vector<uint32_t>& binary, unsigned exec_si
       if (!fgets(line, sizeof(line), p)) {
          fprintf(output, "clrxdisasm not found\n");
          pclose(p);
+         ret = true;
          goto fail;
       }
 
@@ -239,12 +246,10 @@ print_asm_clrx(Program* program, std::vector<uint32_t>& binary, unsigned exec_si
       print_constant_data(output, program);
    }
 
-   return false;
-
 fail:
    close(fd);
    unlink(path);
-   return true;
+   return ret;
 #endif
 }
 

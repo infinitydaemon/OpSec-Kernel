@@ -11,7 +11,7 @@ inc_mapi = include_directories('mapi')
 inc_src = include_directories('.')
 inc_gallium = include_directories('gallium/include')
 inc_gallium_aux = include_directories('gallium/auxiliary')
-inc_amd_common = include_directories('amd/common')
+inc_amd_common = include_directories('amd/common', 'amd/common/nir')
 inc_tool = include_directories('tool')
 inc_virtio_gpu = include_directories('virtio/virtio-gpu')
 inc_frontends = include_directories('gallium/frontends')
@@ -46,7 +46,8 @@ if cc.get_argument_syntax() == 'msvc'
 else
   idep_getopt = null_dep
 endif
-if with_gallium or with_gbm or with_platform_wayland
+subdir('x11')
+if with_gallium_or_lvp or with_gbm or with_platform_wayland
   subdir('loader')
 endif
 if with_gallium
@@ -68,6 +69,9 @@ endif
 if with_any_intel
   subdir('intel')
 endif
+if system_has_kms_drm or with_gallium_virgl
+  subdir('virtio')
+endif
 if with_gallium_radeonsi or with_amd_vk or with_gallium_r300 or with_gallium_r600
   subdir('amd')
 endif
@@ -76,9 +80,6 @@ if with_any_broadcom
 endif
 if with_gallium_etnaviv
   subdir('etnaviv')
-endif
-if system_has_kms_drm or with_gallium_virgl
-  subdir('virtio')
 endif
 if with_gallium_freedreno or with_freedreno_vk or with_tools.contains('freedreno')
   subdir('freedreno')
@@ -98,23 +99,33 @@ endif
 if with_any_nouveau
   subdir('nouveau')
 endif
+if with_gfxstream_vk
+  subdir('gfxstream')
+endif
 if with_gallium_asahi or with_tools.contains('asahi')
   subdir('asahi')
 endif
 if with_gallium
   subdir('mesa')
+endif
+if with_gallium_or_lvp
   subdir('gallium')
-  if with_glx == 'dri'
-     subdir('glx')
+endif
+# These require libgallium (shared_glapi_lib)
+if with_gallium and (with_glx != 'disabled' or with_egl)
+  if with_gles1 and not with_glvnd
+    subdir('mapi/es1api')
   endif
-  # This has to be here since it requires libgallium, and subdir cannot
-  # contain ..
-  if with_tests
-    subdir('mesa/main/tests')
+  if with_gles2 and not with_glvnd
+    subdir('mapi/es2api')
   endif
   if with_tests and with_shared_glapi
+    subdir('mesa/main/tests')
     subdir('mesa/state_tracker/tests')
   endif
+endif
+if with_glx == 'dri'
+  subdir('glx')
 endif
 if with_gbm
   subdir('gbm')

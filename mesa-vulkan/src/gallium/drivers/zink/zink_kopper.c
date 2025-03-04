@@ -23,7 +23,6 @@
  */
 
 #include "util/detect_os.h"
-#include "driver_trace/tr_screen.h"
 
 #include "zink_context.h"
 #include "zink_screen.h"
@@ -132,7 +131,6 @@ kopper_CreateSurface(struct zink_screen *screen, struct kopper_displaytarget *cd
       /* VK_PRESENT_MODE_SHARED_DEMAND_REFRESH_KHR and VK_PRESENT_MODE_SHARED_CONTINUOUS_REFRESH_KHR
       * are not handled
       */
-      assert(modes[i] <= VK_PRESENT_MODE_FIFO_RELAXED_KHR);
       if (modes[i] <= VK_PRESENT_MODE_FIFO_RELAXED_KHR)
          cdt->present_modes |= BITFIELD_BIT(modes[i]);
    }
@@ -261,9 +259,6 @@ kopper_CreateSwapchain(struct zink_screen *screen, struct kopper_displaytarget *
    bool has_alpha = cdt->info.has_alpha && (cdt->caps.supportedCompositeAlpha & VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR);
    if (cdt->swapchain) {
       cswap->scci = cdt->swapchain->scci;
-      /* avoid UAF if async present needs to-be-retired swapchain */
-      if (cdt->type == KOPPER_WAYLAND && cdt->swapchain->swapchain)
-         util_queue_fence_wait(&cdt->swapchain->present_fence);
       cswap->scci.oldSwapchain = cdt->swapchain->swapchain;
    } else {
       cswap->scci.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
@@ -276,10 +271,11 @@ kopper_CreateSwapchain(struct zink_screen *screen, struct kopper_displaytarget *
       cswap->scci.imageArrayLayers = 1;
       cswap->scci.imageUsage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
                                VK_IMAGE_USAGE_SAMPLED_BIT |
-                               VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
-                               VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT;
+                               VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
       if (cdt->caps.supportedUsageFlags & VK_IMAGE_USAGE_ATTACHMENT_FEEDBACK_LOOP_BIT_EXT)
          cswap->scci.imageUsage |= VK_IMAGE_USAGE_ATTACHMENT_FEEDBACK_LOOP_BIT_EXT;
+      if (cdt->caps.supportedUsageFlags & VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT)
+         cswap->scci.imageUsage |= VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT;
       cswap->scci.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
       cswap->scci.queueFamilyIndexCount = 0;
       cswap->scci.pQueueFamilyIndices = NULL;
@@ -332,7 +328,7 @@ kopper_CreateSwapchain(struct zink_screen *screen, struct kopper_displaytarget *
    error = VKSCR(CreateSwapchainKHR)(screen->dev, &cswap->scci, NULL,
                                 &cswap->swapchain);
    if (error == VK_ERROR_NATIVE_WINDOW_IN_USE_KHR) {
-      if (util_queue_is_initialized(&screen->flush_queue))
+      if (cdt->async)
          util_queue_finish(&screen->flush_queue);
       simple_mtx_lock(&screen->queue_lock);
       VkResult wait_result = VKSCR(QueueWaitIdle)(screen->queue);
@@ -504,6 +500,16 @@ zink_kopper_displaytarget_create(struct zink_screen *screen, unsigned tex_usage,
    }
    simple_mtx_unlock(&screen->dt_lock);
 
+   /* Wayland EGL has a driver invariant which requires that any `wl_surface`
+    * (or wp_linux_drm_syncobj_surface_v1) calls happen inside the client's
+    * call to eglSwapBuffers().  Submitting surface messages after
+    * eglSwapBuffers() returns causes serialization issues with the Wayland
+    * surface protocol and can lead to the compositor booting the app.  This
+    * means we can't do async submit on Wayland.
+    */
+   cdt->async = util_queue_is_initialized(&screen->flush_queue) &&
+                cdt->type != KOPPER_WAYLAND;
+
    *stride = cdt->stride;
    return cdt;
 
@@ -550,7 +556,7 @@ kopper_acquire(struct zink_screen *screen, struct zink_resource *res, uint64_t t
          res->obj->access = 0;
          res->obj->access_stage = 0;
       }
-      if (timeout == UINT64_MAX && util_queue_is_initialized(&screen->flush_queue) &&
+      if (timeout == UINT64_MAX && cdt->async &&
           p_atomic_read_relaxed(&cdt->swapchain->num_acquires) >= cdt->swapchain->max_acquires) {
          util_queue_fence_wait(&cdt->swapchain->present_fence);
          /* With a sequence of
@@ -656,7 +662,8 @@ zink_kopper_acquire(struct zink_context *ctx, struct zink_resource *res, uint64_
    const struct kopper_swapchain *cswap = cdt->swapchain;
    res->obj->new_dt |= res->base.b.width0 != cswap->scci.imageExtent.width ||
                        res->base.b.height0 != cswap->scci.imageExtent.height;
-   VkResult ret = kopper_acquire(zink_screen(trace_screen_unwrap(ctx->base.screen)), res, timeout);
+   struct zink_screen *zscreen = zink_screen(kopper_get_zink_screen(ctx->base.screen));
+   VkResult ret = kopper_acquire(zscreen, res, timeout);
    if (ret == VK_SUCCESS || ret == VK_SUBOPTIMAL_KHR) {
       if (cswap != cdt->swapchain) {
          ctx->swapchain_size = cdt->swapchain->scci.imageExtent;
@@ -877,16 +884,20 @@ zink_kopper_present_queue(struct zink_screen *screen, struct zink_resource *res,
                cdt->swapchain->images[i].age += 1;
       }
    }
-   if (util_queue_is_initialized(&screen->flush_queue)) {
+   if (cdt->async) {
       p_atomic_inc(&cpi->swapchain->async_presents);
       struct pipe_resource *pres = NULL;
       pipe_resource_reference(&pres, &res->base.b);
       util_queue_add_job(&screen->flush_queue, cpi, &cdt->swapchain->present_fence,
                          kopper_present, NULL, 0);
    } else {
+      if (screen->threaded_submit)
+         util_queue_finish(&screen->flush_queue);
       kopper_present(cpi, screen, -1);
    }
    res->obj->indefinite_acquire = false;
+   res->use_damage = false;
+   memset(&res->damage, 0, sizeof(res->damage));
    cdt->swapchain->images[res->obj->dt_idx].acquired = NULL;
    res->obj->dt_idx = UINT32_MAX;
 }
@@ -959,7 +970,7 @@ zink_kopper_acquire_readback(struct zink_context *ctx, struct zink_resource *res
       if (res->obj->dt_idx != UINT32_MAX) {
          if (!zink_kopper_present_readback(ctx, res))
             break;
-      } else if (util_queue_is_initialized(&screen->flush_queue)) {
+      } else if (cdt->async) {
          /* AcquireNextImageKHR and QueuePresentKHR both access the swapchain, and
           * if res->obj->dt_idx == UINT32_MAX then zink_kopper_present_readback is
           * not called and we don't wait for the cdt->swapchain->present_fence.
@@ -996,6 +1007,7 @@ bool
 zink_kopper_present_readback(struct zink_context *ctx, struct zink_resource *res)
 {
    struct zink_screen *screen = zink_screen(ctx->base.screen);
+   struct kopper_displaytarget *cdt = res->obj->dt;
    VkSubmitInfo si = {0};
    assert(zink_is_swapchain(res));
    if (res->obj->last_dt_idx == UINT32_MAX)
@@ -1022,10 +1034,8 @@ zink_kopper_present_readback(struct zink_context *ctx, struct zink_resource *res
       return false;
 
    zink_kopper_present_queue(screen, res, 0, NULL);
-   if (util_queue_is_initialized(&screen->flush_queue)) {
-      struct kopper_displaytarget *cdt = res->obj->dt;
+   if (cdt->async)
       util_queue_fence_wait(&cdt->swapchain->present_fence);
-   }
 
    simple_mtx_lock(&screen->queue_lock);
    error = VKSCR(QueueWaitIdle)(screen->queue);
@@ -1035,7 +1045,6 @@ zink_kopper_present_readback(struct zink_context *ctx, struct zink_resource *res
    util_dynarray_append(&screen->semaphores, VkSemaphore, acquire);
    simple_mtx_unlock(&screen->semaphores_lock);
 
-   struct kopper_displaytarget *cdt = res->obj->dt;
    cdt->age_locked = false;
 
    return zink_screen_handle_vkresult(screen, error);
@@ -1175,7 +1184,7 @@ zink_kopper_query_buffer_age(struct pipe_context *pctx, struct pipe_resource *pr
    assert(res->obj->dt);
    struct kopper_displaytarget *cdt = res->obj->dt;
 
-   ctx = zink_tc_context_unwrap(pctx, zink_screen(pctx->screen)->threaded);
+   ctx = zink_tc_context_unwrap(pctx);
 
    /* Returning 0 here isn't ideal (yes, the buffer is undefined, because you
     * lost it) but threading the error up is more hassle than it's worth.

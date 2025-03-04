@@ -4,12 +4,13 @@
 #![allow(unstable_name_collisions)]
 
 use crate::api::{GetDebugFlags, DEBUG};
-use crate::bitset::BitSet;
+use crate::const_tracker::ConstTracker;
 use crate::ir::*;
 use crate::liveness::{
     BlockLiveness, LiveSet, Liveness, NextUseBlockLiveness, NextUseLiveness,
 };
 
+use compiler::bitset::BitSet;
 use std::cell::RefCell;
 use std::cmp::{max, Ordering, Reverse};
 use std::collections::{BinaryHeap, HashMap, HashSet};
@@ -81,32 +82,36 @@ impl PhiSrcMap {
 
 trait Spill {
     fn spill_file(&self, file: RegFile) -> RegFile;
-    fn spill(&self, dst: SSAValue, src: Src) -> Box<Instr>;
-    fn fill(&self, dst: Dst, src: SSAValue) -> Box<Instr>;
+    fn spill(&mut self, dst: SSAValue, src: Src) -> Box<Instr>;
+    fn fill(&mut self, dst: Dst, src: SSAValue) -> Box<Instr>;
 }
 
-struct SpillUniform {}
+struct SpillUniform<'a> {
+    info: &'a mut ShaderInfo,
+}
 
-impl SpillUniform {
-    fn new() -> Self {
-        Self {}
+impl<'a> SpillUniform<'a> {
+    fn new(info: &'a mut ShaderInfo) -> Self {
+        Self { info }
     }
 }
 
-impl Spill for SpillUniform {
+impl Spill for SpillUniform<'_> {
     fn spill_file(&self, file: RegFile) -> RegFile {
         debug_assert!(file.is_uniform());
         file.to_warp()
     }
 
-    fn spill(&self, dst: SSAValue, src: Src) -> Box<Instr> {
+    fn spill(&mut self, dst: SSAValue, src: Src) -> Box<Instr> {
+        self.info.num_spills_to_reg += 1;
         Instr::new_boxed(OpCopy {
             dst: dst.into(),
             src: src,
         })
     }
 
-    fn fill(&self, dst: Dst, src: SSAValue) -> Box<Instr> {
+    fn fill(&mut self, dst: Dst, src: SSAValue) -> Box<Instr> {
+        self.info.num_fills_from_reg += 1;
         Instr::new_boxed(OpR2UR {
             dst: dst,
             src: src.into(),
@@ -114,15 +119,17 @@ impl Spill for SpillUniform {
     }
 }
 
-struct SpillPred {}
+struct SpillPred<'a> {
+    info: &'a mut ShaderInfo,
+}
 
-impl SpillPred {
-    fn new() -> Self {
-        Self {}
+impl<'a> SpillPred<'a> {
+    fn new(info: &'a mut ShaderInfo) -> Self {
+        Self { info }
     }
 }
 
-impl Spill for SpillPred {
+impl Spill for SpillPred<'_> {
     fn spill_file(&self, file: RegFile) -> RegFile {
         match file {
             RegFile::Pred => RegFile::GPR,
@@ -131,8 +138,9 @@ impl Spill for SpillPred {
         }
     }
 
-    fn spill(&self, dst: SSAValue, src: Src) -> Box<Instr> {
+    fn spill(&mut self, dst: SSAValue, src: Src) -> Box<Instr> {
         assert!(matches!(dst.file(), RegFile::GPR | RegFile::UGPR));
+        self.info.num_spills_to_reg += 1;
         if let Some(b) = src.as_bool() {
             let u32_src = if b {
                 Src::new_imm_u32(!0)
@@ -152,8 +160,9 @@ impl Spill for SpillPred {
         }
     }
 
-    fn fill(&self, dst: Dst, src: SSAValue) -> Box<Instr> {
+    fn fill(&mut self, dst: Dst, src: SSAValue) -> Box<Instr> {
         assert!(matches!(src.file(), RegFile::GPR | RegFile::UGPR));
+        self.info.num_fills_from_reg += 1;
         Instr::new_boxed(OpISetP {
             dst: dst,
             set_op: PredSetOp::And,
@@ -167,22 +176,25 @@ impl Spill for SpillPred {
     }
 }
 
-struct SpillBar {}
+struct SpillBar<'a> {
+    info: &'a mut ShaderInfo,
+}
 
-impl SpillBar {
-    fn new() -> Self {
-        Self {}
+impl<'a> SpillBar<'a> {
+    fn new(info: &'a mut ShaderInfo) -> Self {
+        Self { info }
     }
 }
 
-impl Spill for SpillBar {
+impl Spill for SpillBar<'_> {
     fn spill_file(&self, file: RegFile) -> RegFile {
         assert!(file == RegFile::Bar);
         RegFile::GPR
     }
 
-    fn spill(&self, dst: SSAValue, src: Src) -> Box<Instr> {
+    fn spill(&mut self, dst: SSAValue, src: Src) -> Box<Instr> {
         assert!(dst.file() == RegFile::GPR);
+        self.info.num_spills_to_reg += 1;
         Instr::new_boxed(OpBMov {
             dst: dst.into(),
             src: src,
@@ -190,8 +202,9 @@ impl Spill for SpillBar {
         })
     }
 
-    fn fill(&self, dst: Dst, src: SSAValue) -> Box<Instr> {
+    fn fill(&mut self, dst: Dst, src: SSAValue) -> Box<Instr> {
         assert!(src.file() == RegFile::GPR);
+        self.info.num_fills_from_reg += 1;
         Instr::new_boxed(OpBMov {
             dst: dst,
             src: src.into(),
@@ -200,30 +213,42 @@ impl Spill for SpillBar {
     }
 }
 
-struct SpillGPR {}
+struct SpillGPR<'a> {
+    info: &'a mut ShaderInfo,
+}
 
-impl SpillGPR {
-    fn new() -> Self {
-        Self {}
+impl<'a> SpillGPR<'a> {
+    fn new(info: &'a mut ShaderInfo) -> Self {
+        Self { info }
     }
 }
 
-impl Spill for SpillGPR {
+impl Spill for SpillGPR<'_> {
     fn spill_file(&self, file: RegFile) -> RegFile {
         assert!(file == RegFile::GPR);
         RegFile::Mem
     }
 
-    fn spill(&self, dst: SSAValue, src: Src) -> Box<Instr> {
+    fn spill(&mut self, dst: SSAValue, src: Src) -> Box<Instr> {
         assert!(dst.file() == RegFile::Mem);
-        Instr::new_boxed(OpCopy {
-            dst: dst.into(),
-            src: src,
-        })
+        self.info.num_spills_to_mem += 1;
+        if let Some(ssa) = src.as_ssa() {
+            assert!(ssa.file() == Some(RegFile::GPR));
+            Instr::new_boxed(OpCopy {
+                dst: dst.into(),
+                src: src,
+            })
+        } else {
+            // We use parallel copies for spilling non-GPR things to Mem
+            let mut pcopy = OpParCopy::new();
+            pcopy.push(dst.into(), src);
+            Instr::new_boxed(pcopy)
+        }
     }
 
-    fn fill(&self, dst: Dst, src: SSAValue) -> Box<Instr> {
+    fn fill(&mut self, dst: Dst, src: SSAValue) -> Box<Instr> {
         assert!(src.file() == RegFile::Mem);
+        self.info.num_fills_from_mem += 1;
         Instr::new_boxed(OpCopy {
             dst: dst,
             src: src.into(),
@@ -263,6 +288,7 @@ impl PartialOrd for SSANextUse {
 struct SpillCache<'a, S: Spill> {
     alloc: &'a mut SSAValueAllocator,
     spill: S,
+    const_tracker: ConstTracker,
     val_spill: HashMap<SSAValue, SSAValue>,
 }
 
@@ -271,8 +297,17 @@ impl<'a, S: Spill> SpillCache<'a, S> {
         SpillCache {
             alloc: alloc,
             spill: spill,
+            const_tracker: ConstTracker::new(),
             val_spill: HashMap::new(),
         }
+    }
+
+    fn add_copy_if_const(&mut self, op: &OpCopy) {
+        self.const_tracker.add_copy(op);
+    }
+
+    fn is_const(&self, ssa: &SSAValue) -> bool {
+        self.const_tracker.contains(ssa)
     }
 
     fn spill_file(&self, file: RegFile) -> RegFile {
@@ -291,7 +326,11 @@ impl<'a, S: Spill> SpillCache<'a, S> {
     }
 
     fn spill(&mut self, ssa: SSAValue) -> Box<Instr> {
-        self.spill_src(ssa, ssa.into())
+        if let Some(c) = self.const_tracker.get(&ssa) {
+            self.spill_src(ssa, (*c).into())
+        } else {
+            self.spill_src(ssa, ssa.into())
+        }
     }
 
     fn fill_dst(&mut self, dst: Dst, ssa: SSAValue) -> Box<Instr> {
@@ -300,7 +339,14 @@ impl<'a, S: Spill> SpillCache<'a, S> {
     }
 
     fn fill(&mut self, ssa: SSAValue) -> Box<Instr> {
-        self.fill_dst(ssa.into(), ssa)
+        if let Some(c) = self.const_tracker.get(&ssa) {
+            Instr::new_boxed(OpCopy {
+                dst: ssa.into(),
+                src: (*c).into(),
+            })
+        } else {
+            self.fill_dst(ssa.into(), ssa)
+        }
     }
 }
 
@@ -645,7 +691,9 @@ fn spill_values<S: Spill>(
         }
 
         for ssa in bl.iter_live_in() {
-            debug_assert!(w.contains(ssa) || s.contains(ssa));
+            debug_assert!(
+                w.contains(ssa) || s.contains(ssa) || spill.is_const(ssa)
+            );
         }
 
         let mut b = SSAState { w: w, s: s, p: p };
@@ -657,6 +705,10 @@ fn spill_values<S: Spill>(
 
         let mut instrs = Vec::new();
         for (ip, mut instr) in bb.instrs.drain(..).enumerate() {
+            if let Op::Copy(op) = &instr.op {
+                spill.add_copy_if_const(op);
+            }
+
             match &mut instr.op {
                 Op::PhiDsts(phi) => {
                     // For phis, anything that is not in W needs to be spilled
@@ -684,7 +736,9 @@ fn spill_values<S: Spill>(
                         let dst_ssa = &dst_vec[0];
 
                         debug_assert!(src.src_mod.is_none());
-                        let src_vec = src.src_ref.as_ssa().unwrap();
+                        let Some(src_vec) = src.src_ref.as_ssa() else {
+                            continue;
+                        };
                         debug_assert!(src_vec.comps() == 1);
                         let src_ssa = &src_vec[0];
 
@@ -699,7 +753,10 @@ fn spill_values<S: Spill>(
                         if b.w.contains(src_ssa) {
                             num_w_dsts += 1;
                         } else {
-                            debug_assert!(b.s.contains(src_ssa));
+                            if b.s.insert(*src_ssa) {
+                                assert!(spill.is_const(src_ssa));
+                                instrs.push(spill.spill(*src_ssa));
+                            }
                             b.s.insert(*dst_ssa);
                             *src = spill.get_spill(*src_ssa).into();
                             *dst = spill.get_spill(*dst_ssa).into();
@@ -709,7 +766,10 @@ fn spill_values<S: Spill>(
                     // We can now assume that a source is in W if and only if
                     // the file matches.  Remove all killed sources from W.
                     for (_, src) in pcopy.dsts_srcs.iter() {
-                        let src_ssa = &src.src_ref.as_ssa().unwrap()[0];
+                        let Some(src_vec) = src.src_ref.as_ssa() else {
+                            continue;
+                        };
+                        let src_ssa = &src_vec[0];
                         if !bl.is_live_after_ip(src_ssa, ip) {
                             b.w.remove(src_ssa);
                         }
@@ -779,6 +839,10 @@ fn spill_values<S: Spill>(
                         debug_assert!(spill.spill_file(file) == RegFile::GPR);
                         instr.for_each_ssa_use_mut(|ssa| {
                             if ssa.file() == file && !b.w.contains(ssa) {
+                                if b.s.insert(*ssa) {
+                                    assert!(spill.is_const(ssa));
+                                    instrs.push(spill.spill(*ssa));
+                                }
                                 *ssa = spill.get_spill(*ssa).into();
                             }
                         });
@@ -816,7 +880,9 @@ fn spill_values<S: Spill>(
                         let mut fills = Vec::new();
                         instr.for_each_ssa_use(|ssa| {
                             if ssa.file() == file && !b.w.contains(ssa) {
-                                debug_assert!(b.s.contains(ssa));
+                                debug_assert!(
+                                    b.s.contains(ssa) || spill.is_const(ssa)
+                                );
                                 debug_assert!(bb.uniform || !ssa.is_uniform());
                                 fills.push(spill.fill(*ssa));
                                 b.w.insert(*ssa);
@@ -841,14 +907,19 @@ fn spill_values<S: Spill>(
                             for ssa in spills {
                                 debug_assert!(ssa.file() == file);
                                 b.w.remove(&ssa);
-                                if DEBUG.annotate() {
-                                    instrs.push(Instr::new_boxed(OpAnnotate {
-                                        annotation: "generated by spill_values"
-                                            .into(),
-                                    }));
+                                if !spill.is_const(&ssa) {
+                                    if DEBUG.annotate() {
+                                        instrs.push(Instr::new_boxed(
+                                            OpAnnotate {
+                                                annotation:
+                                                    "generated by spill_values"
+                                                        .into(),
+                                            },
+                                        ));
+                                    }
+                                    instrs.push(spill.spill(ssa));
+                                    b.s.insert(ssa);
                                 }
-                                instrs.push(spill.spill(ssa));
-                                b.s.insert(ssa);
                             }
                         }
 
@@ -1023,26 +1094,31 @@ impl Function {
     /// just for the sake of a parallel copy.  While this may not be true in
     /// general, especially not when spilling to memory, the register allocator
     /// is good at eliding unnecessary copies.
-    pub fn spill_values(&mut self, file: RegFile, limit: u32) {
+    pub fn spill_values(
+        &mut self,
+        file: RegFile,
+        limit: u32,
+        info: &mut ShaderInfo,
+    ) {
         match file {
             RegFile::GPR => {
-                let spill = SpillGPR::new();
+                let spill = SpillGPR::new(info);
                 spill_values(self, file, limit, spill);
             }
             RegFile::UGPR => {
-                let spill = SpillUniform::new();
+                let spill = SpillUniform::new(info);
                 spill_values(self, file, limit, spill);
             }
             RegFile::Pred => {
-                let spill = SpillPred::new();
+                let spill = SpillPred::new(info);
                 spill_values(self, file, limit, spill);
             }
             RegFile::UPred => {
-                let spill = SpillPred::new();
+                let spill = SpillPred::new(info);
                 spill_values(self, file, limit, spill);
             }
             RegFile::Bar => {
-                let spill = SpillBar::new();
+                let spill = SpillBar::new(info);
                 spill_values(self, file, limit, spill);
             }
             _ => panic!("Don't know how to spill {} registers", file),

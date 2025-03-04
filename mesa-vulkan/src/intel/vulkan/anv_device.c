@@ -50,7 +50,7 @@
 #include "i915/anv_device.h"
 #include "xe/anv_device.h"
 
-#include "genxml/gen7_pack.h"
+#include "genxml/gen70_pack.h"
 #include "genxml/genX_bits.h"
 
 static void
@@ -76,9 +76,11 @@ anv_device_init_trivial_batch(struct anv_device *device)
    VkResult result = anv_device_alloc_bo(device, "trivial-batch", 4096,
                                          ANV_BO_ALLOC_MAPPED |
                                          ANV_BO_ALLOC_HOST_COHERENT |
-                                         ANV_BO_ALLOC_INTERNAL,
+                                         ANV_BO_ALLOC_INTERNAL |
+                                         ANV_BO_ALLOC_CAPTURE,
                                          0 /* explicit_address */,
                                          &device->trivial_batch_bo);
+   ANV_DMR_BO_ALLOC(&device->vk.base, device->trivial_batch_bo, result);
    if (result != VK_SUCCESS)
       return result;
 
@@ -297,8 +299,11 @@ anv_device_finish_trtt(struct anv_device *device)
    vk_free(&device->vk.alloc, trtt->l3_mirror);
    vk_free(&device->vk.alloc, trtt->l2_mirror);
 
-   for (int i = 0; i < trtt->num_page_table_bos; i++)
+   for (int i = 0; i < trtt->num_page_table_bos; i++) {
+      struct anv_bo *bo = trtt->page_table_bos[i];
+      ANV_DMR_BO_FREE(&device->vk.base, bo);
       anv_device_release_bo(device, trtt->page_table_bos[i]);
+   }
 
    vk_free(&device->vk.alloc, trtt->page_table_bos);
 }
@@ -312,6 +317,7 @@ VkResult anv_CreateDevice(
    ANV_FROM_HANDLE(anv_physical_device, physical_device, physicalDevice);
    VkResult result;
    struct anv_device *device;
+   bool device_has_compute_queue = false;
 
    assert(pCreateInfo->sType == VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO);
 
@@ -322,6 +328,10 @@ VkResult anv_CreateDevice(
    for (uint32_t i = 0; i < pCreateInfo->queueCreateInfoCount; i++) {
       if (pCreateInfo->pQueueCreateInfos[i].flags & ~VK_DEVICE_QUEUE_CREATE_PROTECTED_BIT)
          return vk_error(physical_device, VK_ERROR_INITIALIZATION_FAILED);
+
+      const struct anv_queue_family *family =
+         &physical_device->queue.families[pCreateInfo->pQueueCreateInfos[i].queueFamilyIndex];
+      device_has_compute_queue |= family->engine_class == INTEL_ENGINE_CLASS_COMPUTE;
    }
 
    device = vk_zalloc2(&physical_device->instance->vk.alloc, pAllocator,
@@ -473,6 +483,7 @@ VkResult anv_CreateDevice(
 
    list_inithead(&device->memory_objects);
    list_inithead(&device->image_private_objects);
+   list_inithead(&device->bvh_dumps);
 
    if (pthread_mutex_init(&device->mutex, NULL) != 0) {
       result = vk_error(device, VK_ERROR_INITIALIZATION_FAILED);
@@ -692,6 +703,7 @@ VkResult anv_CreateDevice(
                                 ANV_BO_ALLOC_INTERNAL,
                                 0 /* explicit_address */,
                                 &device->workaround_bo);
+   ANV_DMR_BO_ALLOC(&device->vk.base, device->workaround_bo, result);
    if (result != VK_SUCCESS)
       goto fail_surface_aux_map_pool;
 
@@ -700,25 +712,62 @@ VkResult anv_CreateDevice(
                                    0 /* alloc_flags */,
                                    0 /* explicit_address */,
                                    &device->dummy_aux_bo);
+      ANV_DMR_BO_ALLOC(&device->vk.base, device->dummy_aux_bo, result);
       if (result != VK_SUCCESS)
-         goto fail_workaround_bo;
+         goto fail_alloc_device_bo;
 
       device->isl_dev.dummy_aux_address = device->dummy_aux_bo->offset;
    }
 
-   device->workaround_address = (struct anv_address) {
+   /* Programming note from MI_MEM_FENCE specification:
+    *
+    *    Software must ensure STATE_SYSTEM_MEM_FENCE_ADDRESS command is
+    *    programmed prior to programming this command.
+    *
+    * HAS 1607240579 then provides the size information: 4K
+    */
+   if (device->info->verx10 >= 200) {
+      result = anv_device_alloc_bo(device, "mem_fence", 4096,
+                                   ANV_BO_ALLOC_NO_LOCAL_MEM, 0,
+                                   &device->mem_fence_bo);
+      ANV_DMR_BO_ALLOC(&device->vk.base, device->mem_fence_bo, result);
+      if (result != VK_SUCCESS)
+         goto fail_alloc_device_bo;
+   }
+
+   struct anv_address wa_addr = (struct anv_address) {
       .bo = device->workaround_bo,
-      .offset = align(intel_debug_write_identifiers(device->workaround_bo->map,
-                                                    device->workaround_bo->size,
-                                                    "Anv"), 32),
    };
 
-   device->workarounds.doom64_images = NULL;
+   wa_addr = anv_address_add_aligned(wa_addr,
+                                     intel_debug_write_identifiers(
+                                        device->workaround_bo->map,
+                                        device->workaround_bo->size,
+                                        "Anv"), 32);
 
-   device->rt_uuid_addr = anv_address_add(device->workaround_address, 8);
+   device->rt_uuid_addr = wa_addr;
    memcpy(device->rt_uuid_addr.bo->map + device->rt_uuid_addr.offset,
           physical_device->rt_uuid,
           sizeof(physical_device->rt_uuid));
+
+   /* Make sure the workaround address is the last one in the workaround BO,
+    * so that writes never overwrite other bits of data stored in the
+    * workaround BO.
+    */
+   wa_addr = anv_address_add_aligned(wa_addr,
+                                     sizeof(physical_device->rt_uuid), 64);
+   device->workaround_address = wa_addr;
+
+   /* Make sure we don't over the allocated BO. */
+   assert(device->workaround_address.offset < device->workaround_bo->size);
+   /* We also need 64B (maximum GRF size) from the workaround address (see
+    * TBIMR workaround)
+    */
+   assert((device->workaround_bo->size -
+           device->workaround_address.offset) >= 64);
+
+   device->workarounds.doom64_images = NULL;
+
 
    device->debug_frame_desc =
       intel_debug_get_identifier_block(device->workaround_bo->map,
@@ -733,9 +782,23 @@ VkResult anv_CreateDevice(
                                    ray_queries_size,
                                    ANV_BO_ALLOC_INTERNAL,
                                    0 /* explicit_address */,
-                                   &device->ray_query_bo);
+                                   &device->ray_query_bo[0]);
+      ANV_DMR_BO_ALLOC(&device->vk.base, device->ray_query_bo[0], result);
       if (result != VK_SUCCESS)
-         goto fail_dummy_aux_bo;
+         goto fail_alloc_device_bo;
+
+      /* We need a separate ray query bo for CCS engine with Wa_14022863161. */
+      if (intel_needs_workaround(device->isl_dev.info, 14022863161) &&
+          device_has_compute_queue) {
+         result = anv_device_alloc_bo(device, "ray queries",
+                                      ray_queries_size,
+                                      ANV_BO_ALLOC_INTERNAL,
+                                      0 /* explicit_address */,
+                                      &device->ray_query_bo[1]);
+         ANV_DMR_BO_ALLOC(&device->vk.base, device->ray_query_bo[1], result);
+         if (result != VK_SUCCESS)
+            goto fail_ray_query_bo;
+      }
    }
 
    result = anv_device_init_trivial_batch(device);
@@ -745,7 +808,7 @@ VkResult anv_CreateDevice(
    /* Emit the CPS states before running the initialization batch as those
     * structures are referenced.
     */
-   if (device->info->ver >= 12) {
+   if (device->info->ver >= 12 && device->info->ver < 30) {
       uint32_t n_cps_states = 3 * 3; /* All combinaisons of X by Y CP sizes (1, 2, 4) */
 
       if (device->info->has_coarse_pixel_primitive_and_cb)
@@ -811,6 +874,7 @@ VkResult anv_CreateDevice(
                                    ANV_BO_ALLOC_INTERNAL,
                                    0 /* explicit_address */,
                                    &device->btd_fifo_bo);
+      ANV_DMR_BO_ALLOC(&device->vk.base, device->btd_fifo_bo, result);
       if (result != VK_SUCCESS)
          goto fail_trivial_batch_bo_and_scratch_pool;
    }
@@ -911,8 +975,13 @@ VkResult anv_CreateDevice(
    }
    if (!device->vk.enabled_extensions.EXT_sample_locations)
       BITSET_CLEAR(device->gfx_dirty_state, ANV_GFX_STATE_SAMPLE_PATTERN);
-   if (!device->vk.enabled_extensions.KHR_fragment_shading_rate)
-      BITSET_CLEAR(device->gfx_dirty_state, ANV_GFX_STATE_CPS);
+   if (!device->vk.enabled_extensions.KHR_fragment_shading_rate) {
+      if (device->info->ver >= 30) {
+         BITSET_CLEAR(device->gfx_dirty_state, ANV_GFX_STATE_COARSE_PIXEL);
+      } else {
+         BITSET_CLEAR(device->gfx_dirty_state, ANV_GFX_STATE_CPS);
+      }
+   }
    if (!device->vk.enabled_extensions.EXT_mesh_shader) {
       BITSET_CLEAR(device->gfx_dirty_state, ANV_GFX_STATE_SBE_MESH);
       BITSET_CLEAR(device->gfx_dirty_state, ANV_GFX_STATE_CLIP_MESH);
@@ -947,14 +1016,22 @@ VkResult anv_CreateDevice(
 
    anv_device_utrace_init(device);
 
-   result = anv_genX(device->info, init_device_state)(device);
+   result = vk_meta_device_init(&device->vk, &device->meta_device);
    if (result != VK_SUCCESS)
       goto fail_utrace;
+
+   result = anv_genX(device->info, init_device_state)(device);
+   if (result != VK_SUCCESS)
+      goto fail_meta_device;
+
+   simple_mtx_init(&device->accel_struct_build.mutex, mtx_plain);
 
    *pDevice = anv_device_to_handle(device);
 
    return VK_SUCCESS;
 
+ fail_meta_device:
+   vk_meta_device_finish(&device->vk, &device->meta_device);
  fail_utrace:
    anv_device_utrace_finish(device);
  fail_queues:
@@ -980,20 +1057,33 @@ VkResult anv_CreateDevice(
  fail_default_pipeline_cache:
    vk_pipeline_cache_destroy(device->vk.mem_cache, NULL);
  fail_btd_fifo_bo:
-   if (ANV_SUPPORT_RT && device->info->has_ray_tracing)
+   if (ANV_SUPPORT_RT && device->info->has_ray_tracing) {
+      ANV_DMR_BO_FREE(&device->vk.base, device->btd_fifo_bo);
       anv_device_release_bo(device, device->btd_fifo_bo);
+   }
  fail_trivial_batch_bo_and_scratch_pool:
    anv_scratch_pool_finish(device, &device->scratch_pool);
    anv_scratch_pool_finish(device, &device->protected_scratch_pool);
  fail_trivial_batch:
+   ANV_DMR_BO_FREE(&device->vk.base, device->trivial_batch_bo);
    anv_device_release_bo(device, device->trivial_batch_bo);
  fail_ray_query_bo:
-   if (device->ray_query_bo)
-      anv_device_release_bo(device, device->ray_query_bo);
- fail_dummy_aux_bo:
-   if (device->dummy_aux_bo)
+   for (unsigned i = 0; i < ARRAY_SIZE(device->ray_query_bo); i++) {
+      if (device->ray_query_bo[i]) {
+         ANV_DMR_BO_FREE(&device->vk.base, device->ray_query_bo[i]);
+         anv_device_release_bo(device, device->ray_query_bo[i]);
+      }
+   }
+ fail_alloc_device_bo:
+   if (device->mem_fence_bo) {
+      ANV_DMR_BO_FREE(&device->vk.base, device->mem_fence_bo);
+      anv_device_release_bo(device, device->mem_fence_bo);
+   }
+   if (device->dummy_aux_bo) {
+      ANV_DMR_BO_FREE(&device->vk.base, device->dummy_aux_bo);
       anv_device_release_bo(device, device->dummy_aux_bo);
- fail_workaround_bo:
+   }
+   ANV_DMR_BO_FREE(&device->vk.base, device->workaround_bo);
    anv_device_release_bo(device, device->workaround_bo);
  fail_surface_aux_map_pool:
    if (device->info->has_aux_map) {
@@ -1078,6 +1168,12 @@ void anv_DestroyDevice(
    /* Do TRTT batch garbage collection before destroying queues. */
    anv_device_finish_trtt(device);
 
+   if (device->accel_struct_build.radix_sort) {
+      radix_sort_vk_destroy(device->accel_struct_build.radix_sort,
+                            _device, &device->vk.alloc);
+   }
+   vk_meta_device_finish(&device->vk, &device->meta_device);
+
    anv_device_utrace_finish(device);
 
    for (uint32_t i = 0; i < device->queue_count; i++)
@@ -1100,8 +1196,10 @@ void anv_DestroyDevice(
 
    anv_device_finish_embedded_samplers(device);
 
-   if (ANV_SUPPORT_RT && device->info->has_ray_tracing)
+   if (ANV_SUPPORT_RT && device->info->has_ray_tracing) {
+      ANV_DMR_BO_FREE(&device->vk.base, device->btd_fifo_bo);
       anv_device_release_bo(device, device->btd_fifo_bo);
+   }
 
    if (device->info->verx10 >= 125) {
       vk_common_DestroyCommandPool(anv_device_to_handle(device),
@@ -1120,23 +1218,41 @@ void anv_DestroyDevice(
 #endif
 
    for (unsigned i = 0; i < ARRAY_SIZE(device->rt_scratch_bos); i++) {
-      if (device->rt_scratch_bos[i] != NULL)
-         anv_device_release_bo(device, device->rt_scratch_bos[i]);
+      if (device->rt_scratch_bos[i] != NULL) {
+         struct anv_bo *bo = device->rt_scratch_bos[i];
+         ANV_DMR_BO_FREE(&device->vk.base, bo);
+         anv_device_release_bo(device, bo);
+      }
    }
 
    anv_scratch_pool_finish(device, &device->scratch_pool);
    anv_scratch_pool_finish(device, &device->protected_scratch_pool);
 
    if (device->vk.enabled_extensions.KHR_ray_query) {
-      for (unsigned i = 0; i < ARRAY_SIZE(device->ray_query_shadow_bos); i++) {
-         if (device->ray_query_shadow_bos[i] != NULL)
-            anv_device_release_bo(device, device->ray_query_shadow_bos[i]);
+      for (unsigned i = 0; i < ARRAY_SIZE(device->ray_query_bo); i++) {
+         for (unsigned j = 0; j < ARRAY_SIZE(device->ray_query_shadow_bos[0]); j++) {
+            if (device->ray_query_shadow_bos[i][j] != NULL) {
+               ANV_DMR_BO_FREE(&device->vk.base, device->ray_query_shadow_bos[i][j]);
+               anv_device_release_bo(device, device->ray_query_shadow_bos[i][j]);
+            }
+         }
+         if (device->ray_query_bo[i]) {
+            ANV_DMR_BO_FREE(&device->vk.base, device->ray_query_bo[i]);
+            anv_device_release_bo(device, device->ray_query_bo[i]);
+         }
       }
-      anv_device_release_bo(device, device->ray_query_bo);
    }
+   ANV_DMR_BO_FREE(&device->vk.base, device->workaround_bo);
    anv_device_release_bo(device, device->workaround_bo);
-   if (device->dummy_aux_bo)
+   if (device->dummy_aux_bo) {
+      ANV_DMR_BO_FREE(&device->vk.base, device->dummy_aux_bo);
       anv_device_release_bo(device, device->dummy_aux_bo);
+   }
+   if (device->mem_fence_bo) {
+      ANV_DMR_BO_FREE(&device->vk.base, device->mem_fence_bo);
+      anv_device_release_bo(device, device->mem_fence_bo);
+   }
+   ANV_DMR_BO_FREE(&device->vk.base, device->trivial_batch_bo);
    anv_device_release_bo(device, device->trivial_batch_bo);
 
    if (device->info->has_aux_map) {
@@ -1174,6 +1290,8 @@ void anv_DestroyDevice(
 
    pthread_cond_destroy(&device->queue_submit);
    pthread_mutex_destroy(&device->mutex);
+
+   simple_mtx_destroy(&device->accel_struct_build.mutex);
 
    ralloc_free(device->fp64_nir);
 
@@ -1469,7 +1587,9 @@ VkResult anv_AllocateMemory(
    /* TODO: Disabling compression on external bos will cause problems once we
     * have a modifier that supports compression (Xe2+).
     */
-   if (!(alloc_flags & ANV_BO_ALLOC_EXTERNAL) && mem_type->compressed)
+   if (!(alloc_flags & ANV_BO_ALLOC_EXTERNAL) &&
+       mem_type->compressed &&
+       !INTEL_DEBUG(DEBUG_NO_CCS))
       alloc_flags |= ANV_BO_ALLOC_COMPRESSED;
 
    if (mem_type->dynamic_visible)
@@ -1603,12 +1723,16 @@ VkResult anv_AllocateMemory(
    pthread_mutex_unlock(&device->mutex);
 
    ANV_RMV(heap_create, device, mem, false, 0);
+   ANV_DMR_BO_ALLOC_IMPORT(&mem->vk.base, mem->bo, result,
+                           mem->vk.import_handle_type);
 
    *pMem = anv_device_memory_to_handle(mem);
 
    return VK_SUCCESS;
 
  fail:
+   ANV_DMR_BO_ALLOC_IMPORT(&mem->vk.base, mem->bo, result,
+                           mem->vk.import_handle_type);
    vk_device_memory_destroy(&device->vk, pAllocator, &mem->vk);
 
    return result;
@@ -1707,6 +1831,9 @@ void anv_FreeMemory(
    p_atomic_add(&device->physical->memory.heaps[mem->type->heapIndex].used,
                 -mem->bo->size);
 
+   ANV_DMR_BO_FREE_IMPORT(&mem->vk.base, mem->bo,
+                          mem->vk.import_handle_type);
+
    anv_device_release_bo(device, mem->bo);
 
    ANV_RMV(resource_destroy, device, mem);
@@ -1771,17 +1898,8 @@ VkResult anv_MapMemory2KHR(
       placed_addr = placed_info->pPlacedAddress;
    }
 
-   /* GEM will fail to map if the offset isn't 4k-aligned.  Round down. */
-   uint64_t map_offset;
-   if (!device->physical->info.has_mmap_offset)
-      map_offset = offset & ~4095ull;
-   else
-      map_offset = 0;
-   assert(offset >= map_offset);
-   uint64_t map_size = (offset + size) - map_offset;
-
-   /* Let's map whole pages */
-   map_size = align64(map_size, 4096);
+   uint64_t map_offset, map_size;
+   anv_sanitize_map_params(device, offset, size, &map_offset, &map_size);
 
    void *map;
    VkResult result = anv_device_map_bo(device, mem->bo, map_offset,
@@ -2060,6 +2178,9 @@ anv_device_get_pat_entry(struct anv_device *device,
    if (alloc_flags & ANV_BO_ALLOC_COMPRESSED)
       return &device->info->pat.compressed;
 
+   if (alloc_flags & (ANV_BO_ALLOC_EXTERNAL | ANV_BO_ALLOC_SCANOUT))
+      return &device->info->pat.scanout;
+
    /* PAT indexes has no actual effect in DG2 and DG1, smem caches will always
     * be snopped by GPU and lmem will always be WC.
     * This might change in future discrete platforms.
@@ -2073,8 +2194,6 @@ anv_device_get_pat_entry(struct anv_device *device,
    /* Integrated platforms handling only */
    if ((alloc_flags & (ANV_BO_ALLOC_HOST_CACHED_COHERENT)) == ANV_BO_ALLOC_HOST_CACHED_COHERENT)
       return &device->info->pat.cached_coherent;
-   else if (alloc_flags & (ANV_BO_ALLOC_EXTERNAL | ANV_BO_ALLOC_SCANOUT))
-      return &device->info->pat.scanout;
    else if (alloc_flags & ANV_BO_ALLOC_HOST_CACHED)
       return &device->info->pat.writeback_incoherent;
    else

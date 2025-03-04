@@ -48,6 +48,7 @@
  */
 static nir_shader *
 anv_shader_stage_to_nir(struct anv_device *device,
+                        VkPipelineCreateFlags2KHR pipeline_flags,
                         const VkPipelineShaderStageCreateInfo *stage_info,
                         enum elk_robustness_flags robust_flags,
                         void *mem_ctx)
@@ -76,7 +77,7 @@ anv_shader_stage_to_nir(struct anv_device *device,
 
    nir_shader *nir;
    VkResult result =
-      vk_pipeline_shader_stage_to_nir(&device->vk, stage_info,
+      vk_pipeline_shader_stage_to_nir(&device->vk, pipeline_flags, stage_info,
                                       &spirv_options, nir_options,
                                       mem_ctx, &nir);
    if (result != VK_SUCCESS)
@@ -336,6 +337,7 @@ populate_cs_prog_key(const struct anv_device *device,
 struct anv_pipeline_stage {
    gl_shader_stage stage;
 
+   VkPipelineCreateFlags2KHR pipeline_flags;
    const VkPipelineShaderStageCreateInfo *info;
 
    unsigned char shader_sha1[20];
@@ -440,7 +442,8 @@ anv_pipeline_stage_get_nir(struct anv_pipeline *pipeline,
       return nir;
    }
 
-   nir = anv_shader_stage_to_nir(pipeline->device, stage->info,
+   nir = anv_shader_stage_to_nir(pipeline->device,
+                                 stage->pipeline_flags, stage->info,
                                  stage->key.base.robust_flags, mem_ctx);
    if (nir) {
       anv_device_upload_nir(pipeline->device, cache, nir, stage->shader_sha1);
@@ -1045,7 +1048,8 @@ anv_graphics_pipeline_init_keys(struct anv_graphics_pipeline *pipeline,
 
       int64_t stage_start = os_time_get_nano();
 
-      vk_pipeline_hash_shader_stage(stages[s].info, NULL, stages[s].shader_sha1);
+      vk_pipeline_hash_shader_stage(stages[s].pipeline_flags, stages[s].info,
+                                    NULL, stages[s].shader_sha1);
 
       const struct anv_device *device = pipeline->base.device;
       enum elk_robustness_flags robust_flags = anv_device_get_robust_flags(device);
@@ -1216,6 +1220,9 @@ anv_graphics_pipeline_compile(struct anv_graphics_pipeline *pipeline,
    ANV_FROM_HANDLE(anv_pipeline_layout, layout, info->layout);
    VkResult result;
 
+   const VkPipelineCreateFlags2KHR pipeline_flags =
+      vk_graphics_pipeline_create_flags(info);
+
    VkPipelineCreationFeedback pipeline_feedback = {
       .flags = VK_PIPELINE_CREATION_FEEDBACK_VALID_BIT,
    };
@@ -1226,6 +1233,7 @@ anv_graphics_pipeline_compile(struct anv_graphics_pipeline *pipeline,
    for (uint32_t i = 0; i < info->stageCount; i++) {
       gl_shader_stage stage = vk_to_mesa_shader_stage(info->pStages[i].stage);
       stages[stage].stage = stage;
+      stages[stage].pipeline_flags = pipeline_flags;
       stages[stage].info = &info->pStages[i];
    }
 
@@ -1440,6 +1448,7 @@ anv_pipeline_compile_cs(struct anv_compute_pipeline *pipeline,
 
    struct anv_pipeline_stage stage = {
       .stage = MESA_SHADER_COMPUTE,
+      .pipeline_flags = vk_compute_pipeline_create_flags(info),
       .info = &info->stage,
       .cache_key = {
          .stage = MESA_SHADER_COMPUTE,
@@ -1448,7 +1457,8 @@ anv_pipeline_compile_cs(struct anv_compute_pipeline *pipeline,
          .flags = VK_PIPELINE_CREATION_FEEDBACK_VALID_BIT,
       },
    };
-   vk_pipeline_hash_shader_stage(&info->stage, NULL, stage.shader_sha1);
+   vk_pipeline_hash_shader_stage(stage.pipeline_flags, &info->stage,
+                                 NULL, stage.shader_sha1);
 
    struct anv_shader_bin *bin = NULL;
 
@@ -1872,12 +1882,6 @@ VkResult anv_CreateGraphicsPipelines(
    return result;
 }
 
-#define WRITE_STR(field, ...) ({                               \
-   memset(field, 0, sizeof(field));                            \
-   UNUSED int i = snprintf(field, sizeof(field), __VA_ARGS__); \
-   assert(i > 0 && i < sizeof(field));                         \
-})
-
 VkResult anv_GetPipelineExecutablePropertiesKHR(
     VkDevice                                    device,
     const VkPipelineInfoKHR*                    pPipelineInfo,
@@ -1895,14 +1899,14 @@ VkResult anv_GetPipelineExecutablePropertiesKHR(
 
          unsigned simd_width = exe->stats.dispatch_width;
          if (stage == MESA_SHADER_FRAGMENT) {
-            WRITE_STR(props->name, "%s%d %s",
+            VK_PRINT_STR(props->name, "%s%d %s",
                       simd_width ? "SIMD" : "vec",
                       simd_width ? simd_width : 4,
                       _mesa_shader_stage_to_string(stage));
          } else {
-            WRITE_STR(props->name, "%s", _mesa_shader_stage_to_string(stage));
+            VK_COPY_STR(props->name, _mesa_shader_stage_to_string(stage));
          }
-         WRITE_STR(props->description, "%s%d %s shader",
+         VK_PRINT_STR(props->description, "%s%d %s shader",
                    simd_width ? "SIMD" : "vec",
                    simd_width ? simd_width : 4,
                    _mesa_shader_stage_to_string(stage));
@@ -1954,8 +1958,8 @@ VkResult anv_GetPipelineExecutableStatisticsKHR(
    }
 
    vk_outarray_append_typed(VkPipelineExecutableStatisticKHR, &out, stat) {
-      WRITE_STR(stat->name, "Instruction Count");
-      WRITE_STR(stat->description,
+      VK_COPY_STR(stat->name, "Instruction Count");
+      VK_COPY_STR(stat->description,
                 "Number of GEN instructions in the final generated "
                 "shader executable.");
       stat->format = VK_PIPELINE_EXECUTABLE_STATISTIC_FORMAT_UINT64_KHR;
@@ -1963,8 +1967,8 @@ VkResult anv_GetPipelineExecutableStatisticsKHR(
    }
 
    vk_outarray_append_typed(VkPipelineExecutableStatisticKHR, &out, stat) {
-      WRITE_STR(stat->name, "SEND Count");
-      WRITE_STR(stat->description,
+      VK_COPY_STR(stat->name, "SEND Count");
+      VK_COPY_STR(stat->description,
                 "Number of instructions in the final generated shader "
                 "executable which access external units such as the "
                 "constant cache or the sampler.");
@@ -1973,8 +1977,8 @@ VkResult anv_GetPipelineExecutableStatisticsKHR(
    }
 
    vk_outarray_append_typed(VkPipelineExecutableStatisticKHR, &out, stat) {
-      WRITE_STR(stat->name, "Loop Count");
-      WRITE_STR(stat->description,
+      VK_COPY_STR(stat->name, "Loop Count");
+      VK_COPY_STR(stat->description,
                 "Number of loops (not unrolled) in the final generated "
                 "shader executable.");
       stat->format = VK_PIPELINE_EXECUTABLE_STATISTIC_FORMAT_UINT64_KHR;
@@ -1982,8 +1986,8 @@ VkResult anv_GetPipelineExecutableStatisticsKHR(
    }
 
    vk_outarray_append_typed(VkPipelineExecutableStatisticKHR, &out, stat) {
-      WRITE_STR(stat->name, "Cycle Count");
-      WRITE_STR(stat->description,
+      VK_COPY_STR(stat->name, "Cycle Count");
+      VK_COPY_STR(stat->description,
                 "Estimate of the number of EU cycles required to execute "
                 "the final generated executable.  This is an estimate only "
                 "and may vary greatly from actual run-time performance.");
@@ -1992,8 +1996,8 @@ VkResult anv_GetPipelineExecutableStatisticsKHR(
    }
 
    vk_outarray_append_typed(VkPipelineExecutableStatisticKHR, &out, stat) {
-      WRITE_STR(stat->name, "Spill Count");
-      WRITE_STR(stat->description,
+      VK_COPY_STR(stat->name, "Spill Count");
+      VK_COPY_STR(stat->description,
                 "Number of scratch spill operations.  This gives a rough "
                 "estimate of the cost incurred due to spilling temporary "
                 "values to memory.  If this is non-zero, you may want to "
@@ -2003,8 +2007,8 @@ VkResult anv_GetPipelineExecutableStatisticsKHR(
    }
 
    vk_outarray_append_typed(VkPipelineExecutableStatisticKHR, &out, stat) {
-      WRITE_STR(stat->name, "Fill Count");
-      WRITE_STR(stat->description,
+      VK_COPY_STR(stat->name, "Fill Count");
+      VK_COPY_STR(stat->description,
                 "Number of scratch fill operations.  This gives a rough "
                 "estimate of the cost incurred due to spilling temporary "
                 "values to memory.  If this is non-zero, you may want to "
@@ -2014,8 +2018,8 @@ VkResult anv_GetPipelineExecutableStatisticsKHR(
    }
 
    vk_outarray_append_typed(VkPipelineExecutableStatisticKHR, &out, stat) {
-      WRITE_STR(stat->name, "Scratch Memory Size");
-      WRITE_STR(stat->description,
+      VK_COPY_STR(stat->name, "Scratch Memory Size");
+      VK_COPY_STR(stat->description,
                 "Number of bytes of scratch memory required by the "
                 "generated shader executable.  If this is non-zero, you "
                 "may want to adjust your shader to reduce register "
@@ -2026,8 +2030,8 @@ VkResult anv_GetPipelineExecutableStatisticsKHR(
 
    if (gl_shader_stage_uses_workgroup(exe->stage)) {
       vk_outarray_append_typed(VkPipelineExecutableStatisticKHR, &out, stat) {
-         WRITE_STR(stat->name, "Workgroup Memory Size");
-         WRITE_STR(stat->description,
+         VK_COPY_STR(stat->name, "Workgroup Memory Size");
+         VK_COPY_STR(stat->description,
                    "Number of bytes of workgroup shared memory used by this "
                    "shader including any padding.");
          stat->format = VK_PIPELINE_EXECUTABLE_STATISTIC_FORMAT_UINT64_KHR;
@@ -2075,8 +2079,8 @@ VkResult anv_GetPipelineExecutableInternalRepresentationsKHR(
 
    if (exe->nir) {
       vk_outarray_append_typed(VkPipelineExecutableInternalRepresentationKHR, &out, ir) {
-         WRITE_STR(ir->name, "Final NIR");
-         WRITE_STR(ir->description,
+         VK_COPY_STR(ir->name, "Final NIR");
+         VK_COPY_STR(ir->description,
                    "Final NIR before going into the back-end compiler");
 
          if (!write_ir_text(ir, exe->nir))
@@ -2086,8 +2090,8 @@ VkResult anv_GetPipelineExecutableInternalRepresentationsKHR(
 
    if (exe->disasm) {
       vk_outarray_append_typed(VkPipelineExecutableInternalRepresentationKHR, &out, ir) {
-         WRITE_STR(ir->name, "GEN Assembly");
-         WRITE_STR(ir->description,
+         VK_COPY_STR(ir->name, "GEN Assembly");
+         VK_COPY_STR(ir->description,
                    "Final GEN assembly for the generated shader binary");
 
          if (!write_ir_text(ir, exe->disasm))

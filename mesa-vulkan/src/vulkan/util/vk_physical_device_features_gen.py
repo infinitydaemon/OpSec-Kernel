@@ -48,6 +48,8 @@ RENAMED_FEATURES = {
 
     ('CooperativeMatrixFeaturesNV', 'cooperativeMatrix'): 'cooperativeMatrixNV',
     ('CooperativeMatrixFeaturesNV', 'cooperativeMatrixRobustBufferAccess'): 'cooperativeMatrixRobustBufferAccessNV',
+
+    ('DeviceGeneratedCommandsFeaturesNV', 'deviceGeneratedCommands'): 'deviceGeneratedCommandsNV',
 }
 
 KNOWN_ALIASES = [
@@ -110,6 +112,38 @@ KNOWN_ALIASES = [
     (['Vulkan13Features', 'DynamicRenderingFeatures'], ['dynamicRendering']),
     (['Vulkan13Features', 'ShaderIntegerDotProductFeatures'], ['shaderIntegerDotProduct']),
     (['Vulkan13Features', 'Maintenance4Features'], ['maintenance4']),
+    (['Vulkan14Features', 'GlobalPriorityQueryFeatures'], ['globalPriorityQuery']),
+    (
+        ['Vulkan14Features', 'ShaderSubgroupRotateFeatures'],
+        ['shaderSubgroupRotate', 'shaderSubgroupRotateClustered'],
+    ),
+    (['Vulkan14Features', 'ShaderFloatControls2Features'], ['shaderFloatControls2']),
+    (['Vulkan14Features', 'ShaderExpectAssumeFeatures'], ['shaderExpectAssume']),
+    (
+        ['Vulkan14Features', 'LineRasterizationFeatures'],
+        [
+            'rectangularLines',
+            'bresenhamLines',
+            'smoothLines',
+            'stippledRectangularLines',
+            'stippledBresenhamLines',
+            'stippledSmoothLines',
+        ],
+    ),
+    (
+        ['Vulkan14Features', 'VertexAttributeDivisorFeatures'],
+        [
+            'vertexAttributeInstanceRateDivisor',
+            'vertexAttributeInstanceRateZeroDivisor',
+        ],
+    ),
+    (['Vulkan14Features', 'IndexTypeUint8Features'], ['indexTypeUint8']),
+    (['Vulkan14Features', 'DynamicRenderingLocalReadFeatures'], ['dynamicRenderingLocalRead']),
+    (['Vulkan14Features', 'Maintenance5Features'], ['maintenance5']),
+    (['Vulkan14Features', 'Maintenance6Features'], ['maintenance6']),
+    (['Vulkan14Features', 'PipelineProtectedAccessFeatures'], ['pipelineProtectedAccess']),
+    (['Vulkan14Features', 'PipelineRobustnessFeatures'], ['pipelineRobustness']),
+    (['Vulkan14Features', 'HostImageCopyFeatures'], ['hostImageCopy']),
 ]
 
 for (feature_structs, features) in KNOWN_ALIASES:
@@ -231,8 +265,16 @@ vk_physical_device_check_device_features(struct vk_physical_device *physical_dev
       if (!supported)
          continue;
 
+      /* Ignore duplicated structs instead of failing to create the device. */
+      if (supported->sType != 0) {
+         vk_logw(VK_LOG_OBJS(physical_device),
+                 "WARNING: Duplicate sType %s in the device creation chain.\\n",
+                 vk_StructureType_to_str(features->sType));
+         continue;
+      }
+
       /* Check for cycles in the list */
-      if (supported->pNext != NULL || supported->sType != 0)
+      if (supported->pNext != NULL)
          return VK_ERROR_UNKNOWN;
 
       supported->sType = features->sType;

@@ -67,6 +67,7 @@ struct u_transfer_helper;
 struct pipe_screen;
 struct util_queue_fence;
 struct pipe_video_buffer;
+struct nir_shader;
 
 typedef struct pipe_vertex_state *
    (*pipe_create_vertex_state_func)(struct pipe_screen *screen,
@@ -89,6 +90,10 @@ typedef void (*pipe_driver_thread_func)(void *job, void *gdata, int thread_index
 struct pipe_screen {
    int refcnt;
    void *winsys_priv;
+
+   const struct pipe_caps caps;
+   const struct pipe_shader_caps shader_caps[PIPE_SHADER_MESH_TYPES];
+   const struct pipe_compute_caps compute_caps;
 
    /**
     * Get the fd associated with the screen
@@ -131,25 +136,6 @@ struct pipe_screen {
    const char *(*get_cl_cts_version)(struct pipe_screen *);
 
    /**
-    * Query an integer-valued capability/parameter/limit
-    * \param param  one of PIPE_CAP_x
-    */
-   int (*get_param)(struct pipe_screen *, enum pipe_cap param);
-
-   /**
-    * Query a float-valued capability/parameter/limit
-    * \param param  one of PIPE_CAP_x
-    */
-   float (*get_paramf)(struct pipe_screen *, enum pipe_capf param);
-
-   /**
-    * Query a per-shader-stage integer-valued capability/parameter/limit
-    * \param param  one of PIPE_CAP_x
-    */
-   int (*get_shader_param)(struct pipe_screen *, enum pipe_shader_type shader,
-                           enum pipe_shader_cap param);
-
-   /**
     * Query an integer-valued capability/parameter/limit for a codec/profile
     * \param param  one of PIPE_VIDEO_CAP_x
     */
@@ -159,23 +145,8 @@ struct pipe_screen {
                           enum pipe_video_cap param);
 
    /**
-    * Query a compute-specific capability/parameter/limit.
-    * \param ir_type shader IR type for which the param applies, or don't care
-    *                if the param is not shader related
-    * \param param   one of PIPE_COMPUTE_CAP_x
-    * \param ret     pointer to a preallocated buffer that will be
-    *                initialized to the parameter value, or NULL.
-    * \return        size in bytes of the parameter value that would be
-    *                returned.
-    */
-   int (*get_compute_param)(struct pipe_screen *,
-                            enum pipe_shader_ir ir_type,
-                            enum pipe_compute_cap param,
-                            void *ret);
-
-   /**
     * Get the sample pixel grid's size. This function requires
-    * PIPE_CAP_PROGRAMMABLE_SAMPLE_LOCATIONS to be callable.
+    * pipe_caps.programmable_sample_locations to be callable.
     *
     * \param sample_count - total number of samples
     * \param out_width - the width of the pixel grid
@@ -640,7 +611,7 @@ struct pipe_screen {
     * The driver may return a non-NULL string to trigger GLSL link failure
     * and logging of that message in the GLSL linker log.
     */
-   char *(*finalize_nir)(struct pipe_screen *screen, void *nir);
+   char *(*finalize_nir)(struct pipe_screen *screen, struct nir_shader *nir);
 
    /*Separated memory/resource allocations interfaces for Vulkan */
 
@@ -832,20 +803,6 @@ struct pipe_screen {
                                        int max, uint64_t *modifiers, int *count);
 
    /**
-    * Determine whether the modifer is enabling fixed-rate compression for
-    * the given screen and format.
-    *
-    * If \p rate is not NULL, the value it points to will be set to the
-    * bitrate (bits per component) associated with the modifier.
-    *
-    * \return true if the format+modifier pair is enabling fixed-rate
-    *         compression on \p screen, false otherwise.
-    */
-   bool (*is_compression_modifier)(struct pipe_screen *screen,
-                                   enum pipe_format format, uint64_t modifier,
-                                   uint32_t *rate);
-
-   /**
     * Check if the given \p target buffer is supported as output (or input for
     * encode) for this \p profile and \p entrypoint.
     *
@@ -862,6 +819,13 @@ struct pipe_screen {
                                             struct pipe_video_buffer *target,
                                             enum pipe_video_profile profile,
                                             enum pipe_video_entrypoint entrypoint);
+
+   /**
+    * pipe_screen is inherited by driver's screen but a simple cast to convert
+    * from the generic interface to the driver version won't work if dd_pipe
+    * is used.
+    */
+   struct pipe_screen* (*get_driver_pipe_screen)(struct pipe_screen *screen);
 };
 
 

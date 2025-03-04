@@ -8,25 +8,19 @@
 #include "asahi/compiler/agx_compile.h"
 #include "compiler/nir/nir_builder.h"
 #include "gallium/include/pipe/p_defines.h"
-#include "shaders/geometry.h"
+#include "libagx/geometry.h"
+#include "libagx/libagx.h"
 #include "util/bitscan.h"
 #include "util/list.h"
 #include "util/macros.h"
 #include "util/ralloc.h"
 #include "util/u_math.h"
-#include "libagx_shaders.h"
 #include "nir.h"
 #include "nir_builder_opcodes.h"
 #include "nir_intrinsics.h"
 #include "nir_intrinsics_indices.h"
 #include "nir_xfb_info.h"
 #include "shader_enums.h"
-
-/* Marks a transform feedback store, which must not be stripped from the
- * prepass since that's where the transform feedback happens. Chosen as a
- * vendored flag not to alias other flags we'll see.
- */
-#define ACCESS_XFB (ACCESS_IS_SWIZZLED_AMD)
 
 enum gs_counter {
    GS_COUNTER_VERTICES = 0,
@@ -381,7 +375,7 @@ lower_id(nir_builder *b, nir_intrinsic_instr *intr, void *data)
  * counts are statically known.
  */
 static nir_shader *
-agx_nir_create_geometry_count_shader(nir_shader *gs, const nir_shader *libagx,
+agx_nir_create_geometry_count_shader(nir_shader *gs,
                                      struct lower_gs_state *state)
 {
    /* Don't muck up the original shader */
@@ -400,7 +394,7 @@ agx_nir_create_geometry_count_shader(nir_shader *gs, const nir_shader *libagx,
    NIR_PASS(_, shader, nir_shader_intrinsics_pass, lower_id,
             nir_metadata_control_flow, NULL);
 
-   agx_preprocess_nir(shader, libagx);
+   agx_preprocess_nir(shader);
    return shader;
 }
 
@@ -593,8 +587,7 @@ strip_side_effect_from_main(nir_builder *b, nir_intrinsic_instr *intr,
  * shades each rasterized output vertex in parallel.
  */
 static nir_shader *
-agx_nir_create_gs_rast_shader(const nir_shader *gs, const nir_shader *libagx,
-                              bool *side_effects_for_rast)
+agx_nir_create_gs_rast_shader(const nir_shader *gs, bool *side_effects_for_rast)
 {
    /* Don't muck up the original shader */
    nir_shader *shader = nir_shader_clone(NULL, gs);
@@ -704,7 +697,7 @@ agx_nir_create_gs_rast_shader(const nir_shader *gs, const nir_shader *libagx,
 
    nir_opt_idiv_const(shader, 16);
 
-   agx_preprocess_nir(shader, libagx);
+   agx_preprocess_nir(shader);
    return shader;
 }
 
@@ -860,10 +853,9 @@ write_xfb(nir_builder *b, struct lower_gs_state *state, unsigned stream,
             nir_imm_int(b, buffer), nir_imm_int(b, stride),
             nir_imm_int(b, output.offset));
 
-         nir_build_store_global(
-            b, nir_channels(b, value, output.component_mask), addr,
-            .align_mul = 4, .write_mask = nir_component_mask(count),
-            .access = ACCESS_XFB);
+         nir_store_global(b, addr, 4,
+                          nir_channels(b, value, output.component_mask),
+                          nir_component_mask(count));
       }
    }
 
@@ -984,10 +976,9 @@ collect_components(nir_builder *b, nir_intrinsic_instr *intr, void *data)
  * transform feedback offsets and counters as applicable.
  */
 static nir_shader *
-agx_nir_create_pre_gs(struct lower_gs_state *state, const nir_shader *libagx,
-                      bool indexed, bool restart, struct nir_xfb_info *xfb,
-                      unsigned vertices_per_prim, uint8_t streams,
-                      unsigned invocations)
+agx_nir_create_pre_gs(struct lower_gs_state *state, bool indexed, bool restart,
+                      struct nir_xfb_info *xfb, unsigned vertices_per_prim,
+                      uint8_t streams, unsigned invocations)
 {
    nir_builder b_ = nir_builder_init_simple_shader(
       MESA_SHADER_COMPUTE, &agx_nir_options, "Pre-GS patch up");
@@ -1084,15 +1075,6 @@ agx_nir_create_pre_gs(struct lower_gs_state *state, const nir_shader *libagx,
       }
    }
 
-   /* The geometry shader receives a number of input primitives. The driver
-    * should disable this counter when tessellation is active TODO and count
-    * patches separately.
-    */
-   add_counter(
-      b,
-      nir_load_stat_query_address_agx(b, .base = PIPE_STAT_QUERY_IA_PRIMITIVES),
-      unrolled_in_prims);
-
    /* The geometry shader is invoked once per primitive (after unrolling
     * primitive restart). From the spec:
     *
@@ -1140,7 +1122,7 @@ agx_nir_create_pre_gs(struct lower_gs_state *state, const nir_shader *libagx,
       nir_load_stat_query_address_agx(b, .base = PIPE_STAT_QUERY_C_INVOCATIONS),
       emitted_prims);
 
-   agx_preprocess_nir(b->shader, libagx);
+   agx_preprocess_nir(b->shader);
    return b->shader;
 }
 
@@ -1208,35 +1190,15 @@ agx_nir_lower_gs_instancing(nir_shader *gs)
    nir_pop_loop(&b, loop);
 
    /* We've mucked about with control flow */
-   nir_metadata_preserve(impl, nir_metadata_none);
+   nir_progress(true, impl, nir_metadata_none);
 
    /* Use the loop counter as the invocation ID each iteration */
    nir_shader_intrinsics_pass(gs, rewrite_invocation_id,
                               nir_metadata_control_flow, index);
 }
 
-static void
-link_libagx(nir_shader *nir, const nir_shader *libagx)
-{
-   nir_link_shader_functions(nir, libagx);
-   NIR_PASS(_, nir, nir_inline_functions);
-   nir_remove_non_entrypoints(nir);
-   NIR_PASS(_, nir, nir_lower_indirect_derefs, nir_var_function_temp, 64);
-   NIR_PASS(_, nir, nir_opt_dce);
-   NIR_PASS(_, nir, nir_lower_vars_to_explicit_types,
-            nir_var_shader_temp | nir_var_function_temp | nir_var_mem_shared,
-            glsl_get_cl_type_size_align);
-   NIR_PASS(_, nir, nir_opt_deref);
-   NIR_PASS(_, nir, nir_lower_vars_to_ssa);
-   NIR_PASS(_, nir, nir_lower_explicit_io,
-            nir_var_shader_temp | nir_var_function_temp | nir_var_mem_shared |
-               nir_var_mem_global,
-            nir_address_format_62bit_generic);
-}
-
 bool
-agx_nir_lower_gs(nir_shader *gs, const nir_shader *libagx,
-                 bool rasterizer_discard, nir_shader **gs_count,
+agx_nir_lower_gs(nir_shader *gs, bool rasterizer_discard, nir_shader **gs_count,
                  nir_shader **gs_copy, nir_shader **pre_gs,
                  enum mesa_prim *out_mode, unsigned *out_count_words)
 {
@@ -1328,12 +1290,10 @@ agx_nir_lower_gs(nir_shader *gs, const nir_shader *libagx,
    }
 
    bool side_effects_for_rast = false;
-   *gs_copy = agx_nir_create_gs_rast_shader(gs, libagx, &side_effects_for_rast);
+   *gs_copy = agx_nir_create_gs_rast_shader(gs, &side_effects_for_rast);
 
    NIR_PASS(_, gs, nir_shader_intrinsics_pass, lower_id,
             nir_metadata_control_flow, NULL);
-
-   link_libagx(gs, libagx);
 
    NIR_PASS(_, gs, nir_lower_idiv,
             &(const nir_lower_idiv_options){.allow_fp16 = true});
@@ -1343,7 +1303,7 @@ agx_nir_lower_gs(nir_shader *gs, const nir_shader *libagx,
 
    /* If there is any unknown count, we need a geometry count shader */
    if (gs_state.count_stride_el > 0)
-      *gs_count = agx_nir_create_geometry_count_shader(gs, libagx, &gs_state);
+      *gs_count = agx_nir_create_geometry_count_shader(gs, &gs_state);
    else
       *gs_count = NULL;
 
@@ -1426,7 +1386,7 @@ agx_nir_lower_gs(nir_shader *gs, const nir_shader *libagx,
 
    /* Create auxiliary programs */
    *pre_gs = agx_nir_create_pre_gs(
-      &gs_state, libagx, true, gs->info.gs.output_primitive != MESA_PRIM_POINTS,
+      &gs_state, true, gs->info.gs.output_primitive != MESA_PRIM_POINTS,
       gs->xfb_info, verts_in_output_prim(gs), gs->info.gs.active_stream_mask,
       gs->info.gs.invocations);
 
@@ -1490,128 +1450,9 @@ lower_vs_before_gs(nir_builder *b, nir_intrinsic_instr *intr, void *data)
 }
 
 bool
-agx_nir_lower_vs_before_gs(struct nir_shader *vs,
-                           const struct nir_shader *libagx)
+agx_nir_lower_vs_before_gs(struct nir_shader *vs)
 {
-   bool progress = false;
-
    /* Lower vertex stores to memory stores */
-   progress |= nir_shader_intrinsics_pass(vs, lower_vs_before_gs,
-                                          nir_metadata_control_flow, NULL);
-
-   /* Link libagx, used in lower_vs_before_gs */
-   if (progress)
-      link_libagx(vs, libagx);
-
-   return progress;
-}
-
-void
-agx_nir_prefix_sum_gs(nir_builder *b, const void *data)
-{
-   const unsigned *words = data;
-
-   b->shader->info.workgroup_size[0] = 1024;
-
-   libagx_prefix_sum(b, load_geometry_param(b, count_buffer),
-                     load_geometry_param(b, input_primitives),
-                     nir_imm_int(b, *words),
-                     nir_channel(b, nir_load_workgroup_id(b), 0));
-}
-
-void
-agx_nir_prefix_sum_tess(nir_builder *b, const void *data)
-{
-   b->shader->info.workgroup_size[0] = 1024;
-   libagx_prefix_sum_tess(b, nir_load_preamble(b, 1, 64, .base = 0));
-}
-
-void
-agx_nir_gs_setup_indirect(nir_builder *b, const void *data)
-{
-   const struct agx_gs_setup_indirect_key *key = data;
-
-   libagx_gs_setup_indirect(b, nir_load_preamble(b, 1, 64, .base = 0),
-                            nir_imm_int(b, key->prim),
-                            nir_channel(b, nir_load_local_invocation_id(b), 0));
-}
-
-void
-agx_nir_unroll_restart(nir_builder *b, const void *data)
-{
-   const struct agx_unroll_restart_key *key = data;
-   b->shader->info.workgroup_size[0] = 1024;
-
-   nir_def *ia = nir_load_preamble(b, 1, 64, .base = 0);
-   nir_def *draw = nir_channel(b, nir_load_workgroup_id(b), 0);
-   nir_def *lane = nir_channel(b, nir_load_local_invocation_id(b), 0);
-   nir_def *mode = nir_imm_int(b, key->prim);
-
-   if (key->index_size_B == 1)
-      libagx_unroll_restart_u8(b, ia, mode, draw, lane);
-   else if (key->index_size_B == 2)
-      libagx_unroll_restart_u16(b, ia, mode, draw, lane);
-   else if (key->index_size_B == 4)
-      libagx_unroll_restart_u32(b, ia, mode, draw, lane);
-   else
-      unreachable("invalid index size");
-}
-
-void
-agx_nir_tessellate(nir_builder *b, const void *data)
-{
-   const struct agx_tessellator_key *key = data;
-   b->shader->info.workgroup_size[0] = 64;
-
-   nir_def *params = nir_load_preamble(b, 1, 64, .base = 0);
-   nir_def *patch = nir_channel(b, nir_load_global_invocation_id(b, 32), 0);
-   nir_def *mode = nir_imm_int(b, key->mode);
-   nir_def *partitioning = nir_imm_int(b, key->partitioning);
-   nir_def *output_prim = nir_imm_int(b, key->output_primitive);
-
-   if (key->prim == TESS_PRIMITIVE_ISOLINES)
-      libagx_tess_isoline(b, params, mode, partitioning, output_prim, patch);
-   else if (key->prim == TESS_PRIMITIVE_TRIANGLES)
-      libagx_tess_tri(b, params, mode, partitioning, output_prim, patch);
-   else if (key->prim == TESS_PRIMITIVE_QUADS)
-      libagx_tess_quad(b, params, mode, partitioning, output_prim, patch);
-   else
-      unreachable("invalid tess primitive");
-}
-
-void
-agx_nir_tess_setup_indirect(nir_builder *b, const void *data)
-{
-   const struct agx_tess_setup_indirect_key *key = data;
-
-   nir_def *params = nir_load_preamble(b, 1, 64, .base = 0);
-   nir_def *with_counts = nir_imm_bool(b, key->with_counts);
-   nir_def *point_mode = nir_imm_bool(b, key->point_mode);
-
-   libagx_tess_setup_indirect(b, params, with_counts, point_mode);
-}
-
-void
-agx_nir_increment_statistic(nir_builder *b, const void *data)
-{
-   libagx_increment_statistic(b, nir_load_preamble(b, 1, 64, .base = 0));
-}
-
-void
-agx_nir_increment_cs_invocations(nir_builder *b, const void *data)
-{
-   libagx_increment_cs_invocations(b, nir_load_preamble(b, 1, 64, .base = 0));
-}
-
-void
-agx_nir_increment_ia_counters(nir_builder *b, const void *data)
-{
-   const struct agx_increment_ia_counters_key *key = data;
-   b->shader->info.workgroup_size[0] = key->index_size_B ? 1024 : 1;
-
-   nir_def *params = nir_load_preamble(b, 1, 64, .base = 0);
-   nir_def *index_size_B = nir_imm_int(b, key->index_size_B);
-   nir_def *thread = nir_channel(b, nir_load_global_invocation_id(b, 32), 0);
-
-   libagx_increment_ia_counters(b, params, index_size_B, thread);
+   return nir_shader_intrinsics_pass(vs, lower_vs_before_gs,
+                                     nir_metadata_control_flow, NULL);
 }

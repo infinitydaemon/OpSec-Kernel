@@ -18,8 +18,8 @@ struct hk_buffer {
    struct vk_buffer vk;
    uint64_t addr;
 
-   /** Size of the reserved VMA range for sparse buffers, zero otherwise. */
-   uint64_t vma_size_B;
+   /** Reserved VA for sparse buffers, NULL otherwise. */
+   struct agx_va *va;
 };
 
 VK_DEFINE_NONDISP_HANDLE_CASTS(hk_buffer, vk.base, VkBuffer,
@@ -35,7 +35,11 @@ static inline struct hk_addr_range
 hk_buffer_addr_range(const struct hk_buffer *buffer, uint64_t offset,
                      uint64_t range)
 {
-   if (buffer == NULL)
+   /* If range == 0, return a NULL pointer. Thanks to soft fault, that allows
+    * eliding robustness2 bounds checks for index = 0, as the bottom of VA space
+    * is reserved.
+    */
+   if (buffer == NULL || range == 0)
       return (struct hk_addr_range){.range = 0};
 
    return (struct hk_addr_range){
@@ -43,3 +47,6 @@ hk_buffer_addr_range(const struct hk_buffer *buffer, uint64_t offset,
       .range = vk_buffer_range(&buffer->vk, offset, range),
    };
 }
+
+VkResult hk_bind_scratch(struct hk_device *dev, struct agx_va *va,
+                         unsigned offs_B, size_t size_B);

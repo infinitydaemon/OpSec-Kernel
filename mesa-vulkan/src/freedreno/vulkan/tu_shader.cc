@@ -24,16 +24,31 @@
 
 #include <initializer_list>
 
+static void
+init_ir3_nir_options(struct ir3_shader_nir_options *options,
+                     const struct tu_shader_key *key)
+{
+   *options = {
+      .robust_modes = (nir_variable_mode)
+         ((key->robust_storage_access2 ? nir_var_mem_ssbo : 0) |
+          (key->robust_uniform_access2 ? nir_var_mem_ubo : 0)),
+   };
+}
+
 nir_shader *
 tu_spirv_to_nir(struct tu_device *dev,
                 void *mem_ctx,
+                VkPipelineCreateFlags2KHR pipeline_flags,
                 const VkPipelineShaderStageCreateInfo *stage_info,
+                const struct tu_shader_key *key,
                 gl_shader_stage stage)
 {
    /* TODO these are made-up */
    const struct spirv_to_nir_options spirv_options = {
       /* ViewID is a sysval in geometry stages and an input in the FS */
-      .view_index_is_input = stage == MESA_SHADER_FRAGMENT,
+      .view_index_is_input =
+         stage == MESA_SHADER_FRAGMENT &&
+         !key->lower_view_index_to_device_index,
 
       /* Use 16-bit math for RelaxedPrecision ALU ops */
       .mediump_16bit_alu = true,
@@ -59,8 +74,9 @@ tu_spirv_to_nir(struct tu_device *dev,
 
    nir_shader *nir;
    VkResult result =
-      vk_pipeline_shader_stage_to_nir(&dev->vk, stage_info, &spirv_options,
-                                      nir_options, mem_ctx, &nir);
+      vk_pipeline_shader_stage_to_nir(&dev->vk, pipeline_flags, stage_info,
+                                      &spirv_options, nir_options,
+                                      mem_ctx, &nir);
    if (result != VK_SUCCESS)
       return NULL;
 
@@ -79,9 +95,9 @@ tu_spirv_to_nir(struct tu_device *dev,
    const struct nir_lower_sysvals_to_varyings_options sysvals_to_varyings = {
       .point_coord = true,
    };
-   NIR_PASS_V(nir, nir_lower_sysvals_to_varyings, &sysvals_to_varyings);
+   NIR_PASS(_, nir, nir_lower_sysvals_to_varyings, &sysvals_to_varyings);
 
-   NIR_PASS_V(nir, nir_lower_global_vars_to_local);
+   NIR_PASS(_, nir, nir_lower_global_vars_to_local);
 
    /* Older glslang missing bf6efd0316d8 ("SPV: Fix #2293: keep relaxed
     * precision on arg passed to relaxed param") will pass function args through
@@ -90,23 +106,41 @@ tu_spirv_to_nir(struct tu_device *dev,
     * array copies after lowering.  We do this before splitting copies, since
     * that works against nir_opt_find_array_copies().
     * */
-   NIR_PASS_V(nir, nir_opt_find_array_copies);
-   NIR_PASS_V(nir, nir_opt_copy_prop_vars);
-   NIR_PASS_V(nir, nir_opt_dce);
+   NIR_PASS(_, nir, nir_opt_find_array_copies);
+   NIR_PASS(_, nir, nir_opt_copy_prop_vars);
+   NIR_PASS(_, nir, nir_opt_dce);
 
-   NIR_PASS_V(nir, nir_split_var_copies);
-   NIR_PASS_V(nir, nir_lower_var_copies);
+   nir_shader_gather_info(nir, nir_shader_get_entrypoint(nir));
 
-   NIR_PASS_V(nir, nir_lower_mediump_vars, nir_var_function_temp | nir_var_shader_temp | nir_var_mem_shared);
-   NIR_PASS_V(nir, nir_opt_copy_prop_vars);
-   NIR_PASS_V(nir, nir_opt_combine_stores, nir_var_all);
+   if (nir->info.ray_queries > 0) {
+      NIR_PASS(_, nir, nir_opt_ray_queries);
+      NIR_PASS(_, nir, nir_opt_ray_query_ranges);
+      NIR_PASS(_, nir, tu_nir_lower_ray_queries);
+   }
 
-   NIR_PASS_V(nir, nir_lower_system_values);
-   NIR_PASS_V(nir, nir_lower_is_helper_invocation);
+   NIR_PASS(_, nir, nir_split_var_copies);
+   NIR_PASS(_, nir, nir_lower_var_copies);
 
-   ir3_optimize_loop(dev->compiler, nir);
+   NIR_PASS(_, nir, nir_lower_mediump_vars,
+            nir_var_function_temp | nir_var_shader_temp | nir_var_mem_shared);
+   NIR_PASS(_, nir, nir_opt_copy_prop_vars);
+   NIR_PASS(_, nir, nir_opt_combine_stores, nir_var_all);
 
-   NIR_PASS_V(nir, nir_opt_conditional_discard);
+   NIR_PASS(_, nir, nir_lower_system_values);
+   NIR_PASS(_, nir, nir_lower_is_helper_invocation);
+
+   if (key->lower_view_index_to_device_index)
+      NIR_PASS(_, nir, nir_lower_view_index_to_device_index);
+
+   struct ir3_shader_nir_options options;
+   init_ir3_nir_options(&options, key);
+   ir3_optimize_loop(dev->compiler, &options, nir);
+
+   nir_opt_peephole_select_options peephole_select_options = {
+      .limit = 0,
+      .discard_ok = true,
+   };
+   NIR_PASS(_, nir, nir_opt_peephole_select, &peephole_select_options);
 
    return nir;
 }
@@ -116,7 +150,8 @@ lower_load_push_constant(struct tu_device *dev,
                          nir_builder *b,
                          nir_intrinsic_instr *instr,
                          struct tu_shader *shader,
-                         const struct tu_pipeline_layout *layout)
+                         const struct tu_pipeline_layout *layout,
+                         uint32_t push_consts_offset_vec4)
 {
    uint32_t base = nir_intrinsic_base(instr);
    assert(base % 4 == 0);
@@ -128,15 +163,14 @@ lower_load_push_constant(struct tu_device *dev,
        */
       base += dev->compiler->shared_consts_base_offset * 4;
    } else {
-      assert(base >= shader->const_state.push_consts.lo * 4);
-      base -= shader->const_state.push_consts.lo * 4;
+      assert(base >= shader->const_state.push_consts.lo_dwords);
+      base -= shader->const_state.push_consts.lo_dwords;
+      base += push_consts_offset_vec4 * 4;
    }
 
    nir_def *load =
-      nir_load_uniform(b, instr->num_components,
-            instr->def.bit_size,
-            nir_ushr_imm(b, instr->src[0].ssa, 2),
-            .base = base);
+      nir_load_const_ir3(b, instr->num_components, instr->def.bit_size,
+                         nir_ushr_imm(b, instr->src[0].ssa, 2), .base = base);
 
    nir_def_replace(&instr->def, load);
 }
@@ -162,9 +196,7 @@ lower_vulkan_resource_index(struct tu_device *dev, nir_builder *b,
 
    shader->active_desc_sets |= 1u << set;
 
-   switch (binding_layout->type) {
-   case VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC:
-   case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC: {
+   if (vk_descriptor_type_is_dynamic(binding_layout->type)) {
       int offset = 0;
       for (unsigned i = 0; i < set; i++) {
          if (shader->dynamic_descriptor_sizes[i] >= 0) {
@@ -187,9 +219,9 @@ lower_vulkan_resource_index(struct tu_device *dev, nir_builder *b,
             dynamic_offset_start =
                ir3_load_driver_ubo(b, 1, &shader->const_state.dynamic_offsets_ubo, set);
          } else {
-            dynamic_offset_start = 
-               nir_load_uniform(b, 1, 32, nir_imm_int(b, 0),
-                                .base = shader->const_state.dynamic_offset_loc + set);
+            dynamic_offset_start = nir_load_const_ir3(
+               b, 1, 32, nir_imm_int(b, 0),
+               .base = shader->const_state.dynamic_offset_loc + set);
          }
          base = nir_iadd(b, base, dynamic_offset_start);
       } else {
@@ -198,12 +230,8 @@ lower_vulkan_resource_index(struct tu_device *dev, nir_builder *b,
       }
       assert(dev->physical_device->reserved_set_idx >= 0);
       set = dev->physical_device->reserved_set_idx;
-      break;
-   }
-   default:
+   } else
       base = nir_imm_int(b, binding_layout->offset / (4 * A6XX_TEX_CONST_DWORDS));
-      break;
-   }
 
    unsigned stride = binding_layout->size / (4 * A6XX_TEX_CONST_DWORDS);
    assert(util_is_power_of_two_nonzero(stride));
@@ -363,7 +391,9 @@ static nir_def *
 build_bindless(struct tu_device *dev, nir_builder *b,
                nir_deref_instr *deref, bool is_sampler,
                struct tu_shader *shader,
-               const struct tu_pipeline_layout *layout)
+               const struct tu_pipeline_layout *layout,
+               uint32_t read_only_input_attachments,
+               bool dynamic_renderpass)
 {
    nir_variable *var = nir_deref_instr_get_variable(deref);
 
@@ -374,9 +404,31 @@ build_bindless(struct tu_device *dev, nir_builder *b,
 
    /* input attachments use non bindless workaround */
    if (bind_layout->type == VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT &&
+       (!dynamic_renderpass ||
+        (var->data.index == NIR_VARIABLE_NO_INDEX ?
+        !(read_only_input_attachments & 0x1) :
+        !(read_only_input_attachments & (1u << (var->data.index + 1))))) &&
        !TU_DEBUG(DYNAMIC)) {
       const struct glsl_type *glsl_type = glsl_without_array(var->type);
-      uint32_t idx = var->data.index * 2;
+      uint32_t idx;
+
+      /* With dynamic renderpasses, we reserve the first two attachments for
+       * input attachments without an InputAttachmentIndex, which must be for
+       * depth/stencil if they are not read-only, and shift over the rest of
+       * the indices.
+       */
+      if (var->data.index == ~0u) {
+         assert(dynamic_renderpass);
+         idx = 0;
+      } else if (dynamic_renderpass) {
+         idx = (var->data.index + 1) * 2;
+      } else {
+         idx = var->data.index * 2;
+      }
+
+      /* Record which input attachments are used for tracking feedback loops */
+      if (dynamic_renderpass)
+         shader->fs.dynamic_input_attachments_used |= (1u << (idx / 2));
 
       BITSET_SET_RANGE_INSIDE_WORD(b->shader->info.textures_used, idx, (idx + bind_layout->array_size * 2) - 1);
 
@@ -425,7 +477,7 @@ lower_image_deref(struct tu_device *dev, nir_builder *b,
                   const struct tu_pipeline_layout *layout)
 {
    nir_deref_instr *deref = nir_src_as_deref(instr->src[0]);
-   nir_def *bindless = build_bindless(dev, b, deref, false, shader, layout);
+   nir_def *bindless = build_bindless(dev, b, deref, false, shader, layout, 0, false);
    nir_rewrite_image_intrinsic(instr, bindless, true);
 }
 
@@ -433,11 +485,14 @@ static bool
 lower_intrinsic(nir_builder *b, nir_intrinsic_instr *instr,
                 struct tu_device *dev,
                 struct tu_shader *shader,
-                const struct tu_pipeline_layout *layout)
+                const struct tu_pipeline_layout *layout,
+                struct ir3_const_allocations *const_allocs)
 {
    switch (instr->intrinsic) {
    case nir_intrinsic_load_push_constant:
-      lower_load_push_constant(dev, b, instr, shader, layout);
+      lower_load_push_constant(
+         dev, b, instr, shader, layout,
+         const_allocs->consts[IR3_CONST_ALLOC_PUSH_CONSTS].offset_vec4);
       return true;
 
    case nir_intrinsic_load_vulkan_descriptor:
@@ -453,6 +508,7 @@ lower_intrinsic(nir_builder *b, nir_intrinsic_instr *instr,
 
    case nir_intrinsic_load_ubo:
    case nir_intrinsic_load_ssbo:
+   case nir_intrinsic_load_uav_ir3:
    case nir_intrinsic_store_ssbo:
    case nir_intrinsic_ssbo_atomic:
    case nir_intrinsic_ssbo_atomic_swap:
@@ -473,9 +529,9 @@ lower_intrinsic(nir_builder *b, nir_intrinsic_instr *instr,
       if (!dev->compiler->load_shader_consts_via_preamble)
          return false;
 
-      enum ir3_driver_param param =
+      unsigned param =
          instr->intrinsic == nir_intrinsic_load_frag_size_ir3 ?
-         IR3_DP_FS_FRAG_SIZE : IR3_DP_FS_FRAG_OFFSET;
+         IR3_DP_FS(frag_size) : IR3_DP_FS(frag_offset);
 
       unsigned offset = param - IR3_DP_FS_DYNAMIC;
 
@@ -493,7 +549,7 @@ lower_intrinsic(nir_builder *b, nir_intrinsic_instr *instr,
 
       nir_def *result =
          ir3_load_driver_ubo(b, 1, &shader->const_state.fdm_ubo,
-                             IR3_DP_FS_FRAG_INVOCATION_COUNT -
+                             IR3_DP_FS(frag_invocation_count) -
                              IR3_DP_FS_DYNAMIC);
 
       nir_def_replace(&instr->def, result);
@@ -553,44 +609,32 @@ lower_tex_ycbcr(const struct tu_pipeline_layout *layout,
 
    builder->cursor = nir_after_instr(&tex->instr);
 
-   uint8_t bits = vk_format_get_component_bits(ycbcr_sampler->format,
-                                               UTIL_FORMAT_COLORSPACE_RGB,
-                                               PIPE_SWIZZLE_X);
-
-   switch (ycbcr_sampler->format) {
-   case VK_FORMAT_G8B8G8R8_422_UNORM:
-   case VK_FORMAT_B8G8R8G8_422_UNORM:
-   case VK_FORMAT_G8_B8R8_2PLANE_420_UNORM:
-   case VK_FORMAT_G8_B8_R8_3PLANE_420_UNORM:
-      /* util_format_get_component_bits doesn't return what we want */
-      bits = 8;
-      break;
-   default:
-      break;
-   }
-
-   uint32_t bpcs[3] = {bits, bits, bits}; /* TODO: use right bpc for each channel ? */
+   uint8_t bits = vk_format_get_bpc(ycbcr_sampler->format);
+   uint32_t bpcs[3] = {bits, bits, bits}; /* We only support uniform formats */
    nir_def *result = nir_convert_ycbcr_to_rgb(builder,
-                                                  ycbcr_sampler->ycbcr_model,
-                                                  ycbcr_sampler->ycbcr_range,
-                                                  &tex->def,
-                                                  bpcs);
+                                              ycbcr_sampler->ycbcr_model,
+                                              ycbcr_sampler->ycbcr_range,
+                                              &tex->def,
+                                              bpcs);
    nir_def_rewrite_uses_after(&tex->def, result,
-                                  result->parent_instr);
+                              result->parent_instr);
 
    builder->cursor = nir_before_instr(&tex->instr);
 }
 
 static bool
 lower_tex(nir_builder *b, nir_tex_instr *tex, struct tu_device *dev,
-          struct tu_shader *shader, const struct tu_pipeline_layout *layout)
+          struct tu_shader *shader, const struct tu_pipeline_layout *layout,
+          uint32_t read_only_input_attachments, bool dynamic_renderpass)
 {
    lower_tex_ycbcr(layout, b, tex);
 
    int sampler_src_idx = nir_tex_instr_src_index(tex, nir_tex_src_sampler_deref);
    if (sampler_src_idx >= 0) {
       nir_deref_instr *deref = nir_src_as_deref(tex->src[sampler_src_idx].src);
-      nir_def *bindless = build_bindless(dev, b, deref, true, shader, layout);
+      nir_def *bindless = build_bindless(dev, b, deref, true, shader, layout,
+                                         read_only_input_attachments,
+                                         dynamic_renderpass);
       nir_src_rewrite(&tex->src[sampler_src_idx].src, bindless);
       tex->src[sampler_src_idx].src_type = nir_tex_src_sampler_handle;
    }
@@ -598,7 +642,9 @@ lower_tex(nir_builder *b, nir_tex_instr *tex, struct tu_device *dev,
    int tex_src_idx = nir_tex_instr_src_index(tex, nir_tex_src_texture_deref);
    if (tex_src_idx >= 0) {
       nir_deref_instr *deref = nir_src_as_deref(tex->src[tex_src_idx].src);
-      nir_def *bindless = build_bindless(dev, b, deref, false, shader, layout);
+      nir_def *bindless = build_bindless(dev, b, deref, false, shader, layout,
+                                         read_only_input_attachments,
+                                         dynamic_renderpass);
       nir_src_rewrite(&tex->src[tex_src_idx].src, bindless);
       tex->src[tex_src_idx].src_type = nir_tex_src_texture_handle;
 
@@ -614,6 +660,9 @@ struct lower_instr_params {
    struct tu_device *dev;
    struct tu_shader *shader;
    const struct tu_pipeline_layout *layout;
+   uint32_t read_only_input_attachments;
+   bool dynamic_renderpass;
+   struct ir3_const_allocations *const_allocs;
 };
 
 static bool
@@ -623,9 +672,13 @@ lower_instr(nir_builder *b, nir_instr *instr, void *cb_data)
    b->cursor = nir_before_instr(instr);
    switch (instr->type) {
    case nir_instr_type_tex:
-      return lower_tex(b, nir_instr_as_tex(instr), params->dev, params->shader, params->layout);
+      return lower_tex(b, nir_instr_as_tex(instr), params->dev, params->shader, params->layout,
+                       params->read_only_input_attachments,
+                       params->dynamic_renderpass);
    case nir_instr_type_intrinsic:
-      return lower_intrinsic(b, nir_instr_as_intrinsic(instr), params->dev, params->shader, params->layout);
+      return lower_intrinsic(b, nir_instr_as_intrinsic(instr), params->dev,
+                             params->shader, params->layout,
+                             params->const_allocs);
    default:
       return false;
    }
@@ -701,7 +754,8 @@ lower_inline_ubo(nir_builder *b, nir_intrinsic_instr *intrin, void *cb_data)
                                          &params->shader->const_state.inline_uniforms_ubo,
                                          base);
       } else {
-         base_addr = nir_load_uniform(b, 2, 32, nir_imm_int(b, 0), .base = base);
+         base_addr =
+            nir_load_const_ir3(b, 2, 32, nir_imm_int(b, 0), .base = base);
       }
       val = nir_load_global_ir3(b, intrin->num_components,
                                 intrin->def.bit_size,
@@ -715,9 +769,9 @@ lower_inline_ubo(nir_builder *b, nir_intrinsic_instr *intrin, void *cb_data)
                                 .range_base = 0,
                                 .range = range);
    } else {
-      val = nir_load_uniform(b, intrin->num_components,
-                             intrin->def.bit_size,
-                             nir_ishr_imm(b, offset, 2), .base = base);
+      val =
+         nir_load_const_ir3(b, intrin->num_components, intrin->def.bit_size,
+                            nir_ishr_imm(b, offset, 2), .base = base);
    }
 
    nir_def_replace(&intrin->def, val);
@@ -765,9 +819,9 @@ gather_push_constants(nir_shader *shader, struct tu_shader *tu_shader)
     * Note there's an alignment requirement of 16 dwords on OFFSET. Expand
     * the range and change units accordingly.
     */
-   tu_shader->const_state.push_consts.lo = (min / 4) / 4 * 4;
+   tu_shader->const_state.push_consts.lo_dwords += (min / 4) / 4 * 4;
    tu_shader->const_state.push_consts.dwords =
-      align(max, 16) / 4 - tu_shader->const_state.push_consts.lo;
+      align(max, 16) / 4 - tu_shader->const_state.push_consts.lo_dwords;
 }
 
 static bool
@@ -792,17 +846,38 @@ static bool
 tu_lower_io(nir_shader *shader, struct tu_device *dev,
             struct tu_shader *tu_shader,
             const struct tu_pipeline_layout *layout,
-            unsigned *reserved_consts_vec4_out)
+            uint32_t read_only_input_attachments,
+            bool dynamic_renderpass,
+            struct ir3_const_allocations *const_allocs)
 {
-   tu_shader->const_state.push_consts = (struct tu_push_constant_range) {
-      .lo = 0,
+   /* Allocate driver params as early as possible as a workaround for the
+    * following case:
+    * - CP_DRAW_INDIRECT_MULTI_1_DST_OFF apparently tries to upload consts
+    *   even when there are 0 instances.
+    * - With zero instances, the draw state for VS constlen is not applied.
+    * - constlen therefor uses stale value and if
+    *   CP_DRAW_INDIRECT_MULTI_1_DST_OFF is higher than 0x3f - GPU hangs.
+    *
+    * To not rely on undefined behaviour, we will always allocate enough space
+    * to upload driver params.
+    */
+   if (shader->info.stage == MESA_SHADER_VERTEX) {
+      uint32_t num_driver_params =
+         ir3_nir_scan_driver_consts(dev->compiler, shader, nullptr);
+      ir3_alloc_driver_params(const_allocs, &num_driver_params, dev->compiler,
+                              shader->info.stage);
+   }
+
+   struct tu_const_state *const_state = &tu_shader->const_state;
+   const_state->push_consts = (struct tu_push_constant_range) {
+      .lo_dwords = 0,
       .dwords = layout->push_constant_size / 4,
       .type = tu_push_consts_type(layout, dev->compiler),
    };
 
-   if (tu_shader->const_state.push_consts.type == IR3_PUSH_CONSTS_PER_STAGE) {
+   if (const_state->push_consts.type == IR3_PUSH_CONSTS_PER_STAGE) {
       gather_push_constants(shader, tu_shader);
-   } else if (tu_shader->const_state.push_consts.type ==
+   } else if (const_state->push_consts.type ==
             IR3_PUSH_CONSTS_SHARED_PREAMBLE) {
       /* Disable pushing constants for this stage if none were loaded in the
        * shader.  If all stages don't load their declared push constants, as
@@ -810,13 +885,21 @@ tu_lower_io(nir_shader *shader, struct tu_device *dev,
        * emitting REG_A7XX_HLSQ_SHARED_CONSTS_IMM entirely.
        */
       if (!shader_uses_push_consts(shader))
-         tu_shader->const_state.push_consts = (struct tu_push_constant_range) {};
+         const_state->push_consts = (struct tu_push_constant_range) {};
    }
 
-   struct tu_const_state *const_state = &tu_shader->const_state;
-   unsigned reserved_consts_vec4 =
-      align(DIV_ROUND_UP(const_state->push_consts.dwords, 4),
-            dev->compiler->const_upload_unit);
+   if (const_state->push_consts.type != IR3_PUSH_CONSTS_SHARED) {
+      uint32_t offset_align_vec4 = 1;
+      if (const_state->push_consts.type == IR3_PUSH_CONSTS_PER_STAGE)
+         offset_align_vec4 = dev->compiler->const_upload_unit;
+
+      unsigned push_consts_vec4 =
+         align(DIV_ROUND_UP(const_state->push_consts.dwords, 4),
+               dev->compiler->const_upload_unit);
+
+      ir3_const_alloc(const_allocs, IR3_CONST_ALLOC_PUSH_CONSTS,
+                      push_consts_vec4, offset_align_vec4);
+   }
 
    bool unknown_dynamic_size = false;
    bool unknown_dynamic_offset = false;
@@ -833,9 +916,12 @@ tu_lower_io(nir_shader *shader, struct tu_device *dev,
    }
 
    if (unknown_dynamic_offset) {
-      const_state->dynamic_offset_loc = reserved_consts_vec4 * 4;
+      const_state->dynamic_offset_loc =
+         const_allocs->max_const_offset_vec4 * 4;
       assert(dev->physical_device->reserved_set_idx >= 0);
-      reserved_consts_vec4 += DIV_ROUND_UP(dev->physical_device->reserved_set_idx, 4);
+      ir3_const_alloc(
+         const_allocs, IR3_CONST_ALLOC_DYN_DESCRIPTOR_OFFSET,
+         DIV_ROUND_UP(dev->physical_device->reserved_set_idx, 4), 1);
    } else {
       const_state->dynamic_offset_loc = UINT32_MAX;
    }
@@ -843,6 +929,7 @@ tu_lower_io(nir_shader *shader, struct tu_device *dev,
    /* Reserve space for inline uniforms, so we can always load them from
     * constants and not setup a UBO descriptor for them.
     */
+   size_t ldgk_consts = 0;
    bool use_ldg_k =
       dev->physical_device->info->a7xx.load_inline_uniforms_via_preamble_ldgk;
    for (unsigned set = 0; set < layout->num_sets; set++) {
@@ -884,25 +971,31 @@ tu_lower_io(nir_shader *shader, struct tu_device *dev,
 
          assert(const_state->num_inline_ubos < ARRAY_SIZE(const_state->ubos));
          unsigned size_vec4 = push_address ? 1 : DIV_ROUND_UP(binding->size, 16);
-         const_state->ubos[const_state->num_inline_ubos++] = (struct tu_inline_ubo) {
-            .base = set,
-            .offset = binding->offset,
-            .push_address = push_address,
-            .const_offset_vec4 = reserved_consts_vec4,
-            .size_vec4 = size_vec4,
-         };
+         const_state->ubos[const_state->num_inline_ubos++] =
+            (struct tu_inline_ubo) {
+               .base = set,
+               .offset = binding->offset,
+               .push_address = push_address,
+               .const_offset_vec4 =
+                  const_allocs->max_const_offset_vec4 + ldgk_consts,
+               .size_vec4 = size_vec4,
+            };
 
-         if (!use_ldg_k)
-            reserved_consts_vec4 += align(size_vec4, dev->compiler->const_upload_unit);
+         if (!use_ldg_k) {
+            ldgk_consts += align(size_vec4, dev->compiler->const_upload_unit);
+         }
       }
    }
 
-   *reserved_consts_vec4_out = reserved_consts_vec4;
+   ir3_const_alloc(const_allocs, IR3_CONST_ALLOC_INLINE_UNIFORM_ADDRS, ldgk_consts, 1);
 
    struct lower_instr_params params = {
       .dev = dev,
       .shader = tu_shader,
       .layout = layout,
+      .read_only_input_attachments = read_only_input_attachments,
+      .dynamic_renderpass = dynamic_renderpass,
+      .const_allocs = const_allocs,
    };
 
    bool progress = false;
@@ -1063,7 +1156,7 @@ static uint32_t
 tu_xs_get_immediates_packet_size_dwords(const struct ir3_shader_variant *xs)
 {
    const struct ir3_const_state *const_state = ir3_const_state(xs);
-   uint32_t base = const_state->offsets.immediate;
+   uint32_t base = const_state->allocs.max_const_offset_vec4;
    int32_t size = DIV_ROUND_UP(const_state->immediates_count, 4);
 
    /* truncate size to avoid writing constants that shader
@@ -1271,7 +1364,7 @@ tu6_emit_xs(struct tu_cs *cs,
    /* emit immediates */
 
    const struct ir3_const_state *const_state = ir3_const_state(xs);
-   uint32_t base = const_state->offsets.immediate;
+   uint32_t base = const_state->allocs.max_const_offset_vec4;
    unsigned immediate_size = tu_xs_get_immediates_packet_size_dwords(xs);
 
    if (immediate_size > 0) {
@@ -1354,7 +1447,8 @@ tu6_emit_xs(struct tu_cs *cs,
       int size_vec4s = DIV_ROUND_UP(size, 4);
       tu_cs_emit_qw(cs, iova | ((uint64_t)A6XX_UBO_1_SIZE(size_vec4s) << 32));
    } else if (stage == MESA_SHADER_FRAGMENT && const_state->num_driver_params > 0) {
-      uint32_t base = const_state->offsets.driver_param;
+      uint32_t base =
+         const_state->allocs.consts[IR3_CONST_ALLOC_DRIVER_PARAMS].offset_vec4;
       int32_t size = DIV_ROUND_UP(MAX2(const_state->num_driver_params, 4), 4);
       size = MAX2(MIN2(size + base, xs->constlen) - base, 0);
 
@@ -1444,17 +1538,15 @@ tu6_emit_cs_config(struct tu_cs *cs,
                   A6XX_SP_CS_CNTL_1_THREADSIZE(thrsz));
       }
    } else {
-      enum a7xx_cs_yalign yalign = (v->local_size[1] % 8 == 0)   ? CS_YALIGN_8
-                                   : (v->local_size[1] % 4 == 0) ? CS_YALIGN_4
-                                   : (v->local_size[1] % 2 == 0) ? CS_YALIGN_2
-                                                                 : CS_YALIGN_1;
+      unsigned tile_height = (v->local_size[1] % 8 == 0)   ? 3
+                             : (v->local_size[1] % 4 == 0) ? 5
+                             : (v->local_size[1] % 2 == 0) ? 9
+                                                           : 17;
       tu_cs_emit_regs(
-         cs, A7XX_HLSQ_CS_CNTL_1(
+         cs, HLSQ_CS_CNTL_1(CHIP,
                    .linearlocalidregid = regid(63, 0), .threadsize = thrsz_cs,
-                   /* A7XX TODO: blob either sets all of these unknowns
-                    * together or doesn't set them at all.
-                    */
-                   .unk11 = true, .unk22 = true, .yalign = yalign, ));
+                   .workgrouprastorderzfirsten = true, 
+                   .wgtilewidth = 4, .wgtileheight = tile_height));
 
       tu_cs_emit_regs(cs, HLSQ_FS_CNTL_0(CHIP, .threadsize = THREAD64));
 
@@ -1465,16 +1557,13 @@ tu6_emit_cs_config(struct tu_cs *cs,
                         A6XX_SP_CS_CNTL_0_LOCALIDREGID(local_invocation_id));
 
       tu_cs_emit_regs(cs,
-                      A7XX_SP_CS_CNTL_1(
+                      SP_CS_CNTL_1(CHIP,
                         .linearlocalidregid = regid(63, 0),
                         .threadsize = thrsz_cs,
-                        /* A7XX TODO: enable UNK15 when we don't use subgroup ops. */
-                        .unk15 = false, ));
-
-      tu_cs_emit_regs(
-         cs, A7XX_HLSQ_CS_LOCAL_SIZE(.localsizex = v->local_size[0] - 1,
-                                     .localsizey = v->local_size[1] - 1,
-                                     .localsizez = v->local_size[2] - 1, ));
+                        .workitemrastorder =
+                           v->cs.force_linear_dispatch ?
+                           WORKITEMRASTORDER_LINEAR :
+                           WORKITEMRASTORDER_TILED, ));
 
       tu_cs_emit_regs(cs, A7XX_SP_CS_UNKNOWN_A9BE(0)); // Sometimes is 0x08000000
    }
@@ -1541,7 +1630,7 @@ tu6_emit_fs_inputs(struct tu_cs *cs, const struct ir3_shader_variant *fs)
 {
    uint32_t face_regid, coord_regid, zwcoord_regid, samp_id_regid;
    uint32_t ij_regid[IJ_COUNT];
-   uint32_t smask_in_regid;
+   uint32_t smask_in_regid, shading_rate_regid;
 
    bool sample_shading = fs->per_samp | fs->key.sample_shading;
    bool enable_varyings = fs->total_in > 0;
@@ -1551,6 +1640,7 @@ tu6_emit_fs_inputs(struct tu_cs *cs, const struct ir3_shader_variant *fs)
    face_regid      = ir3_find_sysval_regid(fs, SYSTEM_VALUE_FRONT_FACE);
    coord_regid     = ir3_find_sysval_regid(fs, SYSTEM_VALUE_FRAG_COORD);
    zwcoord_regid   = VALIDREG(coord_regid) ? coord_regid + 2 : regid(63, 0);
+   shading_rate_regid = ir3_find_sysval_regid(fs, SYSTEM_VALUE_FRAG_SHADING_RATE);
    for (unsigned i = 0; i < ARRAY_SIZE(ij_regid); i++)
       ij_regid[i] = ir3_find_sysval_regid(fs, SYSTEM_VALUE_BARYCENTRIC_PERSP_PIXEL + i);
 
@@ -1605,7 +1695,8 @@ tu6_emit_fs_inputs(struct tu_cs *cs, const struct ir3_shader_variant *fs)
                          .ij_linear_sample = ij_regid[IJ_LINEAR_SAMPLE],
                          .xycoordregid = coord_regid,
                          .zwcoordregid = zwcoord_regid),
-      HLSQ_CONTROL_5_REG(CHIP, .dword = 0xfcfc), );
+      HLSQ_CONTROL_5_REG(CHIP, .linelengthregid = 0xfc,
+                         .foveationqualityregid = shading_rate_regid), );
 
    if (CHIP >= A7XX) {
       uint32_t sysval_regs = 0;
@@ -1618,7 +1709,8 @@ tu6_emit_fs_inputs(struct tu_cs *cs, const struct ir3_shader_variant *fs)
          }
       }
 
-      for (uint32_t sysval : { face_regid, samp_id_regid, smask_in_regid }) {
+      for (uint32_t sysval : { face_regid, samp_id_regid, smask_in_regid,
+                               shading_rate_regid }) {
          if (VALIDREG(sysval))
             sysval_regs += 1;
       }
@@ -1677,7 +1769,8 @@ tu6_emit_fs_inputs(struct tu_cs *cs, const struct ir3_shader_variant *fs)
          CONDREG(samp_id_regid, A6XX_RB_RENDER_CONTROL1_SAMPLEID) |
          CONDREG(ij_regid[IJ_PERSP_CENTER_RHW], A6XX_RB_RENDER_CONTROL1_CENTERRHW) |
          COND(fs->post_depth_coverage, A6XX_RB_RENDER_CONTROL1_POSTDEPTHCOVERAGE)  |
-         COND(fs->frag_face, A6XX_RB_RENDER_CONTROL1_FACENESS));
+         COND(fs->frag_face, A6XX_RB_RENDER_CONTROL1_FACENESS) |
+         CONDREG(shading_rate_regid, A6XX_RB_RENDER_CONTROL1_FOVEATION));
 
    tu_cs_emit_pkt4(cs, REG_A6XX_RB_SAMPLE_CNTL, 1);
    tu_cs_emit(cs, COND(sample_shading, A6XX_RB_SAMPLE_CNTL_PER_SAMP_MODE));
@@ -1720,6 +1813,7 @@ tu6_emit_fs_inputs(struct tu_cs *cs, const struct ir3_shader_variant *fs)
                   A6XX_VPC_CNTL_0_VIEWIDLOC(viewid_loc));
 }
 
+template <chip CHIP>
 static void
 tu6_emit_fs_outputs(struct tu_cs *cs,
                     const struct ir3_shader_variant *fs)
@@ -1732,12 +1826,30 @@ tu6_emit_fs_outputs(struct tu_cs *cs,
 
    int output_reg_count = 0;
    uint32_t fragdata_regid[8];
+   uint32_t fragdata_aliased_components = 0;
 
    assert(!fs->color0_mrt);
    for (uint32_t i = 0; i < ARRAY_SIZE(fragdata_regid); i++) {
-      fragdata_regid[i] = ir3_find_output_regid(fs, FRAG_RESULT_DATA0 + i);
-      if (VALIDREG(fragdata_regid[i]))
+      int output_idx =
+         ir3_find_output(fs, (gl_varying_slot) (FRAG_RESULT_DATA0 + i));
+
+      if (output_idx < 0) {
+         fragdata_regid[i] = INVALID_REG;
+         continue;
+      }
+
+      const struct ir3_shader_output *fragdata = &fs->outputs[output_idx];
+      fragdata_regid[i] = ir3_get_output_regid(fragdata);
+
+      if (VALIDREG(fragdata_regid[i]) || fragdata->aliased_components) {
+         /* An invalid reg is only allowed if all components are aliased. */
+         assert(VALIDREG(fragdata_regid[i] ||
+                         fragdata->aliased_components == 0xf));
+
          output_reg_count = i + 1;
+         fragdata_aliased_components |= fragdata->aliased_components
+                                        << (i * 4);
+      }
    }
 
    tu_cs_emit_pkt4(cs, REG_A6XX_SP_FS_OUTPUT_CNTL0, 1);
@@ -1758,13 +1870,24 @@ tu6_emit_fs_outputs(struct tu_cs *cs,
                      (COND(fragdata_regid[i] & HALF_REG_ID,
                            A6XX_SP_FS_OUTPUT_REG_HALF_PRECISION)));
 
-      if (VALIDREG(fragdata_regid[i])) {
+      if (VALIDREG(fragdata_regid[i]) ||
+                   (fragdata_aliased_components & (0xf << (i * 4)))) {
          fs_render_components |= 0xf << (i * 4);
       }
    }
 
    tu_cs_emit_regs(cs,
                    A6XX_SP_FS_RENDER_COMPONENTS(.dword = fs_render_components));
+
+   if (CHIP >= A7XX) {
+      tu_cs_emit_regs(
+         cs,
+         A7XX_SP_PS_ALIASED_COMPONENTS_CONTROL(
+               .enabled = fragdata_aliased_components != 0),
+         A7XX_SP_PS_ALIASED_COMPONENTS(.dword = fragdata_aliased_components));
+   } else {
+      assert(fragdata_aliased_components == 0);
+   }
 
    tu_cs_emit_pkt4(cs, REG_A6XX_RB_FS_OUTPUT_CNTL0, 1);
    tu_cs_emit(cs, COND(fs->writes_pos, A6XX_RB_FS_OUTPUT_CNTL0_FRAG_WRITES_Z) |
@@ -1960,12 +2083,12 @@ tu6_emit_fs(struct tu_cs *cs,
 
    if (fs) {
       tu6_emit_fs_inputs<CHIP>(cs, fs);
-      tu6_emit_fs_outputs(cs, fs);
+      tu6_emit_fs_outputs<CHIP>(cs, fs);
    } else {
       /* TODO: check if these can be skipped if fs is disabled */
       struct ir3_shader_variant dummy_variant = {};
       tu6_emit_fs_inputs<CHIP>(cs, &dummy_variant);
-      tu6_emit_fs_outputs(cs, &dummy_variant);
+      tu6_emit_fs_outputs<CHIP>(cs, &dummy_variant);
    }
 }
 TU_GENX(tu6_emit_fs);
@@ -2366,7 +2489,7 @@ tu_shader_create(struct tu_device *dev,
    const nir_opt_access_options access_options = {
       .is_vulkan = true,
    };
-   NIR_PASS_V(nir, nir_opt_access, &access_options);
+   NIR_PASS(_, nir, nir_opt_access, &access_options);
 
    if (nir->info.stage == MESA_SHADER_FRAGMENT) {
       const nir_input_attachment_options att_options = {
@@ -2378,9 +2501,14 @@ tu_shader_create(struct tu_device *dev,
           * multiview is enabled.
           */
          .use_view_id_for_layer = key->multiview_mask != 0,
-         .unscaled_input_attachment_ir3 = key->unscaled_input_fragcoord,
+         .unscaled_depth_stencil_ir3 =
+            key->dynamic_renderpass && !(key->read_only_input_attachments & 1),
+         .unscaled_input_attachment_ir3 =
+            key->dynamic_renderpass ?
+            ~(key->read_only_input_attachments >> 1) :
+            key->unscaled_input_fragcoord,
       };
-      NIR_PASS_V(nir, nir_lower_input_attachments, &att_options);
+      NIR_PASS(_, nir, nir_lower_input_attachments, &att_options);
    }
 
    /* This has to happen before lower_input_attachments, because we have to
@@ -2390,8 +2518,7 @@ tu_shader_create(struct tu_device *dev,
       .num_views = MAX2(util_last_bit(key->multiview_mask), 1),
       .adjust_fragcoord = key->fragment_density_map,
    };
-   NIR_PASS_V(nir, tu_nir_lower_fdm, &fdm_options);
-
+   NIR_PASS(_, nir, tu_nir_lower_fdm, &fdm_options);
 
    /* This needs to happen before multiview lowering which rewrites store
     * instructions of the position variable, so that we can just rewrite one
@@ -2411,23 +2538,22 @@ tu_shader_create(struct tu_device *dev,
       }
    }
 
-   NIR_PASS_V(nir, nir_lower_explicit_io, nir_var_mem_push_const,
-              nir_address_format_32bit_offset);
+   NIR_PASS(_, nir, nir_lower_explicit_io, nir_var_mem_push_const,
+            nir_address_format_32bit_offset);
 
-   NIR_PASS_V(nir, nir_lower_explicit_io,
-              nir_var_mem_ubo | nir_var_mem_ssbo,
-              nir_address_format_vec2_index_32bit_offset);
+   NIR_PASS(_, nir, nir_lower_explicit_io, nir_var_mem_ubo | nir_var_mem_ssbo,
+            nir_address_format_vec2_index_32bit_offset);
 
-   NIR_PASS_V(nir, nir_lower_explicit_io,
-              nir_var_mem_global,
-              nir_address_format_64bit_global);
+   NIR_PASS(_, nir, nir_lower_explicit_io, nir_var_mem_global,
+            nir_address_format_64bit_global);
 
    if (nir->info.stage == MESA_SHADER_COMPUTE) {
-      NIR_PASS_V(nir, nir_lower_vars_to_explicit_types,
-                 nir_var_mem_shared, shared_type_info);
-      NIR_PASS_V(nir, nir_lower_explicit_io,
-                 nir_var_mem_shared,
-                 nir_address_format_32bit_offset);
+      if (!nir->info.shared_memory_explicit_layout) {
+         NIR_PASS(_, nir, nir_lower_vars_to_explicit_types,
+                  nir_var_mem_shared, shared_type_info);
+      }
+      NIR_PASS(_, nir, nir_lower_explicit_io, nir_var_mem_shared,
+               nir_address_format_32bit_offset);
 
       if (nir->info.zero_initialize_shared_memory && nir->info.shared_size > 0) {
          const unsigned chunk_size = 16; /* max single store size */
@@ -2437,13 +2563,15 @@ tu_shader_create(struct tu_device *dev,
           * that accesses are limited to those bounds.
           */
          const unsigned shared_size = ALIGN(nir->info.shared_size, chunk_size);
-         NIR_PASS_V(nir, nir_zero_initialize_shared_memory, shared_size, chunk_size);
+         NIR_PASS(_, nir, nir_zero_initialize_shared_memory, shared_size,
+                  chunk_size);
       }
 
       const struct nir_lower_compute_system_values_options compute_sysval_options = {
          .has_base_workgroup_id = true,
       };
-      NIR_PASS_V(nir, nir_lower_compute_system_values, &compute_sysval_options);
+      NIR_PASS(_, nir, nir_lower_compute_system_values,
+               &compute_sysval_options);
    }
 
    nir_assign_io_var_locations(nir, nir_var_shader_in, &nir->num_inputs, nir->info.stage);
@@ -2470,20 +2598,36 @@ tu_shader_create(struct tu_device *dev,
       }
    }
 
-   unsigned reserved_consts_vec4 = 0;
-   NIR_PASS_V(nir, tu_lower_io, dev, shader, layout, &reserved_consts_vec4);
+   {
+      /* Lower 64b push constants before lowering IO. */
+      nir_lower_mem_access_bit_sizes_options options = {
+         .callback = ir3_mem_access_size_align,
+         .modes = nir_var_mem_push_const,
+      };
+
+      NIR_PASS(_, nir, nir_lower_mem_access_bit_sizes, &options);
+   }
+
+   struct ir3_const_allocations const_allocs = {};
+   NIR_PASS(_, nir, tu_lower_io, dev, shader, layout,
+            key->read_only_input_attachments, key->dynamic_renderpass,
+            &const_allocs);
 
    nir_shader_gather_info(nir, nir_shader_get_entrypoint(nir));
 
-   ir3_finalize_nir(dev->compiler, nir);
+   struct ir3_shader_nir_options nir_options;
+   init_ir3_nir_options(&nir_options, key);
+
+   ir3_finalize_nir(dev->compiler, &nir_options, nir);
 
    const struct ir3_shader_options options = {
-      .num_reserved_user_consts = reserved_consts_vec4,
       .api_wavesize = key->api_wavesize,
       .real_wavesize = key->real_wavesize,
       .push_consts_type = shader->const_state.push_consts.type,
-      .push_consts_base = shader->const_state.push_consts.lo,
+      .push_consts_base = shader->const_state.push_consts.lo_dwords,
       .push_consts_dwords = shader->const_state.push_consts.dwords,
+      .const_allocs = const_allocs,
+      .nir_options = nir_options,
    };
 
    struct ir3_shader *ir3_shader =
@@ -2592,17 +2736,19 @@ tu_link_shaders(nir_shader **shaders, unsigned shaders_count)
       }
 
       if (nir_link_opt_varyings(producer, consumer)) {
-         NIR_PASS_V(consumer, nir_opt_constant_folding);
-         NIR_PASS_V(consumer, nir_opt_algebraic);
-         NIR_PASS_V(consumer, nir_opt_dce);
+         NIR_PASS(_, consumer, nir_opt_constant_folding);
+         NIR_PASS(_, consumer, nir_opt_algebraic);
+         NIR_PASS(_, consumer, nir_opt_dce);
       }
 
       const nir_remove_dead_variables_options out_var_opts = {
          .can_remove_var = nir_vk_is_not_xfb_output,
       };
-      NIR_PASS_V(producer, nir_remove_dead_variables, nir_var_shader_out, &out_var_opts);
+      NIR_PASS(_, producer, nir_remove_dead_variables, nir_var_shader_out,
+               &out_var_opts);
 
-      NIR_PASS_V(consumer, nir_remove_dead_variables, nir_var_shader_in, NULL);
+      NIR_PASS(_, consumer, nir_remove_dead_variables, nir_var_shader_in,
+               NULL);
 
       bool progress = nir_remove_unused_varyings(producer, consumer);
 
@@ -2610,8 +2756,9 @@ tu_link_shaders(nir_shader **shaders, unsigned shaders_count)
       if (progress) {
          if (nir_lower_global_vars_to_local(producer)) {
             /* Remove dead writes, which can remove input loads */
-            NIR_PASS_V(producer, nir_remove_dead_variables, nir_var_shader_temp, NULL);
-            NIR_PASS_V(producer, nir_opt_dce);
+            NIR_PASS(_, producer, nir_remove_dead_variables,
+                     nir_var_shader_temp, NULL);
+            NIR_PASS(_, producer, nir_opt_dce);
          }
          nir_lower_global_vars_to_local(consumer);
       }
@@ -2649,6 +2796,7 @@ tu6_get_tessmode(const struct nir_shader *shader)
 
 VkResult
 tu_compile_shaders(struct tu_device *device,
+                   VkPipelineCreateFlags2KHR pipeline_flags,
                    const VkPipelineShaderStageCreateInfo **stage_infos,
                    nir_shader **nir,
                    const struct tu_shader_key *keys,
@@ -2672,7 +2820,8 @@ tu_compile_shaders(struct tu_device *device,
 
       int64_t stage_start = os_time_get_nano();
 
-      nir[stage] = tu_spirv_to_nir(device, mem_ctx, stage_info, stage);
+      nir[stage] = tu_spirv_to_nir(device, mem_ctx, pipeline_flags,
+                                   stage_info, &keys[stage], stage);
       if (!nir[stage]) {
          result = VK_ERROR_OUT_OF_HOST_MEMORY;
          goto fail;
@@ -2841,6 +2990,16 @@ tu_shader_key_subgroup_size(struct tu_shader_key *key,
 
    key->api_wavesize = api_wavesize;
    key->real_wavesize = real_wavesize;
+}
+
+void
+tu_shader_key_robustness(struct tu_shader_key *key,
+                         const struct vk_pipeline_robustness_state *rs)
+{
+   key->robust_storage_access2 =
+      (rs->storage_buffers == VK_PIPELINE_ROBUSTNESS_BUFFER_BEHAVIOR_ROBUST_BUFFER_ACCESS_2_EXT);
+   key->robust_uniform_access2 =
+      (rs->uniform_buffers == VK_PIPELINE_ROBUSTNESS_BUFFER_BEHAVIOR_ROBUST_BUFFER_ACCESS_2_EXT);
 }
 
 static VkResult

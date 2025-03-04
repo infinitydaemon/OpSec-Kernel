@@ -45,16 +45,14 @@
 #include "common/intel_gem.h"
 #include "common/i915/intel_gem.h"
 #include "common/intel_hang_dump.h"
-#include "compiler/elk/elk_disasm.h"
-#include "compiler/elk/elk_isa_info.h"
-#include "compiler/brw_disasm.h"
-#include "compiler/brw_isa_info.h"
 #include "dev/intel_device_info.h"
 
 #include "drm-uapi/i915_drm.h"
 
 #include "util/u_dynarray.h"
 #include "util/u_math.h"
+
+#include "intel_tools.h"
 
 static uint32_t
 gem_create(int drm_fd, uint64_t size)
@@ -138,7 +136,11 @@ gem_context_set_hw_image(int drm_fd, uint32_t ctx_id,
    param.param = I915_CONTEXT_PARAM_RECOVERABLE;
    param.value = (uint64_t)(uintptr_t)&val;
 
-   ret = intel_ioctl(drm_fd, DRM_IOCTL_I915_GEM_CONTEXT_SETPARAM, &param);
+   /* Force i915 to convert the "proto" context to be a "live" context, since
+    * the I915_CONTEXT_PARAM_CONTEXT_IMAGE parameter cannot be set on a "proto"
+    * context. See kernel docs for i915_gem_proto_context.
+    */
+   ret = intel_ioctl(drm_fd, DRM_IOCTL_I915_GEM_CONTEXT_GETPARAM, &param);
    if (ret)
       return false;
 
@@ -513,20 +515,8 @@ main(int argc, char *argv[])
          found = true;
          fprintf(stderr, "shader at 0x%016"PRIx64" file_offset=0%016"PRIx64" addr_offset=%016"PRIx64":\n", *addr,
                  (bo->file_offset - aligned_offset), (*addr - bo->offset));
-         if (devinfo.ver >= 9) {
-            struct brw_isa_info _isa, *isa = &_isa;
-            brw_init_isa_info(isa, &devinfo);
-            brw_disassemble_with_errors(isa,
-                                        map + (bo->file_offset - aligned_offset) + (*addr - bo->offset),
-                                        0, stderr);
-         } else {
-            struct elk_isa_info _isa, *isa = &_isa;
-            elk_init_isa_info(isa, &devinfo);
-            elk_disassemble_with_errors(isa,
-                                        map + (bo->file_offset - aligned_offset) + (*addr - bo->offset),
-                                        0, stderr);
-         }
-
+         intel_disassemble(&devinfo, map + (bo->file_offset - aligned_offset) + (*addr - bo->offset),
+                           0, stderr);
          munmap(map, remaining_length);
       }
 
@@ -621,7 +611,6 @@ main(int argc, char *argv[])
             .relocs_ptr       = 0,
             .flags            = EXEC_OBJECT_SUPPORTS_48B_ADDRESS |
                                 EXEC_OBJECT_PINNED |
-                                EXEC_OBJECT_WRITE /* to be able to wait on the BO */ |
                                 EXEC_OBJECT_CAPTURE,
             .offset           = intel_canonical_address(init_bo->offset),
          };
@@ -643,7 +632,6 @@ main(int argc, char *argv[])
             .relocs_ptr       = 0,
             .flags            = EXEC_OBJECT_SUPPORTS_48B_ADDRESS |
                                 EXEC_OBJECT_PINNED |
-                                EXEC_OBJECT_WRITE /* to be able to wait on the BO */ |
                                 EXEC_OBJECT_CAPTURE,
             .offset           = intel_canonical_address(batch_bo->offset),
          };

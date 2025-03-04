@@ -1675,8 +1675,6 @@ static const nir_op op_trans[TGSI_OPCODE_LAST] = {
    [TGSI_OPCODE_LG2] = nir_op_flog2,
    [TGSI_OPCODE_POW] = nir_op_fpow,
    [TGSI_OPCODE_COS] = nir_op_fcos,
-   [TGSI_OPCODE_DDX] = nir_op_fddx,
-   [TGSI_OPCODE_DDY] = nir_op_fddy,
    [TGSI_OPCODE_KILL] = 0,
    [TGSI_OPCODE_PK2H] = 0, /* XXX */
    [TGSI_OPCODE_PK2US] = 0, /* XXX */
@@ -1712,9 +1710,6 @@ static const nir_op op_trans[TGSI_OPCODE_LAST] = {
    [TGSI_OPCODE_UIF] = 0,
    [TGSI_OPCODE_ELSE] = 0,
    [TGSI_OPCODE_ENDIF] = 0,
-
-   [TGSI_OPCODE_DDX_FINE] = nir_op_fddx_fine,
-   [TGSI_OPCODE_DDY_FINE] = nir_op_fddy_fine,
 
    [TGSI_OPCODE_CEIL] = nir_op_fceil,
    [TGSI_OPCODE_I2F] = nir_op_i2f32,
@@ -2022,6 +2017,22 @@ ttn_emit_instruction(struct ttn_compile *c)
       ttn_barrier(b);
       break;
 
+   case TGSI_OPCODE_DDX:
+      dst = nir_ddx(b, src[0]);
+      break;
+
+   case TGSI_OPCODE_DDX_FINE:
+      dst = nir_ddx_fine(b, src[0]);
+      break;
+
+   case TGSI_OPCODE_DDY:
+      dst = nir_ddy(b, src[0]);
+      break;
+
+   case TGSI_OPCODE_DDY_FINE:
+      dst = nir_ddy_fine(b, src[0]);
+      break;
+
    default:
       if (op_trans[tgsi_op] != 0 || tgsi_op == TGSI_OPCODE_MOV) {
          dst = ttn_alu(b, op_trans[tgsi_op], dst_bitsize, src);
@@ -2200,13 +2211,13 @@ static void
 ttn_read_pipe_caps(struct ttn_compile *c,
                    struct pipe_screen *screen)
 {
-   c->cap_samplers_as_deref = screen->get_param(screen, PIPE_CAP_NIR_SAMPLERS_AS_DEREF);
-   c->cap_face_is_sysval = screen->get_param(screen, PIPE_CAP_FS_FACE_IS_INTEGER_SYSVAL);
-   c->cap_position_is_sysval = screen->get_param(screen, PIPE_CAP_FS_POSITION_IS_SYSVAL);
-   c->cap_point_is_sysval = screen->get_param(screen, PIPE_CAP_FS_POINT_IS_SYSVAL);
-   c->cap_integers = screen->get_shader_param(screen, c->scan->processor, PIPE_SHADER_CAP_INTEGERS);
+   c->cap_samplers_as_deref = screen->caps.nir_samplers_as_deref;
+   c->cap_face_is_sysval = screen->caps.fs_face_is_integer_sysval;
+   c->cap_position_is_sysval = screen->caps.fs_position_is_sysval;
+   c->cap_point_is_sysval = screen->caps.fs_point_is_sysval;
+   c->cap_integers = screen->shader_caps[c->scan->processor].integers;
    c->cap_tg4_component_in_swizzle =
-       screen->get_param(screen, PIPE_CAP_TGSI_TG4_COMPONENT_IN_SWIZZLE);
+       screen->caps.tgsi_tg4_component_in_swizzle;
 }
 
 #define BITSET_SET32(bitset, u32_mask) do { \
@@ -2226,6 +2237,7 @@ ttn_compile_init(const void *tgsi_tokens,
    struct ttn_compile *c;
    struct nir_shader *s;
    struct tgsi_shader_info scan;
+   static int ttn_sh_counter = 0;
 
    assert(options || screen);
    c = rzalloc(NULL, struct ttn_compile);
@@ -2239,9 +2251,10 @@ ttn_compile_init(const void *tgsi_tokens,
    }
 
    c->build = nir_builder_init_simple_shader(tgsi_processor_to_shader_stage(scan.processor),
-                                             options, "TTN");
+                                             options, "TTN%d", (int)p_atomic_inc_return(&ttn_sh_counter));
 
    s = c->build.shader;
+   _mesa_blake3_compute(&scan, sizeof(scan), s->info.source_blake3);
 
    if (screen) {
       ttn_read_pipe_caps(c, screen);
@@ -2403,7 +2416,13 @@ ttn_optimize_nir(nir_shader *nir)
       NIR_PASS(progress, nir, nir_opt_if, nir_opt_if_optimize_phi_true_false);
       NIR_PASS(progress, nir, nir_opt_dead_cf);
       NIR_PASS(progress, nir, nir_opt_cse);
-      NIR_PASS(progress, nir, nir_opt_peephole_select, 8, true, true);
+
+      nir_opt_peephole_select_options peephole_select_options = {
+         .limit = 8,
+         .indirect_load_ok = true,
+         .expensive_alu_ok = true,
+      };
+      NIR_PASS(progress, nir, nir_opt_peephole_select, &peephole_select_options);
 
       NIR_PASS(progress, nir, nir_opt_phi_precision);
       NIR_PASS(progress, nir, nir_opt_algebraic);
@@ -2435,7 +2454,12 @@ ttn_optimize_nir(nir_shader *nir)
       }
 
       NIR_PASS(progress, nir, nir_opt_undef);
-      NIR_PASS(progress, nir, nir_opt_conditional_discard);
+
+      nir_opt_peephole_select_options peephole_discard_options = {
+         .limit = 0,
+         .discard_ok = true,
+      };
+      NIR_PASS(progress, nir, nir_opt_peephole_select, &peephole_discard_options);
       if (nir->options->max_unroll_iterations) {
          NIR_PASS(progress, nir, nir_opt_loop_unroll);
       }
@@ -2487,8 +2511,7 @@ lower_clipdistance_to_array(nir_shader *nir)
             _mesa_set_add(deletes, deref);
          }
       }
-      if (func_progress)
-         nir_metadata_preserve(impl, nir_metadata_none);
+      nir_progress(func_progress, impl, nir_metadata_none);
       /* derefs must be queued for deletion to avoid deleting the same deref repeatedly */
       set_foreach_remove(deletes, he)
          nir_instr_remove((void*)he->key);
@@ -2521,7 +2544,7 @@ ttn_finalize_nir(struct ttn_compile *c, struct pipe_screen *screen)
    NIR_PASS_V(nir, nir_lower_system_values);
    NIR_PASS_V(nir, nir_lower_compute_system_values, NULL);
 
-   if (!screen->get_param(screen, PIPE_CAP_TEXRECT)) {
+   if (!screen->caps.texrect) {
       const struct nir_lower_tex_options opts = { .lower_rect = true, };
       NIR_PASS_V(nir, nir_lower_tex, &opts);
    }
@@ -2547,8 +2570,8 @@ ttn_finalize_nir(struct ttn_compile *c, struct pipe_screen *screen)
       free(msg);
    } else {
       ttn_optimize_nir(nir);
-      nir_shader_gather_info(nir, c->build.impl);
    }
+   nir_shader_gather_info(nir, nir_shader_get_entrypoint(nir));
 
    nir->info.num_images = c->num_images;
    nir->info.num_textures = c->num_samplers;

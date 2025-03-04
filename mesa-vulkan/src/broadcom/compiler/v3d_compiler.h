@@ -426,6 +426,7 @@ struct v3d_fs_key {
         bool msaa;
         bool sample_alpha_to_coverage;
         bool sample_alpha_to_one;
+        bool can_earlyz_with_discard;
         /* Mask of which color render targets are present. */
         uint8_t cbufs;
         uint8_t swap_color_rb;
@@ -619,7 +620,7 @@ struct v3d_ra_node_info {
                 bool payload_conflict;
 
                 /* V3D 7.x */
-                bool is_ldunif_dst;
+                bool try_rf0;
         } *info;
         uint32_t alloc_count;
 };
@@ -1209,7 +1210,7 @@ bool v3d_nir_lower_txf_ms(nir_shader *s);
 bool v3d_nir_lower_image_load_store(nir_shader *s, struct v3d_compile *c);
 bool v3d_nir_lower_global_2x32(nir_shader *s);
 bool v3d_nir_lower_load_store_bitsize(nir_shader *s);
-bool v3d_nir_lower_algebraic(struct nir_shader *shader);
+bool v3d_nir_lower_algebraic(struct nir_shader *shader, const struct v3d_compile *c);
 
 void v3d_vir_emit_tex(struct v3d_compile *c, nir_tex_instr *instr);
 void v3d_vir_emit_image_load_store(struct v3d_compile *c,
@@ -1544,6 +1545,36 @@ vir_BRANCH(struct v3d_compile *c, enum v3d_qpu_branch_cond cond)
 {
         /* The actual uniform_data value will be set at scheduling time */
         return vir_emit_nondef(c, vir_branch_inst(c, cond));
+}
+
+struct v3d_double_buffer_score {
+        uint32_t geom;
+        uint32_t render;
+};
+
+void
+v3d_update_double_buffer_score(uint32_t vertex_count,
+                               uint32_t vs_qpu_size,
+                               uint32_t fs_qpu_size,
+                               struct v3d_prog_data *vs,
+                               struct v3d_prog_data *fs,
+                               struct v3d_double_buffer_score *score);
+
+static inline bool
+v3d_double_buffer_score_ok(struct v3d_double_buffer_score *score)
+{
+        /* Double buffer decreases tile size, which increases
+         * VS invocations so too much geometry is not good.
+         */
+        if (score->geom > 200000)
+                return false;
+
+        /* We want enough rendering work to be able to hide
+         * latency from tile stores.
+         */
+        if (score->render < 200)
+                return false;
+        return true;
 }
 
 #define vir_for_each_block(block, c)                                    \

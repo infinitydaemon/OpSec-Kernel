@@ -64,8 +64,8 @@ impl Event {
     ) -> Arc<Event> {
         Arc::new(Self {
             base: CLObjectBase::new(RusticlTypes::Event),
-            context: queue.context.clone(),
-            queue: Some(queue.clone()),
+            context: Arc::clone(&queue.context),
+            queue: Some(Arc::clone(queue)),
             cmd_type: cmd_type,
             deps: deps,
             state: Mutex::new(EventMutState {
@@ -212,6 +212,14 @@ impl Event {
                 .wait_timeout(lock, Duration::from_secs(1))
                 .unwrap()
                 .0;
+
+            if let Some(queue) = &self.queue {
+                // in case the queue worker thread exited abnormally we'll need to stop spinning on
+                // the cv here, because otherwise we'll end up spinning endlessly.
+                if queue.is_dead() {
+                    return CL_OUT_OF_HOST_MEMORY;
+                }
+            }
         }
         lock.status
     }

@@ -79,6 +79,14 @@ SOFTWARE.
 	<!-- TODO pull more fields up to this level, when they are common across sub-encodings -->
 </bitset>
 
+<expr name="#cat6-type-shift">
+	{TYPE} >= 6 ? 0 /* u8 */ : ({TYPE_HALF} ? 1 : 2);
+</expr>
+
+<expr name="#cat6-full-shift">
+	{TYPE_SHIFT} + {SRC2_SHIFT}
+</expr>
+
 <bitset name="#instruction-cat6-ldg" extends="#instruction-cat6-a3xx">
 	<pattern pos="0"           >1</pattern>
 	<field   low="14" high="21" name="SRC1" type="#cat6-src-const-or-gpr">
@@ -117,35 +125,64 @@ SOFTWARE.
 <bitset name="ldg.a" extends="#instruction-cat6-ldg">
 	<doc>
 		LoaD Global
+
+		The 64b base address is stored in SRC1 (least significant bits)
+		and SRC1+1 (most significant bits).
+
+		An offset is added to the base address that is calculated as
+		follows:
+			((SRC2&lt;&lt;SRC2_SHIFT) + OFF)&lt;&lt;TYPE_SHIFT
+
+		TYPE_SHIFT is implicitly given by the TYPE field; it ensures
+		that the offset is in units of the type. Note that non
+		type-aligned accesses are still supported if SRC1 is not
+		aligned.
+
+		Note that although SRC2 is 32b, the calculation above does not
+		cause any 32b overflows: it behaves as if all values are
+		zero-extended to 64b first.
 	</doc>
 
 	<gen min="600" max="699"/>
 
 	<display>
-		{SY}{JP}{NAME}.{TYPE} {TYPE_HALF}{DST}, g[{SRC1}+({SRC2}{OFF})&lt;&lt;{SRC2_BYTE_SHIFT}], {SIZE}
+		{SY}{JP}{NAME}.{TYPE} {TYPE_HALF}{DST}, g[{SRC1}+((({SRC2}&lt;&lt;{SRC2_SHIFT}){OFF})&lt;&lt;{TYPE_SHIFT})], {SIZE}
 	</display>
 
 	<override>
 		<display>
-			{SY}{JP}{NAME}.{TYPE} {TYPE_HALF}{DST}, g[{SRC1}+{SRC2}&lt;&lt;{SRC2_BYTE_SHIFT}{OFF}&lt;&lt;2], {SIZE}
+			{SY}{JP}{NAME}.{TYPE} {TYPE_HALF}{DST}, g[{SRC1}+{SRC2}{OFF}], {SIZE}
 		</display>
-		<expr>{SRC2_ADD_DWORD_SHIFT} > 0</expr>
+		<expr>{TYPE_SHIFT} == 0</expr>
+	</override>
+
+	<override>
+		<display>
+			{SY}{JP}{NAME}.{TYPE} {TYPE_HALF}{DST}, g[{SRC1}+({SRC2}&lt;&lt;{FULL_SHIFT})], {SIZE}
+		</display>
+		<expr>{OFF} == 0</expr>
+	</override>
+
+	<override>
+		<display>
+			{SY}{JP}{NAME}.{TYPE} {TYPE_HALF}{DST}, g[{SRC1}+(({SRC2}{OFF})&lt;&lt;{TYPE_SHIFT})], {SIZE}
+		</display>
+		<expr>{SRC2_SHIFT} == 0</expr>
 	</override>
 
 	<field   low="1"  high="8"  name="SRC2"  type="#reg-gpr"/>
 	<field   low="9"  high="10" name="OFF" type="uoffset"/>
 	<assert  pos="11"          >0</assert>
-	<field   low="12" high="13" name="SRC2_ADD_DWORD_SHIFT" type="uint"/>
+	<field   low="12" high="13" name="SRC2_SHIFT" type="uint"/>
 	<pattern pos="22"          >1</pattern> <!-- Reg offset ldg form -->
 	<pattern low="41" high="48">xxxxxxxx</pattern>
 
-	<derived name="SRC2_BYTE_SHIFT" width="3" type="uint">
-		<expr>{SRC2_ADD_DWORD_SHIFT} + 2</expr>
-	</derived>
+	<derived name="TYPE_SHIFT" type="uint" expr="#cat6-type-shift"/>
+	<derived name="FULL_SHIFT" type="uint" expr="#cat6-full-shift"/>
 
 	<encode>
 		<map name="SRC2">src->srcs[1]</map>
-		<map name="SRC2_ADD_DWORD_SHIFT">extract_reg_uim(src->srcs[2])</map>
+		<map name="SRC2_SHIFT">extract_reg_uim(src->srcs[2])</map>
 		<map name="OFF">extract_reg_uim(src->srcs[3])</map>
 		<map name="SIZE">extract_reg_uim(src->srcs[4])</map>
 	</encode>
@@ -260,28 +297,43 @@ SOFTWARE.
 <bitset name="stg.a" extends="#instruction-cat6-stg">
 	<doc>
 		STore Global
+
+		See the doc of ldg.a for how the address is calculated.
 	</doc>
 
 	<gen min="600" max="699"/>
 
 	<display>
-		{SY}{JP}{NAME}.{TYPE} g[{SRC1}+({SRC2}{OFF})&lt;&lt;{DST_BYTE_SHIFT}], {TYPE_HALF}{SRC3}, {SIZE}
+		{SY}{JP}{NAME}.{TYPE} g[{SRC1}+((({SRC2}&lt;&lt;{SRC2_SHIFT}){OFF})&lt;&lt;{TYPE_SHIFT})], {TYPE_HALF}{SRC3}, {SIZE}
 	</display>
 
 	<override>
 		<display>
-			{SY}{JP}{NAME}.{TYPE} g[{SRC1}+{SRC2}&lt;&lt;{DST_BYTE_SHIFT}{OFF}&lt;&lt;2], {TYPE_HALF}{SRC3}, {SIZE}
+			{SY}{JP}{NAME}.{TYPE} g[{SRC1}+{SRC2}{OFF}], {TYPE_HALF}{SRC3}, {SIZE}
 		</display>
-		<expr>{SRC2_ADD_DWORD_SHIFT} > 0</expr>
+		<expr>{TYPE_SHIFT} == 0</expr>
 	</override>
 
-	<derived name="DST_BYTE_SHIFT" width="3" type="uint">
-		<expr>{SRC2_ADD_DWORD_SHIFT} + 2</expr>
-	</derived>
+	<override>
+		<display>
+			{SY}{JP}{NAME}.{TYPE} g[{SRC1}+({SRC2}&lt;&lt;{FULL_SHIFT})], {TYPE_HALF}{SRC3}, {SIZE}
+		</display>
+		<expr>{OFF} == 0</expr>
+	</override>
+
+	<override>
+		<display>
+			{SY}{JP}{NAME}.{TYPE} g[{SRC1}+(({SRC2}{OFF})&lt;&lt;{TYPE_SHIFT})], {TYPE_HALF}{SRC3}, {SIZE}
+		</display>
+		<expr>{SRC2_SHIFT} == 0</expr>
+	</override>
+
+	<derived name="TYPE_SHIFT" type="uint" expr="#cat6-type-shift"/>
+	<derived name="FULL_SHIFT" type="uint" expr="#cat6-full-shift"/>
 
 	<field   low="9"  high="10" name="OFF" type="uoffset"/>
 	<assert  pos="11"          >0</assert>
-	<field   low="12" high="13" name="SRC2_ADD_DWORD_SHIFT" type="uint"/>
+	<field   low="12" high="13" name="SRC2_SHIFT" type="uint"/>
 	<pattern low="14" high="21">xxxxxxxx</pattern>
 	<pattern low="22" high="23">1x</pattern>
 	<field   low="32" high="39" name="SRC2" type="#reg-gpr"/>
@@ -289,7 +341,7 @@ SOFTWARE.
 
 	<encode>
 		<map name="SRC2">src->srcs[1]</map>
-		<map name="SRC2_ADD_DWORD_SHIFT">extract_reg_uim(src->srcs[2])</map>
+		<map name="SRC2_SHIFT">extract_reg_uim(src->srcs[2])</map>
 		<map name="OFF">extract_reg_uim(src->srcs[3])</map>
 		<map name="SRC3">src->srcs[4]</map>
 		<map name="SIZE">extract_reg_uim(src->srcs[5])</map>
@@ -356,7 +408,7 @@ SOFTWARE.
 		LoaD Private
 	</doc>
 	<display>
-		{SY}{JP}{NAME}.{TYPE} {DST}, p[{SRC}{OFF}], {SIZE}
+		{SY}{JP}{NAME}.{TYPE} {TYPE_HALF}{DST}, p[{SRC}{OFF}], {SIZE}
 	</display>
 	<pattern low="54" high="58">00010</pattern>  <!-- OPC -->
 </bitset>
@@ -518,7 +570,7 @@ SOFTWARE.
 	<field   low="32" high="39" name="DST_LO" type="uint"/>
 	<assert pos="40">0</assert>
 	<pattern low="41" high="48">xxxxxxxx</pattern>
-	<pattern low="52" high="53">xx</pattern>
+	<pattern low="52" high="53">00</pattern>
 	<pattern low="54" high="58">11101</pattern>  <!-- OPC -->
 
 	<derived name="DST" width="13" type="uint">
@@ -679,7 +731,7 @@ SOFTWARE.
 	<pattern low="54" high="58">11101</pattern>  <!-- OPC -->
 </bitset>
 
-<bitset name="#instruction-cat6-a3xx-atomic" extends="#instruction-cat6-a3xx">
+<bitset name="#instruction-cat6-a3xx-atomic" extends="#instruction-cat6">
 	<doc>
 		Base for atomic instructions (I think mostly a4xx+, as
 		a3xx didn't have real image/ssbo.. it was all just global).
@@ -724,6 +776,7 @@ SOFTWARE.
 	<pattern pos="0"            >1</pattern>
 	<pattern low="1"  high="8"  >00000000</pattern> <!-- SRC3 -->
 	<pattern low="41" high="48" >00000000</pattern> <!-- SSBO/image binding point -->
+	<field   low="49" high="51" name="TYPE" type="#type"/>
 	<pattern pos="52"           >0</pattern> <!-- "G" -->
 	<pattern pos="53"           >0</pattern> <!-- SSBO_IM -->
 </bitset>
@@ -795,6 +848,7 @@ SOFTWARE.
 	<field   low="41" high="48" name="SSBO" type="#cat6-src">   <!-- SSBO/image binding point -->
 		<param name="SSBO_IM" as="SRC_IM"/>
 	</field>
+	<field   low="49" high="51" name="TYPE" type="#type-atomic"/>
 	<pattern pos="52" >1</pattern> <!-- "G" -->
 	<field   pos="53" name="SSBO_IM" type="bool"/>
 
@@ -938,6 +992,7 @@ SOFTWARE.
 	<pattern pos="0"            >1</pattern>
 	<pattern low="1"  high="8"  >00000000</pattern> <!-- SRC3 -->
 	<pattern low="41" high="48" >00000000</pattern> <!-- SSBO/image binding point -->
+	<field   low="49" high="51" name="TYPE" type="#type-atomic"/>
 	<pattern pos="52"           >1</pattern> <!-- "G" -->
 	<pattern pos="53"           >0</pattern> <!-- SSBO_IM -->
 </bitset>
@@ -984,6 +1039,44 @@ SOFTWARE.
 
 <bitset name="atomic.g.xor" extends="#instruction-cat6-a6xx-atomic-global">
 	<pattern low="54" high="58">11010</pattern>  <!-- OPC -->
+</bitset>
+
+<bitset name="ray_intersection" extends="#instruction-cat6">
+	<doc>
+		Instruction for intersecting a ray. Unlike other instructions,
+		this supports an arbitrary pointer as the descriptor address.
+		SRC1 is a 64-bit pointer to the acceleration structure
+		descriptor.
+	</doc>
+	<display>
+		{SY}{JP}{NAME} {DST}, [{SRC1}], {SRC2}, {SRC3}, {SRC4}
+	</display>
+	<gen min="700"/>
+
+	<pattern low="54" high="58">01110</pattern>  <!-- OPC -->
+
+	<pattern pos="0">1</pattern>
+	<field low="1" high="8" name="SRC2" type="#reg-gpr"/>
+
+	<pattern low="9" high="12">xxxx</pattern>
+
+	<field pos="13" name="SRC1_CONST" type="bool"/>
+	<field low="14" high="21" name="SRC1" type="#cat6-src-const-or-gpr">
+		<param name="SRC1_CONST" as="SRC_CONST"/>
+	</field>
+
+	<pattern low="22" high="23">xx</pattern>
+
+	<field low="24" high="31" name="SRC3" type="#reg-gpr"/>
+	<field low="32" high="39" name="DST" type="#reg-gpr"/>
+	<pattern pos="40">x</pattern>
+	<field low="41" high="48" name="SRC4" type="#reg-gpr"/>
+
+	<pattern low="49" high="53">xxxxx</pattern>
+
+	<encode>
+		<map name="SRC1_CONST">!!(src->srcs[0]->flags &amp; IR3_REG_CONST)</map>
+	</encode>
 </bitset>
 
 <!--
@@ -1153,7 +1246,7 @@ SOFTWARE.
 	<pattern low="52" high="53">1x</pattern>
 </bitset>
 
-<bitset name="resinfo.b" extends="#instruction-cat6-a6xx">
+<bitset name="#instruction-cat6-a6xx-ibo-1src" extends="#instruction-cat6-a6xx">
 	<doc>
 		RESourceINFO - returns image/ssbo dimensions (3 components)
 	</doc>
@@ -1167,7 +1260,6 @@ SOFTWARE.
 	<pattern pos="0"           >0</pattern>
 	<field   low="9"  high="10" name="D_MINUS_ONE" type="uint"/>
 	<field   pos="11"           name="TYPED" type="#cat6-typed"/>
-	<pattern low="14" high="19">001111</pattern>   <!-- OPC -->
 	<pattern low="20" high="23">0110</pattern>
 	<pattern low="24" high="31">xxxxxxxx</pattern>    <!-- SRC2 -->
 	<field   low="32" high="39" name="DST" type="#reg-gpr"/>
@@ -1183,6 +1275,20 @@ SOFTWARE.
 		<map name="SSBO">src->srcs[0]</map>
 		<map name="SRC1">src->srcs[1]</map>
 	</encode>
+</bitset>
+
+<bitset name="resinfo.b" extends="#instruction-cat6-a6xx-ibo-1src">
+	<doc>
+		RESourceINFO - returns image/ssbo dimensions (3 components)
+	</doc>
+	<pattern low="14" high="19">001111</pattern>   <!-- OPC -->
+</bitset>
+
+<bitset name="resbase" extends="#instruction-cat6-a6xx-ibo-1src">
+	<doc>
+		RESourceBASE - returns the address of the bindless descriptor
+	</doc>
+	<pattern low="14" high="19">001100</pattern>   <!-- OPC -->
 </bitset>
 
 <bitset name="#instruction-cat6-a6xx-ibo-base" extends="#instruction-cat6-a6xx-base">
@@ -1206,7 +1312,6 @@ SOFTWARE.
 		<param name="SSBO_IM" as="SRC_IM"/>
 	</field>
 	<derived name="SSBO_IM" expr="#cat6-direct" type="bool"/>
-	<field   low="49" high="51" name="TYPE" type="#type"/>
 	<encode>
 		<map name="TYPED">src</map>
 		<map name="D_MINUS_ONE">src->cat6.d - 1</map>
@@ -1225,6 +1330,7 @@ SOFTWARE.
 <bitset name="#instruction-cat6-a6xx-ibo-load-store" extends="#instruction-cat6-a6xx-ibo-base">
 	<field pos="23"           name="HAS_OFFSET" type="bool"/>
 	<field low="4"  high="5"  name="OFFSET_HI"  type="uint"/>
+	<field   low="49" high="51" name="TYPE" type="#type"/>
 	<field low="54" high="58" name="OFFSET_LO"  type="uint"/>
 
 	<derived name="OFFSET" type="uoffset">
@@ -1243,6 +1349,13 @@ SOFTWARE.
 		<map name="OFFSET_LO">extract_reg_uim(src->srcs[2]) &amp; 0x1f</map>
 		<map name="OFFSET_HI">extract_reg_uim(src->srcs[2]) &gt;&gt; 5</map>
 	</encode>
+</bitset>
+
+<bitset name="#instruction-cat6-a6xx-ibo-atomic" extends="#instruction-cat6-a6xx-ibo">
+	<field   low="49" high="51" name="TYPE" type="#type-atomic"/>
+	<display>
+		{SY}{JP}{NAME}.{TYPED}.{D}d.{TYPE}.{TYPE_SIZE}.{MODE}{BASE} {SRC1}, {SRC2}, {SSBO}
+	</display>
 </bitset>
 
 <bitset name="stib.b" extends="#instruction-cat6-a6xx-ibo-load-store">
@@ -1266,19 +1379,19 @@ SOFTWARE.
 	</encode>
 </bitset>
 
-<bitset name="atomic.b.add" extends="#instruction-cat6-a6xx-ibo">
+<bitset name="atomic.b.add" extends="#instruction-cat6-a6xx-ibo-atomic">
 	<pattern pos="0"           >x</pattern>
 	<pattern low="14" high="19">010000</pattern>   <!-- OPC -->
 	<pattern low="52" high="53">11</pattern>
 </bitset>
 
-<bitset name="atomic.b.sub" extends="#instruction-cat6-a6xx-ibo">
+<bitset name="atomic.b.sub" extends="#instruction-cat6-a6xx-ibo-atomic">
 	<pattern pos="0"           >x</pattern>
 	<pattern low="14" high="19">010001</pattern>   <!-- OPC -->
 	<pattern low="52" high="53">11</pattern>
 </bitset>
 
-<bitset name="atomic.b.xchg" extends="#instruction-cat6-a6xx-ibo">
+<bitset name="atomic.b.xchg" extends="#instruction-cat6-a6xx-ibo-atomic">
 	<pattern pos="0"           >x</pattern>
 	<pattern low="14" high="19">010010</pattern>   <!-- OPC -->
 	<pattern low="52" high="53">11</pattern>
@@ -1286,43 +1399,91 @@ SOFTWARE.
 
 <!-- inc/dec? -->
 
-<bitset name="atomic.b.cmpxchg" extends="#instruction-cat6-a6xx-ibo">
+<bitset name="atomic.b.cmpxchg" extends="#instruction-cat6-a6xx-ibo-atomic">
 	<pattern pos="0"           >x</pattern>
 	<pattern low="14" high="19">010101</pattern>   <!-- OPC -->
 	<pattern low="52" high="53">11</pattern>
 </bitset>
 
-<bitset name="atomic.b.min" extends="#instruction-cat6-a6xx-ibo">
+<bitset name="atomic.b.min" extends="#instruction-cat6-a6xx-ibo-atomic">
 	<pattern pos="0"           >x</pattern>
 	<pattern low="14" high="19">010110</pattern>   <!-- OPC -->
 	<pattern low="52" high="53">11</pattern>
 </bitset>
 
-<bitset name="atomic.b.max" extends="#instruction-cat6-a6xx-ibo">
+<bitset name="atomic.b.max" extends="#instruction-cat6-a6xx-ibo-atomic">
 	<pattern pos="0"           >x</pattern>
 	<pattern low="14" high="19">010111</pattern>   <!-- OPC -->
 	<pattern low="52" high="53">11</pattern>
 </bitset>
 
-<bitset name="atomic.b.and" extends="#instruction-cat6-a6xx-ibo">
+<bitset name="atomic.b.and" extends="#instruction-cat6-a6xx-ibo-atomic">
 	<pattern pos="0"           >x</pattern>
 	<pattern low="14" high="19">011000</pattern>   <!-- OPC -->
 	<pattern low="52" high="53">11</pattern>
 </bitset>
 
-<bitset name="atomic.b.or" extends="#instruction-cat6-a6xx-ibo">
+<bitset name="atomic.b.or" extends="#instruction-cat6-a6xx-ibo-atomic">
 	<pattern pos="0"           >x</pattern>
 	<pattern low="14" high="19">011001</pattern>   <!-- OPC -->
 	<pattern low="52" high="53">11</pattern>
 </bitset>
 
-<bitset name="atomic.b.xor" extends="#instruction-cat6-a6xx-ibo">
+<bitset name="atomic.b.xor" extends="#instruction-cat6-a6xx-ibo-atomic">
 	<pattern pos="0"           >x</pattern>
 	<pattern low="14" high="19">011010</pattern>   <!-- OPC -->
 	<pattern low="52" high="53">11</pattern>
 </bitset>
 
+<enum name="#cat6-shfl-mode">
+	<value val="1" display="xor"/>
+	<value val="2" display="up"/>
+	<value val="3" display="down"/>
+	<value val="6" display="rup"/>
+	<value val="7" display="rdown"/>
+</enum>
 
+<bitset name="shfl" extends="#instruction-cat6-a3xx">
+	<doc>
+		Subgroup shuffle/rotate operations.
+
+		shfl.xor, shfl.up, shfl.down are like Vulkan subgroupShuffleXor,
+		subgroupShuffleUp, subgroupShuffleDown except that the mask/delta
+		has to be dynamically uniform.
+
+		shfl.rdown is Vulkan subgroupRotate. shfl.rup is like subgroupRotate
+		with a negative delta.
+
+		NOTE: SRC2 is always a full register, regardless of TYPE. The blob
+		disassembles it as a half register when TYPE is u16 though. We don't
+		copy this mistake here.
+	</doc>
+
+	<gen min="600"/>
+
+	<display>
+		{SY}{JP}{NAME}.{MODE}.{TYPE} {TYPE_HALF}{DST}, {TYPE_HALF}{SRC1}, {SRC2}
+	</display>
+
+	<pattern low="0"  high="0">0</pattern>
+	<field   low="1"  high="8"  name="SRC1" type="#reg-gpr"/>
+	<pattern low="9"  high="22">00000000000000</pattern>
+	<field   low="23" high="23" name="SRC2_IM" type="bool"/>
+	<field   low="24" high="31" name="SRC2" type="#cat6-src">
+		<param name="SRC2_IM" as="SRC_IM"/>
+	</field>
+	<field   low="32" high="39" name="DST" type="#reg-gpr"/>
+	<pattern low="40" high="44">xxxxx</pattern>
+	<field   low="45" high="47" name="MODE" type="#cat6-shfl-mode"/>
+	<pattern low="48" high="48">x</pattern>
+	<pattern low="52" high="53">10</pattern>
+	<pattern low="54" high="58">11011</pattern>  <!-- OPC -->
+
+	<encode>
+		<map name="MODE">src->cat6.shfl_mode</map>
+		<map name="SRC2_IM">!!(src->srcs[1]->flags &amp; IR3_REG_IMMED)</map>
+	</encode>
+</bitset>
 
 <expr name="#cat6-d">
 	{D_MINUS_ONE} + 1

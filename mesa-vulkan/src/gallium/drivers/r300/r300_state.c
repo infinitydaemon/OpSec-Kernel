@@ -41,6 +41,9 @@
         r300_mark_atom_dirty(r300, &(atom));   \
     }
 
+static void r300_delete_vs_state(struct pipe_context* pipe, void* shader);
+static void r300_delete_fs_state(struct pipe_context* pipe, void* shader);
+
 static bool blend_discard_if_src_alpha_0(unsigned srcRGB, unsigned srcA,
                                          unsigned dstRGB, unsigned dstA)
 {
@@ -589,6 +592,7 @@ static void r300_set_blend_color(struct pipe_context* pipe,
 
         case PIPE_FORMAT_R8G8B8A8_UNORM:
         case PIPE_FORMAT_R8G8B8X8_UNORM:
+        case PIPE_FORMAT_R10G10B10A2_UNORM:
             tmp = c.color[0];
             c.color[0] = c.color[2];
             c.color[2] = tmp;
@@ -1028,7 +1032,17 @@ static void* r300_create_fs_state(struct pipe_context* pipe,
     fs->state = *shader;
 
     if (fs->state.type == PIPE_SHADER_IR_NIR) {
-       fs->state.tokens = nir_to_rc(shader->ir.nir, pipe->screen);
+        /* R300/R400 can not do any kind of control flow, so abort early here. */
+        if (!r300->screen->caps.is_r500) {
+            char *msg = r300_check_control_flow(shader->ir.nir);
+            if (msg && shader->report_compile_error) {
+                fprintf(stderr, "r300 FP: Compiler error: %s\n", msg);
+                ((struct pipe_shader_state *)shader)->error_message = strdup(msg);
+                ralloc_free(shader->ir.nir);
+                FREE(fs);
+                return NULL;
+	    }
+        }
     } else {
        assert(fs->state.type == PIPE_SHADER_IR_TGSI);
        /* we need to keep a local copy of the tokens */
@@ -1041,17 +1055,39 @@ static void* r300_create_fs_state(struct pipe_context* pipe,
     struct r300_fragment_program_external_state precompile_state;
     memset(&precompile_state, 0, sizeof(precompile_state));
 
-    struct tgsi_shader_info info;
-    tgsi_scan_shader(fs->state.tokens, &info);
-    for (int i = 0; i < PIPE_MAX_SHADER_SAMPLER_VIEWS; i++) {
-        if (info.sampler_targets[i] == TGSI_TEXTURE_SHADOW1D ||
-            info.sampler_targets[i] == TGSI_TEXTURE_SHADOW2D ||
-            info.sampler_targets[i] == TGSI_TEXTURE_SHADOWRECT) {
-            precompile_state.unit[i].compare_mode_enabled = true;
-            precompile_state.unit[i].texture_compare_func = PIPE_FUNC_LESS;
+    if (fs->state.type == PIPE_SHADER_IR_NIR) {
+        /* Pick something for the shadow samplers so that we have somewhat reliable shader stats later. */
+        nir_foreach_function_impl(impl, shader->ir.nir) {
+            nir_foreach_block_safe(block, impl) {
+                nir_foreach_instr_safe(instr, block) {
+                    if (instr->type != nir_instr_type_tex)
+                        continue;
+                    nir_tex_instr *tex = nir_instr_as_tex(instr);
+
+                    if (tex->is_shadow) {
+                        precompile_state.unit[tex->sampler_index].compare_mode_enabled = true;
+                        precompile_state.unit[tex->sampler_index].texture_compare_func = PIPE_FUNC_LESS;
+                    }
+                    precompile_state.sampler_state_count = MAX2(tex->sampler_index + 1,
+                                                                precompile_state.sampler_state_count);
+                }
+            }
         }
     }
     r300_pick_fragment_shader(r300, fs, &precompile_state);
+
+    if (fs->shader->error) {
+        if (shader->report_compile_error && !DBG_ON(r300, DBG_DUMMYSH)) {
+            fprintf(stderr, "r300 FP: Compiler error: %s\n"
+                    "r300 FP: Use RADEON_DEBUG=dummysh to force dummy shader instead.\n",
+                    fs->shader->error);
+            ((struct pipe_shader_state *)shader)->error_message = strdup(fs->shader->error);
+            r300_delete_fs_state(pipe, fs);
+            return NULL;
+        }
+        fprintf(stderr, "r300 FP: Compiler error: %s\n"
+                "r300 FP: Using a dummy shader instead.\n", fs->shader->error);
+    }
 
     return (void *)fs;
 }
@@ -1107,9 +1143,14 @@ static void r300_delete_fs_state(struct pipe_context* pipe, void* shader)
         ptr = ptr->next;
         rc_constants_destroy(&tmp->code.constants);
         FREE(tmp->cb_code);
+        free(tmp->error);
         FREE(tmp);
     }
-    FREE((void*)fs->state.tokens);
+    if (fs->state.type == PIPE_SHADER_IR_NIR) {
+        ralloc_free(fs->state.ir.nir);
+    } else {
+        FREE((void*)fs->state.tokens);
+    }
     FREE(shader);
 }
 
@@ -1186,8 +1227,7 @@ static void* r300_create_rs_state(struct pipe_context* pipe,
         /* Per-vertex point size.
          * Clamp to [0, max FB size] */
         float min_psiz = util_get_min_point_size(state);
-        float max_psiz = pipe->screen->get_paramf(pipe->screen,
-                                        PIPE_CAPF_MAX_POINT_SIZE);
+        float max_psiz = pipe->screen->caps.max_point_size;
         point_minmax =
             (pack_float_16_6x(min_psiz) << R300_GA_POINT_MINMAX_MIN_SHIFT) |
             (pack_float_16_6x(max_psiz) << R300_GA_POINT_MINMAX_MAX_SHIFT);
@@ -1921,7 +1961,20 @@ static void* r300_create_vs_state(struct pipe_context* pipe,
     vs->state = *shader;
 
     if (vs->state.type == PIPE_SHADER_IR_NIR) {
-       vs->state.tokens = nir_to_rc(shader->ir.nir, pipe->screen);
+        /* R300/R400 can not do any kind of control flow, so abort early here. */
+        if (!r300->screen->caps.is_r500 && r300->screen->caps.has_tcl) {
+            char *msg = r300_check_control_flow(shader->ir.nir);
+            if (msg && shader->report_compile_error) {
+                fprintf(stderr, "r300 VP: Compiler error: %s\n", msg);
+                ((struct pipe_shader_state *)shader)->error_message = strdup(msg);
+                ralloc_free(shader->ir.nir);
+                FREE(vs);
+                return NULL;
+            }
+        }
+
+       struct r300_fragment_program_external_state state = {};
+       vs->state.tokens = nir_to_rc(shader->ir.nir, pipe->screen, state);
     } else {
        assert(vs->state.type == PIPE_SHADER_IR_TGSI);
        /* we need to keep a local copy of the tokens */
@@ -1934,6 +1987,19 @@ static void* r300_create_vs_state(struct pipe_context* pipe,
         r300_translate_vertex_shader(r300, vs);
     } else {
         r300_draw_init_vertex_shader(r300, vs);
+    }
+
+    if (r300->screen->caps.has_tcl && vs->shader->error) {
+        if (shader->report_compile_error && !DBG_ON(r300, DBG_DUMMYSH)) {
+            fprintf(stderr, "r300 VP: Compiler error: %s\n"
+                    "r300 VP: Use RADEON_DEBUG=dummysh to silently skip instead.\n",
+                    vs->shader->error);
+            ((struct pipe_shader_state *)shader)->error_message = strdup(vs->shader->error);
+            r300_delete_vs_state(pipe, vs);
+            return NULL;
+        }
+        fprintf(stderr, "r300 VP: Compiler error: %s\n"
+                "r300 VP: Corresponding draws will be skipped.\n", vs->shader->error);
     }
 
     return vs;
@@ -1987,6 +2053,7 @@ static void r300_delete_vs_state(struct pipe_context* pipe, void* shader)
         while (vs->shader) {
             rc_constants_destroy(&vs->shader->code.constants);
             FREE(vs->shader->code.constants_remap_table);
+            free(vs->shader->error);
             vs->shader = vs->shader->next;
             FREE(vs->first);
             vs->first = vs->shader;

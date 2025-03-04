@@ -119,23 +119,43 @@ panvk_pool_num_bos(struct panvk_pool *pool)
 
 void panvk_pool_get_bo_handles(struct panvk_pool *pool, uint32_t *handles);
 
+enum panvk_priv_mem_flags {
+   PANVK_PRIV_MEM_OWNED_BY_POOL = BITFIELD_BIT(0),
+};
+
 struct panvk_priv_mem {
-   struct panvk_priv_bo *bo;
+   uintptr_t bo;
    unsigned offset;
 };
+
+#define PANVK_PRIV_MEM_FLAGS_MASK ((uintptr_t)7)
+
+static struct panvk_priv_bo *
+panvk_priv_mem_bo(struct panvk_priv_mem mem)
+{
+   return (struct panvk_priv_bo *)(mem.bo & ~PANVK_PRIV_MEM_FLAGS_MASK);
+}
+
+static uint32_t
+panvk_priv_mem_flags(struct panvk_priv_mem mem)
+{
+   return mem.bo & PANVK_PRIV_MEM_FLAGS_MASK;
+}
 
 static inline uint64_t
 panvk_priv_mem_dev_addr(struct panvk_priv_mem mem)
 {
-   return mem.bo ? mem.bo->addr.dev + mem.offset : 0;
+   struct panvk_priv_bo *bo = panvk_priv_mem_bo(mem);
+
+   return bo ? bo->addr.dev + mem.offset : 0;
 }
 
 static inline void *
 panvk_priv_mem_host_addr(struct panvk_priv_mem mem)
 {
-   return mem.bo && mem.bo->addr.host
-             ? (uint8_t *)mem.bo->addr.host + mem.offset
-             : NULL;
+   struct panvk_priv_bo *bo = panvk_priv_mem_bo(mem);
+
+   return bo && bo->addr.host ? (uint8_t *)bo->addr.host + mem.offset : NULL;
 }
 
 struct panvk_pool_alloc_info {
@@ -160,10 +180,17 @@ struct panvk_priv_mem panvk_pool_alloc_mem(struct panvk_pool *pool,
                                            struct panvk_pool_alloc_info info);
 
 static inline void
-panvk_pool_free_mem(struct panvk_pool *pool, struct panvk_priv_mem mem)
+panvk_pool_free_mem(struct panvk_priv_mem *mem)
 {
-   if (!pool->props.owns_bos)
-      panvk_priv_bo_unref(mem.bo);
+   struct panvk_priv_bo *bo = panvk_priv_mem_bo(*mem);
+   uint32_t flags = panvk_priv_mem_flags(*mem);
+
+   if (bo) {
+      if (likely(!(flags & PANVK_PRIV_MEM_OWNED_BY_POOL)))
+         panvk_priv_bo_unref(bo);
+
+      memset(mem, 0, sizeof(*mem));
+   }
 }
 
 static inline struct panvk_priv_mem

@@ -64,14 +64,12 @@ GetDesc(ID3D12VideoDecoderHeap *heap)
 */
 const bool D3D12_VIDEO_ENC_CBR_FORCE_VBV_EQUAL_BITRATE = debug_get_bool_option("D3D12_VIDEO_ENC_CBR_FORCE_VBV_EQUAL_BITRATE", false);
 
-const bool D3D12_VIDEO_ENC_ASYNC = debug_get_bool_option("D3D12_VIDEO_ENC_ASYNC", true);
-
 /**
  * This indicates how many in-flight encode commands can happen before blocking on the next request
  */
-const uint64_t D3D12_VIDEO_ENC_ASYNC_DEPTH = debug_get_num_option("D3D12_VIDEO_ENC_ASYNC_DEPTH", 8);
+const size_t D3D12_VIDEO_ENC_ASYNC_DEPTH = static_cast<size_t>(debug_get_num_option("D3D12_VIDEO_ENC_ASYNC_DEPTH", 8));
 
-const uint64_t D3D12_VIDEO_ENC_METADATA_BUFFERS_COUNT = debug_get_num_option("D3D12_VIDEO_ENC_METADATA_BUFFERS_COUNT", 2 * D3D12_VIDEO_ENC_ASYNC_DEPTH);
+const size_t D3D12_VIDEO_ENC_METADATA_BUFFERS_COUNT = static_cast<size_t>(debug_get_num_option("D3D12_VIDEO_ENC_METADATA_BUFFERS_COUNT", 2 * D3D12_VIDEO_ENC_ASYNC_DEPTH));
 
 constexpr unsigned int D3D12_VIDEO_H264_MB_IN_PIXELS = 16;
 
@@ -160,6 +158,12 @@ uint8_t
 d3d12_video_encoder_convert_12cusize_to_pixel_size_hevc(const D3D12_VIDEO_ENCODER_CODEC_CONFIGURATION_HEVC_CUSIZE& cuSize);
 uint8_t
 d3d12_video_encoder_convert_12tusize_to_pixel_size_hevc(const D3D12_VIDEO_ENCODER_CODEC_CONFIGURATION_HEVC_TUSIZE& TUSize);
+D3D12_VIDEO_ENCODER_CODEC_CONFIGURATION_SUPPORT
+ConvertHEVCSupportFromProfile(D3D12_VIDEO_ENCODER_PROFILE_HEVC profile, D3D12_VIDEO_ENCODER_CODEC_CONFIGURATION_SUPPORT_HEVC1* pSupport1);
+D3D12_VIDEO_ENCODER_PICTURE_CONTROL_CODEC_DATA
+ConvertHEVCPicParamsFromProfile(D3D12_VIDEO_ENCODER_PROFILE_HEVC profile, D3D12_VIDEO_ENCODER_PICTURE_CONTROL_CODEC_DATA_HEVC1* pPictureParams1);
+bool
+d3d12_video_encode_requires_texture_array_dpb(struct d3d12_screen* pScreen, enum pipe_video_profile profile);
 
 DEFINE_ENUM_FLAG_OPERATORS(pipe_enc_feature);
 DEFINE_ENUM_FLAG_OPERATORS(pipe_h265_enc_pred_direction);
@@ -167,4 +171,16 @@ DEFINE_ENUM_FLAG_OPERATORS(codec_unit_location_flags);
 DEFINE_ENUM_FLAG_OPERATORS(pipe_video_feedback_encode_result_flags);
 DEFINE_ENUM_FLAG_OPERATORS(pipe_video_feedback_metadata_type);
 
+#define D3D12_VIDEO_ENC_H264_MAX_TEMPORAL_LAYERS 4
+#define D3D12_VIDEO_ENC_HEVC_MAX_TEMPORAL_LAYERS 4
+#define D3D12_VIDEO_ENC_AV1_MAX_TEMPORAL_LAYERS 1
+#define D3D12_VIDEO_ENC_MAX_RATE_CONTROL_TEMPORAL_LAYERS 4
+
+static_assert(D3D12_VIDEO_ENC_MAX_RATE_CONTROL_TEMPORAL_LAYERS >= D3D12_VIDEO_ENC_H264_MAX_TEMPORAL_LAYERS, "Increase size of D3D12_VIDEO_ENC_MAX_RATE_CONTROL_TEMPORAL_LAYERS");
+static_assert(D3D12_VIDEO_ENC_MAX_RATE_CONTROL_TEMPORAL_LAYERS >= D3D12_VIDEO_ENC_HEVC_MAX_TEMPORAL_LAYERS, "Increase size of D3D12_VIDEO_ENC_MAX_RATE_CONTROL_TEMPORAL_LAYERS");
+static_assert(D3D12_VIDEO_ENC_MAX_RATE_CONTROL_TEMPORAL_LAYERS >= D3D12_VIDEO_ENC_AV1_MAX_TEMPORAL_LAYERS, "Increase size of D3D12_VIDEO_ENC_MAX_RATE_CONTROL_TEMPORAL_LAYERS");
+
+static_assert(ARRAY_SIZE(pipe_h264_enc_picture_desc::rate_ctrl) >= D3D12_VIDEO_ENC_H264_MAX_TEMPORAL_LAYERS, "Increase size of pipe_h264_enc_picture_desc::rate_ctrl[] array");
+static_assert(ARRAY_SIZE(pipe_h265_enc_picture_desc::rc) >= D3D12_VIDEO_ENC_HEVC_MAX_TEMPORAL_LAYERS, "Increase size of pipe_h265_enc_picture_desc::rc[] array");
+static_assert(ARRAY_SIZE(pipe_av1_enc_picture_desc::rc) >= D3D12_VIDEO_ENC_AV1_MAX_TEMPORAL_LAYERS, "Increase size of pipe_h265_enc_picture_desc::rc[] array");
 #endif

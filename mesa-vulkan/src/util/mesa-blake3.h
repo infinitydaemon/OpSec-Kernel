@@ -35,6 +35,7 @@ extern "C" {
 #define mesa_blake3 blake3_hasher
 #define BLAKE3_OUT_LEN32 (BLAKE3_OUT_LEN / 4)
 #define BLAKE3_HEX_LEN (2 * BLAKE3_OUT_LEN + 1)
+#define BLAKE3_PRINTED_LEN (BLAKE3_OUT_LEN32 * 12 - 2)
 
 typedef uint8_t blake3_hash[BLAKE3_OUT_LEN];
 
@@ -67,6 +68,9 @@ _mesa_blake3_compute(const void *data, size_t size, blake3_hash result);
 
 void
 _mesa_blake3_print(FILE *f, const blake3_hash blake3);
+
+bool
+_mesa_blake3_from_printed_string(blake3_hash blake3, const char *printed);
 
 bool
 _mesa_printed_blake3_equal(const blake3_hash blake3,

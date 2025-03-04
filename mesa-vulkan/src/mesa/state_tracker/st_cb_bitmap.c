@@ -187,7 +187,7 @@ setup_render_state(struct gl_context *ctx,
                      clamp_frag_color;
    key.lower_alpha_func = COMPARE_FUNC_ALWAYS;
 
-   fpv = st_get_fp_variant(st, fp, &key);
+   fpv = st_get_fp_variant(st, fp, &key, false, NULL);
 
    /* As an optimization, Mesa's fragment programs will sometimes get the
     * primary color from a statevar/constant rather than a varying variable.
@@ -262,7 +262,7 @@ setup_render_state(struct gl_context *ctx,
    st->util_velems.count = 3;
    cso_set_vertex_elements(cso, &st->util_velems);
 
-   cso_set_stream_outputs(st->cso_context, 0, NULL, NULL);
+   cso_set_stream_outputs(st->cso_context, 0, NULL, NULL, 0);
 }
 
 
@@ -319,7 +319,7 @@ draw_bitmap_quad(struct gl_context *ctx, GLint x, GLint y, GLfloat z,
        * it up into chunks.
        */
       ASSERTED GLuint maxSize =
-         st->screen->get_param(st->screen, PIPE_CAP_MAX_TEXTURE_2D_SIZE);
+         st->screen->caps.max_texture_2d_size;
       assert(width <= (GLsizei) maxSize);
       assert(height <= (GLsizei) maxSize);
    }

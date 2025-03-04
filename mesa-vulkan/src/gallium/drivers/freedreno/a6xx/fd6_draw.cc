@@ -1,25 +1,7 @@
 /*
- * Copyright (C) 2016 Rob Clark <robclark@freedesktop.org>
+ * Copyright © 2016 Rob Clark <robclark@freedesktop.org>
  * Copyright © 2018 Google, Inc.
- *
- * Permission is hereby granted, free of charge, to any person obtaining a
- * copy of this software and associated documentation files (the "Software"),
- * to deal in the Software without restriction, including without limitation
- * the rights to use, copy, modify, merge, publish, distribute, sublicense,
- * and/or sell copies of the Software, and to permit persons to whom the
- * Software is furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice (including the next
- * paragraph) shall be included in all copies or substantial portions of the
- * Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
- * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
- * SOFTWARE.
+ * SPDX-License-Identifier: MIT
  *
  * Authors:
  *    Rob Clark <robclark@freedesktop.org>
@@ -480,10 +462,13 @@ draw_vbos(struct fd_context *ctx, const struct pipe_draw_info *info,
          draw_emit_xfb(ring, &draw0, info, indirect);
       } else {
          const struct ir3_const_state *const_state = ir3_const_state(emit.vs);
-         uint32_t dst_offset_dp = const_state->offsets.driver_param;
+         uint32_t dst_offset_dp =
+            const_state->allocs.consts[IR3_CONST_ALLOC_DRIVER_PARAMS].offset_vec4;
 
          /* If unused, pass 0 for DST_OFF: */
-         if (dst_offset_dp > emit.vs->constlen)
+         if (!ir3_const_can_upload(&const_state->allocs,
+                                   IR3_CONST_ALLOC_DRIVER_PARAMS,
+                                   emit.vs->constlen))
             dst_offset_dp = 0;
 
          draw_emit_indirect<DRAW>(ctx, ring, &draw0, info, indirect, index_offset, dst_offset_dp);

@@ -6,7 +6,7 @@
 
 #include "aco_instruction_selection.h"
 
-#include "common/ac_nir.h"
+#include "common/nir/ac_nir.h"
 #include "common/sid.h"
 
 #include "nir_control_flow.h"
@@ -88,7 +88,7 @@ sanitize_if(nir_function_impl* impl, nir_if* nif)
     * or dead control-flow passes and are perfectly legal.  Run a quick phi
     * removal on the block after the if to clean up any such phis.
     */
-   nir_opt_remove_phis_block(nir_cf_node_as_block(nir_cf_node_next(&nif->cf_node)));
+   nir_remove_single_src_phis_block(nir_cf_node_as_block(nir_cf_node_next(&nif->cf_node)));
 
    /* Finally, move the continue from branch after the if-statement. */
    nir_block* last_continue_from_blk = then_jump ? else_block : then_block;
@@ -194,16 +194,16 @@ apply_nuw_to_offsets(isel_context* ctx, nir_function_impl* impl)
          case nir_intrinsic_load_constant:
          case nir_intrinsic_load_uniform:
          case nir_intrinsic_load_push_constant:
-            if (!nir_src_is_divergent(intrin->src[0]))
+            if (!nir_src_is_divergent(&intrin->src[0]))
                apply_nuw_to_ssa(ctx, intrin->src[0].ssa);
             break;
          case nir_intrinsic_load_ubo:
          case nir_intrinsic_load_ssbo:
-            if (!nir_src_is_divergent(intrin->src[1]))
+            if (!nir_src_is_divergent(&intrin->src[1]))
                apply_nuw_to_ssa(ctx, intrin->src[1].ssa);
             break;
          case nir_intrinsic_store_ssbo:
-            if (!nir_src_is_divergent(intrin->src[2]))
+            if (!nir_src_is_divergent(&intrin->src[2]))
                apply_nuw_to_ssa(ctx, intrin->src[2].ssa);
             break;
          case nir_intrinsic_load_scratch: apply_nuw_to_ssa(ctx, intrin->src[0].ssa); break;
@@ -228,7 +228,7 @@ void
 setup_tcs_info(isel_context* ctx)
 {
    ctx->tcs_in_out_eq = ctx->program->info.vs.tcs_in_out_eq;
-   ctx->tcs_temp_only_inputs = ctx->program->info.vs.tcs_temp_only_input_mask;
+   ctx->any_tcs_inputs_via_lds = ctx->program->info.vs.any_tcs_inputs_via_lds;
 }
 
 void
@@ -252,10 +252,96 @@ void
 setup_nir(isel_context* ctx, nir_shader* nir)
 {
    nir_convert_to_lcssa(nir, true, false);
-   nir_lower_phis_to_scalar(nir, true);
+   if (nir_lower_phis_to_scalar(nir, true)) {
+      nir_copy_prop(nir);
+      nir_opt_dce(nir);
+   }
 
    nir_function_impl* func = nir_shader_get_entrypoint(nir);
    nir_index_ssa_defs(func);
+}
+
+/* Returns true if we can skip uniformization of a merge phi. This makes the destination divergent,
+ * and so is only safe if the inconsistency it introduces into the divergence analysis won't break
+ * code generation. If we unsafely skip uniformization, later instructions (such as SSBO loads,
+ * some subgroup intrinsics and certain conversions) can use divergence analysis information which
+ * is no longer correct.
+ */
+bool
+skip_uniformize_merge_phi(nir_def* ssa, unsigned depth)
+{
+   if (depth >= 16)
+      return false;
+
+   nir_foreach_use (src, ssa) {
+      switch (nir_src_parent_instr(src)->type) {
+      case nir_instr_type_alu: {
+         nir_alu_instr* alu = nir_instr_as_alu(nir_src_parent_instr(src));
+         if (alu->def.divergent)
+            break;
+
+         switch (alu->op) {
+         case nir_op_f2i16:
+         case nir_op_f2u16:
+         case nir_op_f2i32:
+         case nir_op_f2u32:
+         case nir_op_b2i8:
+         case nir_op_b2i16:
+         case nir_op_b2i32:
+         case nir_op_b2b32:
+         case nir_op_b2f16:
+         case nir_op_b2f32:
+         case nir_op_b2f64:
+         case nir_op_mov:
+            /* These opcodes p_as_uniform or vote_any() the source, so fail immediately. We don't
+             * need to do this for non-nir_op_b2 if we know we'll move it back into a VGPR,
+             * in which case the p_as_uniform would be eliminated. This would be way too fragile,
+             * though.
+             */
+            return false;
+         default:
+            if (!skip_uniformize_merge_phi(&alu->def, depth + 1))
+               return false;
+            break;
+         }
+         break;
+      }
+      case nir_instr_type_intrinsic: {
+         nir_intrinsic_instr* intrin = nir_instr_as_intrinsic(nir_src_parent_instr(src));
+         unsigned src_idx = src - intrin->src;
+         /* nir_intrinsic_lane_permute_16_amd is only safe because we don't use divergence analysis
+          * for it's instruction selection. We use that intrinsic for NGG culling. All others are
+          * stores with VGPR sources.
+          */
+         if (intrin->intrinsic == nir_intrinsic_lane_permute_16_amd ||
+             intrin->intrinsic == nir_intrinsic_export_amd ||
+             intrin->intrinsic == nir_intrinsic_export_dual_src_blend_amd ||
+             (intrin->intrinsic == nir_intrinsic_export_row_amd && src_idx == 0) ||
+             (intrin->intrinsic == nir_intrinsic_store_buffer_amd && src_idx == 0) ||
+             (intrin->intrinsic == nir_intrinsic_store_ssbo && src_idx == 0) ||
+             (intrin->intrinsic == nir_intrinsic_store_global && src_idx == 0) ||
+             (intrin->intrinsic == nir_intrinsic_store_scratch && src_idx == 0) ||
+             (intrin->intrinsic == nir_intrinsic_store_shared && src_idx == 0))
+            break;
+         return false;
+      }
+      case nir_instr_type_phi: {
+         nir_phi_instr* phi = nir_instr_as_phi(nir_src_parent_instr(src));
+         if (phi->def.divergent || skip_uniformize_merge_phi(&phi->def, depth + 1))
+            break;
+         return false;
+      }
+      case nir_instr_type_tex: {
+         /* This is either used as a VGPR source or it's a (potentially undef) descriptor. */
+         break;
+      }
+      default: {
+         return false;
+      }
+      }
+   }
+
+   return true;
 }
 
 } /* end namespace */
@@ -271,25 +357,26 @@ init_context(isel_context* ctx, nir_shader* shader)
    ctx->ub_config.min_subgroup_size = ctx->program->wave_size;
    ctx->ub_config.max_subgroup_size = ctx->program->wave_size;
    ctx->ub_config.max_workgroup_invocations = 2048;
-   ctx->ub_config.max_workgroup_count[0] = 65535;
+   ctx->ub_config.max_workgroup_count[0] = 4294967295;
    ctx->ub_config.max_workgroup_count[1] = 65535;
    ctx->ub_config.max_workgroup_count[2] = 65535;
-   ctx->ub_config.max_workgroup_size[0] = 2048;
-   ctx->ub_config.max_workgroup_size[1] = 2048;
-   ctx->ub_config.max_workgroup_size[2] = 2048;
+   ctx->ub_config.max_workgroup_size[0] = 1024;
+   ctx->ub_config.max_workgroup_size[1] = 1024;
+   ctx->ub_config.max_workgroup_size[2] = 1024;
 
-   nir_divergence_analysis(shader);
-   if (nir_opt_uniform_atomics(shader) && nir_lower_int64(shader))
-      nir_divergence_analysis(shader);
+   uint32_t options =
+      shader->options->divergence_analysis_options | nir_divergence_ignore_undef_if_phi_srcs;
+   nir_divergence_analysis_impl(impl, (nir_divergence_options)options);
 
    apply_nuw_to_offsets(ctx, impl);
+   ac_nir_flag_smem_for_loads(shader, ctx->program->gfx_level, false, true);
 
    /* sanitize control flow */
    sanitize_cf_list(impl, &impl->body);
-   nir_metadata_preserve(impl, nir_metadata_none);
+   nir_progress(true, impl, nir_metadata_none);
 
    /* we'll need these for isel */
-   nir_metadata_require(impl, nir_metadata_block_index | nir_metadata_dominance);
+   nir_metadata_require(impl, nir_metadata_block_index);
 
    if (ctx->options->dump_preoptir) {
       fprintf(stderr, "NIR shader before instruction selection:\n");
@@ -309,7 +396,7 @@ init_context(isel_context* ctx, nir_shader* shader)
             switch (instr->type) {
             case nir_instr_type_alu: {
                nir_alu_instr* alu_instr = nir_instr_as_alu(instr);
-               RegType type = alu_instr->def.divergent ? RegType::vgpr : RegType::sgpr;
+               RegType type = RegType::sgpr;
 
                /* packed 16bit instructions have to be VGPR */
                if (alu_instr->def.num_components == 2 &&
@@ -321,13 +408,11 @@ init_context(isel_context* ctx, nir_shader* shader)
                case nir_op_f2u16:
                case nir_op_f2i32:
                case nir_op_f2u32:
-               case nir_op_b2i8:
-               case nir_op_b2i16:
-               case nir_op_b2i32:
-               case nir_op_b2b32:
-               case nir_op_b2f16:
-               case nir_op_b2f32:
-               case nir_op_mov: break;
+               case nir_op_mov:
+                  if (alu_instr->def.divergent &&
+                      regclasses[alu_instr->src[0].src.ssa->index].type() == RegType::vgpr)
+                     type = RegType::vgpr;
+                  break;
                case nir_op_fmulz:
                case nir_op_ffmaz:
                case nir_op_f2f64:
@@ -337,12 +422,6 @@ init_context(isel_context* ctx, nir_shader* shader)
                case nir_op_pack_snorm_2x16:
                case nir_op_pack_uint_2x16:
                case nir_op_pack_sint_2x16:
-               case nir_op_fddx:
-               case nir_op_fddy:
-               case nir_op_fddx_fine:
-               case nir_op_fddy_fine:
-               case nir_op_fddx_coarse:
-               case nir_op_fddy_coarse:
                case nir_op_ldexp:
                case nir_op_frexp_sig:
                case nir_op_frexp_exp:
@@ -358,7 +437,8 @@ init_context(isel_context* ctx, nir_shader* shader)
                case nir_op_udot_2x16_uadd:
                case nir_op_sdot_2x16_iadd:
                case nir_op_udot_2x16_uadd_sat:
-               case nir_op_sdot_2x16_iadd_sat: type = RegType::vgpr; break;
+               case nir_op_sdot_2x16_iadd_sat:
+               case nir_op_alignbyte_amd: type = RegType::vgpr; break;
                case nir_op_fmul:
                case nir_op_ffma:
                case nir_op_fadd:
@@ -403,7 +483,9 @@ init_context(isel_context* ctx, nir_shader* shader)
                }
                default:
                   for (unsigned i = 0; i < nir_op_infos[alu_instr->op].num_inputs; i++) {
-                     if (regclasses[alu_instr->src[i].src.ssa->index].type() == RegType::vgpr)
+                     if (alu_instr->src[i].src.ssa->bit_size == 1
+                            ? nir_src_is_divergent(&alu_instr->src[i].src)
+                            : regclasses[alu_instr->src[i].src.ssa->index].type() == RegType::vgpr)
                         type = RegType::vgpr;
                   }
                   break;
@@ -440,8 +522,6 @@ init_context(isel_context* ctx, nir_shader* shader)
                case nir_intrinsic_load_sbt_base_amd:
                case nir_intrinsic_load_subgroup_id:
                case nir_intrinsic_load_num_subgroups:
-               case nir_intrinsic_load_first_vertex:
-               case nir_intrinsic_load_base_instance:
                case nir_intrinsic_vote_all:
                case nir_intrinsic_vote_any:
                case nir_intrinsic_read_first_invocation:
@@ -456,32 +536,17 @@ init_context(isel_context* ctx, nir_shader* shader)
                case nir_intrinsic_load_lds_ngg_gs_out_vertex_base_amd:
                case nir_intrinsic_load_smem_amd:
                case nir_intrinsic_unit_test_uniform_amd: type = RegType::sgpr; break;
-               case nir_intrinsic_load_sample_id:
                case nir_intrinsic_load_input:
                case nir_intrinsic_load_per_primitive_input:
                case nir_intrinsic_load_output:
                case nir_intrinsic_load_input_vertex:
                case nir_intrinsic_load_per_vertex_input:
                case nir_intrinsic_load_per_vertex_output:
-               case nir_intrinsic_load_vertex_id_zero_base:
-               case nir_intrinsic_load_barycentric_sample:
-               case nir_intrinsic_load_barycentric_pixel:
-               case nir_intrinsic_load_barycentric_model:
-               case nir_intrinsic_load_barycentric_centroid:
-               case nir_intrinsic_load_barycentric_at_offset:
                case nir_intrinsic_load_interpolated_input:
-               case nir_intrinsic_load_frag_coord:
-               case nir_intrinsic_load_frag_shading_rate:
-               case nir_intrinsic_load_sample_pos:
-               case nir_intrinsic_load_local_invocation_id:
-               case nir_intrinsic_load_local_invocation_index:
-               case nir_intrinsic_load_subgroup_invocation:
-               case nir_intrinsic_load_tess_coord:
                case nir_intrinsic_write_invocation_amd:
                case nir_intrinsic_mbcnt_amd:
                case nir_intrinsic_lane_permute_16_amd:
                case nir_intrinsic_dpp16_shift_amd:
-               case nir_intrinsic_load_instance_id:
                case nir_intrinsic_ssbo_atomic:
                case nir_intrinsic_ssbo_atomic_swap:
                case nir_intrinsic_global_atomic_amd:
@@ -492,8 +557,6 @@ init_context(isel_context* ctx, nir_shader* shader)
                case nir_intrinsic_shared_atomic:
                case nir_intrinsic_shared_atomic_swap:
                case nir_intrinsic_load_scratch:
-               case nir_intrinsic_load_invocation_id:
-               case nir_intrinsic_load_primitive_id:
                case nir_intrinsic_load_typed_buffer_amd:
                case nir_intrinsic_load_buffer_amd:
                case nir_intrinsic_load_initial_edgeflags_amd:
@@ -530,9 +593,12 @@ init_context(isel_context* ctx, nir_shader* shader)
                case nir_intrinsic_load_global_amd:
                   type = intrinsic->def.divergent ? RegType::vgpr : RegType::sgpr;
                   break;
-               case nir_intrinsic_load_view_index:
-                  type = ctx->stage == fragment_fs ? RegType::vgpr : RegType::sgpr;
-                  break;
+               case nir_intrinsic_ddx:
+               case nir_intrinsic_ddy:
+               case nir_intrinsic_ddx_fine:
+               case nir_intrinsic_ddy_fine:
+               case nir_intrinsic_ddx_coarse:
+               case nir_intrinsic_ddy_coarse: type = RegType::vgpr; break;
                default:
                   for (unsigned i = 0; i < nir_intrinsic_infos[intrinsic->intrinsic].num_srcs;
                        i++) {
@@ -575,9 +641,26 @@ init_context(isel_context* ctx, nir_shader* shader)
                if (phi->def.divergent) {
                   type = RegType::vgpr;
                } else {
-                  nir_foreach_phi_src (src, phi) {
-                     if (regclasses[src->src.ssa->index].type() == RegType::vgpr)
-                        type = RegType::vgpr;
+                  bool vgpr_src = false;
+                  nir_foreach_phi_src (src, phi)
+                     vgpr_src |= regclasses[src->src.ssa->index].type() == RegType::vgpr;
+
+                  if (vgpr_src) {
+                     type = RegType::vgpr;
+
+                     /* This might be the case because of nir_divergence_ignore_undef_if_phi_srcs. */
+                     bool divergent_merge = false;
+                     if (nir_cf_node_prev(&block->cf_node) &&
+                         nir_cf_node_prev(&block->cf_node)->type == nir_cf_node_if) {
+                        nir_if* nif = nir_cf_node_as_if(nir_cf_node_prev(&block->cf_node));
+                        divergent_merge = nir_src_is_divergent(&nif->condition);
+                     }
+
+                     /* In case of uniform phis after divergent merges, ensure that the dst is an
+                      * SGPR and does not contain undefined values for some invocations.
+                      */
+                     if (divergent_merge && !skip_uniformize_merge_phi(&phi->def, 0))
+                        type = RegType::sgpr;
                   }
                }
 

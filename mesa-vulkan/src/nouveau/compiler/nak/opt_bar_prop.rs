@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: MIT
 
 use crate::api::{GetDebugFlags, DEBUG};
-use crate::bitset::BitSet;
 use crate::ir::*;
 
+use compiler::bitset::BitSet;
 use std::collections::HashMap;
 
 struct PhiMap {
@@ -72,7 +72,7 @@ impl BarPropPass {
         ssa.file() == RegFile::Bar || self.ssa_map.contains_key(ssa)
     }
 
-    fn map_bar<'a>(&'a self, ssa: &'a SSAValue) -> Option<&SSAValue> {
+    fn map_bar<'a>(&'a self, ssa: &'a SSAValue) -> Option<&'a SSAValue> {
         let mut ssa = ssa;
         let mut last_bar = None;
         loop {

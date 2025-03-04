@@ -51,9 +51,9 @@ enum llvmpipe_memory_fd_type
    LLVMPIPE_MEMORY_FD_TYPE_DMA_BUF,
 };
 
-
 struct pipe_context;
 struct pipe_screen;
+struct pipe_memory_object;
 struct llvmpipe_context;
 struct llvmpipe_screen;
 
@@ -114,7 +114,7 @@ struct llvmpipe_resource
    struct llvmpipe_memory_allocation *dmabuf_alloc;
 #endif
    bool backable;
-   bool imported_memory;
+   struct pipe_memory_object *imported_memory;
    bool dmabuf;
 #if MESA_DEBUG
    struct list_head list;
@@ -143,7 +143,8 @@ struct llvmpipe_memory_allocation
 struct llvmpipe_memory_object
 {
    struct pipe_memory_object b;
-   struct pipe_memory_allocation *data;
+   struct pipe_reference reference;
+   struct llvmpipe_memory_allocation *mem_alloc;
    uint64_t size;
 };
 

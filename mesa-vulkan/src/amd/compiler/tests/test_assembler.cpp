@@ -43,7 +43,7 @@ BEGIN_TEST(assembler.branch_3f)
    //! BB0:
    //! s_branch BB1                                                ; bf820040
    //! s_nop 0                                                     ; bf800000
-   bld.sopp(aco_opcode::s_branch, Definition(PhysReg(0), s2), 1);
+   bld.sopp(aco_opcode::s_branch, 1);
 
    for (unsigned i = 0; i < 0x3f; i++)
       bld.vop1(aco_opcode::v_nop);
@@ -60,20 +60,21 @@ BEGIN_TEST(assembler.long_jump.unconditional_forwards)
       return;
 
    //!BB0:
-   //! s_getpc_b64 s[0:1]                                          ; be801f00
-   //! s_addc_u32 s0, s0, 0x20014                                  ; 8200ff00 00020014
-   //! s_bitcmp1_b32 s0, 0                                         ; bf0d8000
-   //! s_bitset0_b32 s0, 0                                         ; be801b80
-   //! s_setpc_b64 s[0:1]                                          ; be802000
-   bld.sopp(aco_opcode::s_branch, Definition(PhysReg(0), s2), 2);
+   //! s_branch 16369                                              ; bf823ff1
+   bld.sopp(aco_opcode::s_branch, 2);
 
    bld.reset(program->create_and_insert_block());
 
    //! s_nop 0                                                     ; bf800000
-   //!(then repeated 32767 times)
+   //!(then repeated 16366 times)
    for (unsigned i = 0; i < INT16_MAX + 1; i++)
       bld.sopp(aco_opcode::s_nop, 0);
 
+   //! s_waitcnt_vscnt null, 0x0                                   ; bbfd0000
+   //! s_branch 1                                                  ; bf820001
+   //! s_branch BB2                                                ; bf824011
+   //! s_nop 0                                                     ; bf800000
+   //! (then repeated 16400 times)
    //! BB2:
    //! s_endpgm                                                    ; bf810000
    bld.reset(program->create_and_insert_block());
@@ -84,27 +85,144 @@ BEGIN_TEST(assembler.long_jump.unconditional_forwards)
    finish_assembler_test();
 END_TEST
 
+BEGIN_TEST(assembler.long_jump.many_blocks.branches)
+   if (!setup_cs(NULL, (amd_gfx_level)GFX10))
+      return;
+
+   //! BB0:
+   //! s_branch 16416                                              ; bf824020
+   bld.sopp(aco_opcode::s_branch, 65);
+
+   //! BB1:
+   //! s_nop 0                                                     ; bf800000
+   //! (then repeated 511 times)
+   //! s_branch BB2                                                ; bf820000
+   for (unsigned i = 0; i < 64; i++) {
+      bld.reset(program->create_and_insert_block());
+      program->blocks[i + 1].linear_preds.push_back(i);
+
+      for (unsigned j = 0; j < 512; j++)
+         bld.sopp(aco_opcode::s_nop, 0);
+      bld.sopp(aco_opcode::s_branch, i + 2);
+   }
+   //>> BB32:
+   //! s_nop 0                                                     ; bf800000
+   //! (then repeated 511 times)
+   //! s_branch BB33                                               ; bf820001
+   //! s_branch BB65                                               ; bf824020
+   //! BB33:
+   //>> BB65:
+   //! s_endpgm                                                    ; bf810000
+   bld.reset(program->create_and_insert_block());
+
+   program->blocks[65].linear_preds.push_back(0u);
+   program->blocks[65].linear_preds.push_back(64u);
+
+   finish_assembler_test();
+END_TEST
+
+BEGIN_TEST(assembler.long_jump.many_blocks.no_branches)
+   if (!setup_cs(NULL, (amd_gfx_level)GFX10))
+      return;
+
+   //! BB0:
+   //! s_branch 32002                                              ; bf827d02
+   bld.sopp(aco_opcode::s_branch, 65);
+
+   //! BB1:
+   //! s_nop 0                                                     ; bf800000
+   //! (then repeated 799 times)
+   for (unsigned i = 0; i < 64; i++) {
+      bld.reset(program->create_and_insert_block());
+      program->blocks[i + 1].linear_preds.push_back(i);
+
+      for (unsigned j = 0; j < 800; j++)
+         bld.sopp(aco_opcode::s_nop, 0);
+   }
+   //>> BB40:
+   //! s_nop 0                                                     ; bf800000
+   //! (then repeated 799 times)
+   //! s_waitcnt_vscnt null, 0x0                                   ; bbfd0000
+   //! s_branch BB41                                               ; bf820001
+   //! s_branch BB65                                               ; bf824b00
+   //! BB41:
+   //>> BB65:
+   //! s_endpgm                                                    ; bf810000
+   bld.reset(program->create_and_insert_block());
+
+   program->blocks[65].linear_preds.push_back(0u);
+   program->blocks[65].linear_preds.push_back(64u);
+
+   finish_assembler_test();
+END_TEST
+
+BEGIN_TEST(assembler.long_jump.many_blocks.two_chained_branches)
+   if (!setup_cs(NULL, (amd_gfx_level)GFX10))
+      return;
+
+   //! BB0:
+   //! s_branch 32013                                              ; bf827d0d
+   bld.sopp(aco_opcode::s_branch, 65);
+
+   //! BB1:
+   //! s_nop 0                                                     ; bf800000
+   //! (then repeated 9 times)
+   //! s_branch 32003                                              ; bf827d03
+   bld.reset(program->create_and_insert_block());
+   program->blocks[1].linear_preds.push_back(0);
+   for (unsigned j = 0; j < 10; j++)
+      bld.sopp(aco_opcode::s_nop, 0);
+   bld.sopp(aco_opcode::s_branch, 65);
+
+   //! BB2:
+   //! s_nop 0                                                     ; bf800000
+   //! (then repeated 799 times)
+   for (unsigned i = 1; i < 64; i++) {
+      bld.reset(program->create_and_insert_block());
+      program->blocks[i + 1].linear_preds.push_back(i);
+
+      for (unsigned j = 0; j < 800; j++)
+         bld.sopp(aco_opcode::s_nop, 0);
+   }
+   //>> BB41:
+   //! s_nop 0                                                     ; bf800000
+   //! (then repeated 799 times)
+   //! s_waitcnt_vscnt null, 0x0                                   ; bbfd0000
+   //! s_branch BB42                                               ; bf820002
+   //! s_branch BB65                                               ; bf8247e1
+   //! s_branch BB65                                               ; bf8247e0
+   //! BB42:
+   //>> BB65:
+   //! s_endpgm                                                    ; bf810000
+   bld.reset(program->create_and_insert_block());
+
+   program->blocks[65].linear_preds.push_back(0u);
+   program->blocks[65].linear_preds.push_back(1u);
+   program->blocks[65].linear_preds.push_back(64u);
+
+   finish_assembler_test();
+END_TEST
+
 BEGIN_TEST(assembler.long_jump.conditional_forwards)
    for (amd_gfx_level gfx : filter_gfx_levels({GFX10, GFX12})) {
       if (!setup_cs(NULL, gfx))
          continue;
 
       //! BB0:
-      //! s_cbranch_scc1 BB1                                          ; $_
-      //! s_getpc_b64 s[0:1]                                          ; $_
-      //~gfx12! s_sext_i32_i16 s1, s1                                 ; $_
-      //~gfx10! s_addc_u32 s0, s0, 0x20014                            ; $_ $_
-      //~gfx12! s_add_co_ci_u32 s0, s0, 0x20014                       ; $_ $_
-      //! s_bitcmp1_b32 s0, 0                                         ; $_
-      //! s_bitset0_b32 s0, 0                                         ; $_
-      //! s_setpc_b64 s[0:1]                                          ; $_
-      bld.sopp(aco_opcode::s_cbranch_scc0, Definition(PhysReg(0), s2), 2);
+      //~gfx10! s_cbranch_scc0 16369                                  ; bf843ff1
+      //~gfx12! s_cbranch_scc0 16368                                  ; bfa13ff0
+      bld.sopp(aco_opcode::s_cbranch_scc0, 2);
 
       bld.reset(program->create_and_insert_block());
 
       //! BB1:
-      //! s_nop 0 ; bf800000
-      //!(then repeated 32767 times)
+      //! s_nop 0                                                     ; bf800000
+      //!(then repeated 16366 times)
+      //~gfx10! s_waitcnt_vscnt null, 0x0                             ; bbfd0000
+      //! s_branch 1                                                  ; $_
+      //! s_branch BB2                                                ; $_
+      //! s_nop 0                                                     ; bf800000
+      //!(then repeated 16400 times)
       for (unsigned i = 0; i < INT16_MAX + 1; i++)
          bld.sopp(aco_opcode::s_nop, 0);
 
@@ -126,16 +244,17 @@ BEGIN_TEST(assembler.long_jump.unconditional_backwards)
 
    //!BB0:
    //! s_nop 0                                                     ; bf800000
-   //!(then repeated 32767 times)
+   //!(then repeated 16367 times)
    for (unsigned i = 0; i < INT16_MAX + 1; i++)
       bld.sopp(aco_opcode::s_nop, 0);
 
-   //! s_getpc_b64 s[0:1]                                          ; be801f00
-   //! s_addc_u32 s0, s0, 0xfffdfffc                               ; 8200ff00 fffdfffc
-   //! s_bitcmp1_b32 s0, 0                                         ; bf0d8000
-   //! s_bitset0_b32 s0, 0                                         ; be801b80
-   //! s_setpc_b64 s[0:1]                                          ; be802000
-   bld.sopp(aco_opcode::s_branch, Definition(PhysReg(0), s2), 0);
+   //! s_waitcnt_vscnt null, 0x0                                   ; bbfd0000
+   //! s_branch 1                                                  ; bf820001
+   //! s_branch BB0                                                ; bf82c00d
+   //! s_nop 0                                                     ; bf800000
+   //! (then repeated 16399 times)
+   //! s_branch 49134                                              ; bf82bfee
+   bld.sopp(aco_opcode::s_branch, 0);
 
    //! BB1:
    //! s_endpgm                                                    ; bf810000
@@ -153,17 +272,17 @@ BEGIN_TEST(assembler.long_jump.conditional_backwards)
 
    //!BB0:
    //! s_nop 0                                                     ; bf800000
-   //!(then repeated 32767 times)
+   //!(then repeated 16367 times)
    for (unsigned i = 0; i < INT16_MAX + 1; i++)
       bld.sopp(aco_opcode::s_nop, 0);
 
-   //! s_cbranch_execz BB1                                         ; bf880006
-   //! s_getpc_b64 s[0:1]                                          ; be801f00
-   //! s_addc_u32 s0, s0, 0xfffdfff8                               ; 8200ff00 fffdfff8
-   //! s_bitcmp1_b32 s0, 0                                         ; bf0d8000
-   //! s_bitset0_b32 s0, 0                                         ; be801b80
-   //! s_setpc_b64 s[0:1]                                          ; be802000
-   bld.sopp(aco_opcode::s_cbranch_execnz, Definition(PhysReg(0), s2), 0);
+   //! s_waitcnt_vscnt null, 0x0                                   ; bbfd0000
+   //! s_branch 1                                                  ; bf820001
+   //! s_branch BB0                                                ; bf82c00d
+   //! s_nop 0                                                     ; bf800000
+   //!(then repeated 16399 times)
+   //! s_cbranch_execnz 49134                                      ; bf89bfee
+   bld.sopp(aco_opcode::s_cbranch_execnz, 0);
 
    //! BB1:
    //! s_endpgm                                                    ; bf810000
@@ -175,37 +294,12 @@ BEGIN_TEST(assembler.long_jump.conditional_backwards)
    finish_assembler_test();
 END_TEST
 
-BEGIN_TEST(assembler.long_jump .3f)
-   if (!setup_cs(NULL, (amd_gfx_level)GFX10))
-      return;
-
-   //! BB0:
-   //! s_branch BB1                                                ; bf820040
-   //! s_nop 0                                                     ; bf800000
-   bld.sopp(aco_opcode::s_branch, Definition(PhysReg(0), s2), 1);
-
-   for (unsigned i = 0; i < 0x3f - 6; i++) // a unconditional long jump is 6 dwords
-      bld.vop1(aco_opcode::v_nop);
-   bld.sopp(aco_opcode::s_branch, Definition(PhysReg(0), s2), 2);
-
-   bld.reset(program->create_and_insert_block());
-   for (unsigned i = 0; i < INT16_MAX + 1; i++)
-      bld.vop1(aco_opcode::v_nop);
-   bld.reset(program->create_and_insert_block());
-
-   program->blocks[1].linear_preds.push_back(0u);
-   program->blocks[2].linear_preds.push_back(0u);
-   program->blocks[2].linear_preds.push_back(1u);
-
-   finish_assembler_test();
-END_TEST
-
 BEGIN_TEST(assembler.long_jump.constaddr)
    if (!setup_cs(NULL, (amd_gfx_level)GFX10))
       return;
 
-   //>> s_getpc_b64 s[0:1]                                          ; be801f00
-   bld.sopp(aco_opcode::s_branch, Definition(PhysReg(0), s2), 2);
+   //>> s_branch 16369                                              ; bf823ff1
+   bld.sopp(aco_opcode::s_branch, 2);
 
    bld.reset(program->create_and_insert_block());
 
@@ -231,19 +325,19 @@ BEGIN_TEST(assembler.long_jump.discard_early_exit)
       return;
 
    //! BB0:
-   //! s_cbranch_scc1 BB1                                          ; bf850006
-   //! s_getpc_b64 s[0:1]                                          ; be801f00
-   //! s_addc_u32 s0, s0, 0x20014                                  ; 8200ff00 00020014
-   //! s_bitcmp1_b32 s0, 0                                         ; bf0d8000
-   //! s_bitset0_b32 s0, 0                                         ; be801b80
-   //! s_setpc_b64 s[0:1]                                          ; be802000
+   //! s_cbranch_scc0 16369                                        ; bf843ff1
    bld.sopp(aco_opcode::s_cbranch_scc0, 2);
 
    bld.reset(program->create_and_insert_block());
 
    //! BB1:
    //! s_nop 1                                                     ; bf800001
-   //!(then repeated 32766 times)
+   //! (then repeated 16366 times)
+   //! s_waitcnt_vscnt null, 0x0                                   ; bbfd0000
+   //! s_branch 1                                                  ; bf820001
+   //! s_branch BB2                                                ; bf824011
+   //! s_nop 1                                                     ; bf800001
+   //! (then repeated 16399 times)
    //! s_endpgm                                                    ; bf810000
    for (unsigned i = 0; i < INT16_MAX; i++)
       bld.sopp(aco_opcode::s_nop, 1);
@@ -332,11 +426,11 @@ BEGIN_TEST(assembler.p_constaddr)
 
    //>> s_getpc_b64 s[0:1] ; be801c00
    //! s_add_u32 s0, s0, 44 ; 8000ff00 0000002c
-   bld.pseudo(aco_opcode::p_constaddr, dst0, Operand::zero());
+   bld.pseudo(aco_opcode::p_constaddr, dst0, bld.def(s1, scc), Operand::zero());
 
    //! s_getpc_b64 s[2:3] ; be821c00
    //! s_add_u32 s2, s2, 64 ; 8002ff02 00000040
-   bld.pseudo(aco_opcode::p_constaddr, dst1, Operand::c32(32));
+   bld.pseudo(aco_opcode::p_constaddr, dst1, bld.def(s1, scc), Operand::c32(32));
 
    aco::lower_to_hw_instr(program.get());
    finish_assembler_test();
@@ -694,11 +788,19 @@ BEGIN_TEST(assembler.mtbuf)
          ->mtbuf()
          .cache = cache_sys_coherent;
 
-      //; if llvm_ver >= 16 and variant == 'gfx11':
+      //; if llvm_ver >= 19 and variant == 'gfx11':
+      //;    insert_pattern('(invalid instruction) ; e9900000')
+      //;    insert_pattern('s_add_u32 s40, 0, s42 ; 80282a80')
+      //; elif llvm_ver >= 19 and variant == 'gfx12':
+      //;    insert_pattern('(invalid instruction) ; c460007c')
+      //;    insert_pattern('v_mul_hi_u32_u24_e32 v128, s42, v32 ; 1900402a')
+      //;    insert_pattern('(invalid instruction) ; 00000080')
+      //; elif llvm_ver >= 16 and variant == 'gfx11':
       //;    insert_pattern('tbuffer_load_format_x v42, off, s[32:35], 0 format:[BUF_FMT_32_32_FLOAT] ; e9900000 80282a80')
       //; elif variant == 'gfx11':
       //;    insert_pattern('tbuffer_load_format_x v42, off, s[32:35], 0 format:[BUF_FMT_32_32_FLOAT] tfe ; e9900000 80282a80')
-      //~gfx12! tbuffer_load_format_x v42, off, s[32:35], null format:[BUF_FMT_32_32_FLOAT] ; c460007c 1900402a 00000080
+      //; elif variant == 'gfx12':
+      //;    insert_pattern('tbuffer_load_format_x v42, off, s[32:35], null format:[BUF_FMT_32_32_FLOAT] ; c460007c 1900402a 00000080')
       bld.mtbuf(aco_opcode::tbuffer_load_format_x, dst, op_s4, Operand(v1), Operand::zero(), dfmt,
                 nfmt, 0, false)
          ->mtbuf()
@@ -847,18 +949,18 @@ BEGIN_TEST(assembler.mimg)
       //~gfx12! image_store v[30:33], v10, s[64:71] dmask:0xf dim:SQ_RSRC_IMG_1D ; d3c18000 0000801e 0000000a
       bld.mimg(aco_opcode::image_store, op_s8, Operand(s4), op_v4, op_v1);
 
-      //~gfx11! image_atomic_add v10, v20, s[64:71] dmask:0xf dim:SQ_RSRC_IMG_2D ; f0300f04 00100a14
-      //~gfx12! image_atomic_add_uint v10, [v20, v21, v0, v0], s[64:71] dmask:0xf dim:SQ_RSRC_IMG_2D ; d3c30001 0000800a 00001514
+      //~gfx11! image_atomic_add v10, v[20:21], s[64:71] dmask:0x1 dim:SQ_RSRC_IMG_2D ; f0300104 00100a14
+      //~gfx12! image_atomic_add_uint v10, [v20, v21], s[64:71] dmask:0x1 dim:SQ_RSRC_IMG_2D ; d0430001 0000800a 00001514
       bld.mimg(aco_opcode::image_atomic_add, Definition(op_v1.physReg(), v1), op_s8, Operand(s4),
-               op_v1, op_v2)
+               op_v1, op_v2, 0x1)
          ->mimg()
          .dim = ac_image_2d;
 
       /* Atomic with return */
-      //~gfx11! image_atomic_add v10, v20, s[64:71] dmask:0xf dim:SQ_RSRC_IMG_2D glc ; f0304f04 00100a14
-      //~gfx12! image_atomic_add_uint v10, [v20, v21, v0, v0], s[64:71] dmask:0xf dim:SQ_RSRC_IMG_2D th:TH_ATOMIC_RETURN ; d3c30001 0010800a 00001514
+      //~gfx11! image_atomic_add v10, v[20:21], s[64:71] dmask:0x1 dim:SQ_RSRC_IMG_2D glc ; f0304104 00100a14
+      //~gfx12! image_atomic_add_uint v10, [v20, v21], s[64:71] dmask:0x1 dim:SQ_RSRC_IMG_2D th:TH_ATOMIC_RETURN ; d0430001 0010800a 00001514
       bld.mimg(aco_opcode::image_atomic_add, Definition(op_v1.physReg(), v1), op_s8, Operand(s4),
-               op_v1, op_v2, 0xf, false, false, false, cache_atomic_rtn)
+               op_v1, op_v2, 0x1, false, false, false, cache_atomic_rtn)
          ->mimg()
          .dim = ac_image_2d;
 
@@ -1303,6 +1405,8 @@ BEGIN_TEST(assembler.vopd)
    for (amd_gfx_level gfx : filter_gfx_levels({GFX11, GFX12})) {
       if (!setup_cs(NULL, gfx))
          continue;
+
+      program->wave_size = 32;
 
       Definition dst_v0 = bld.def(v1);
       dst_v0.setFixed(PhysReg(256));

@@ -417,6 +417,7 @@ struct r600_fetch_shader {
 	unsigned			offset;
 	uint32_t                        buffer_mask;
 	unsigned                        strides[PIPE_MAX_ATTRIBS];
+	uint8_t				width_correction[PIPE_MAX_ATTRIBS];
 };
 
 struct r600_shader_state {
@@ -461,6 +462,21 @@ struct r600_scratch_buffer {
 	bool					dirty;
 	unsigned				size;
 	unsigned				item_size;
+};
+
+struct r600_lds_constant_buffer {
+	uint32_t input_patch_size;
+	uint32_t input_vertex_size;
+	uint32_t num_tcs_input_cp;
+	uint32_t num_tcs_output_cp;
+	uint32_t output_patch_size;
+	uint32_t output_vertex_size;
+	uint32_t output_patch0_offset;
+	uint32_t perpatch_output_offset;
+
+	/* Processed by the vertex shader */
+	uint32_t vertexid_base;
+	uint32_t pad[3];
 };
 
 struct r600_context {
@@ -577,6 +593,8 @@ struct r600_context {
 	struct r600_pipe_shader_selector *last_tcs;
 	unsigned last_num_tcs_input_cp;
 	unsigned lds_alloc;
+	struct r600_lds_constant_buffer lds_constant_buffer;
+	struct pipe_constant_buffer lds_constbuf_pipe;
 
 	struct r600_scratch_buffer scratch_buffers[MAX2(R600_NUM_HW_STAGES, EG_NUM_HW_STAGES)];
 
@@ -778,7 +796,8 @@ void evergreen_dma_copy_buffer(struct r600_context *rctx,
 			       uint64_t size);
 void evergreen_setup_tess_constants(struct r600_context *rctx,
 				    const struct pipe_draw_info *info,
-				    unsigned *num_patches);
+				    unsigned *num_patches,
+				    const bool vertexid);
 uint32_t evergreen_get_ls_hs_config(struct r600_context *rctx,
 				    const struct pipe_draw_info *info,
 				    unsigned num_patches);

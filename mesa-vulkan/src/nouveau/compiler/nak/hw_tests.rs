@@ -2,38 +2,18 @@
 // SPDX-License-Identifier: MIT
 
 use crate::api::{GetDebugFlags, ShaderBin, DEBUG};
-use crate::cfg::CFGBuilder;
 use crate::hw_runner::{Runner, CB0};
 use crate::ir::*;
 use crate::sm50::ShaderModel50;
 use crate::sm70::ShaderModel70;
 
 use acorn::Acorn;
+use compiler::bindings::MESA_SHADER_COMPUTE;
+use compiler::cfg::CFGBuilder;
 use nak_bindings::*;
+use std::mem::offset_of;
 use std::str::FromStr;
 use std::sync::OnceLock;
-
-// from https://internals.rust-lang.org/t/discussion-on-offset-of/7440/2
-macro_rules! offset_of {
-    ($Struct:path, $field:ident) => {{
-        // Using a separate function to minimize unhygienic hazards
-        // (e.g. unsafety of #[repr(packed)] field borrows).
-        // Uncomment `const` when `const fn`s can juggle pointers.
-
-        // const
-        fn offset() -> usize {
-            let u = std::mem::MaybeUninit::<$Struct>::uninit();
-            // Use pattern-matching to avoid accidentally going through Deref.
-            let &$Struct { $field: ref f, .. } = unsafe { &*u.as_ptr() };
-            let o =
-                (f as *const _ as usize).wrapping_sub(&u as *const _ as usize);
-            // Triple check that we are within `u` still.
-            assert!((0..=std::mem::size_of_val(&u)).contains(&o));
-            o
-        }
-        offset()
-    }};
-}
 
 struct RunSingleton {
     sm: Box<dyn ShaderModel + Send + Sync>,
@@ -76,7 +56,7 @@ pub struct TestShaderBuilder<'a> {
 }
 
 impl<'a> TestShaderBuilder<'a> {
-    pub fn new(sm: &'a dyn ShaderModel) -> TestShaderBuilder {
+    pub fn new(sm: &'a dyn ShaderModel) -> Self {
         let mut alloc = SSAValueAllocator::new();
         let mut label_alloc = LabelAllocator::new();
         let mut b = SSAInstrBuilder::new(sm, &mut alloc);
@@ -218,9 +198,15 @@ impl<'a> TestShaderBuilder<'a> {
             smem_size: 0,
         };
         let info = ShaderInfo {
+            max_warps_per_sm: 0,
             num_gprs: 0,
             num_control_barriers: 0,
             num_instrs: 0,
+            num_static_cycles: 0,
+            num_spills_to_mem: 0,
+            num_fills_from_mem: 0,
+            num_spills_to_reg: 0,
+            num_fills_from_reg: 0,
             slm_size: 0,
             max_crs_depth: 0,
             uses_global_mem: true,
@@ -455,7 +441,7 @@ pub fn test_foldable_op_with(
                 &bin,
                 invocations.try_into().unwrap(),
                 (comps * 4).try_into().unwrap(),
-                data.as_mut_ptr() as *mut std::os::raw::c_void,
+                data.as_mut_ptr().cast(),
                 data.len() * 4,
             )
             .unwrap();
@@ -742,6 +728,118 @@ fn test_op_isetp() {
                 x
             }
         });
+    }
+}
+
+#[test]
+fn test_op_lea() {
+    if RunSingleton::get().sm.sm() >= 70 {
+        let src_mods = [
+            (SrcMod::None, SrcMod::None),
+            (SrcMod::INeg, SrcMod::None),
+            (SrcMod::None, SrcMod::INeg),
+        ];
+
+        for (intermediate_mod, b_mod) in src_mods {
+            for shift in 0..32 {
+                for dst_high in [false, true] {
+                    let mut op = OpLea {
+                        dst: Dst::None,
+                        overflow: Dst::None,
+                        a: 0.into(),
+                        b: 0.into(),
+                        a_high: 0.into(),
+                        shift,
+                        dst_high,
+                        intermediate_mod,
+                    };
+                    op.b.src_mod = b_mod;
+
+                    test_foldable_op(op);
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn test_op_leax() {
+    if RunSingleton::get().sm.sm() >= 70 {
+        let src_mods = [
+            (SrcMod::None, SrcMod::None),
+            (SrcMod::BNot, SrcMod::None),
+            (SrcMod::None, SrcMod::BNot),
+        ];
+
+        for (intermediate_mod, b_mod) in src_mods {
+            for shift in 0..32 {
+                for dst_high in [false, true] {
+                    let mut op = OpLeaX {
+                        dst: Dst::None,
+                        overflow: Dst::None,
+                        a: 0.into(),
+                        b: 0.into(),
+                        a_high: 0.into(),
+                        carry: 0.into(),
+                        shift,
+                        dst_high,
+                        intermediate_mod,
+                    };
+                    op.b.src_mod = b_mod;
+
+                    test_foldable_op(op);
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn test_lea64() {
+    let run = RunSingleton::get();
+    let invocations = 100;
+
+    for shift in 0..64 {
+        let mut b = TestShaderBuilder::new(run.sm.as_ref());
+
+        let x = Src::from([
+            b.ld_test_data(0, MemType::B32)[0],
+            b.ld_test_data(4, MemType::B32)[0],
+        ]);
+
+        let y = Src::from([
+            b.ld_test_data(8, MemType::B32)[0],
+            b.ld_test_data(12, MemType::B32)[0],
+        ]);
+
+        let dst = b.lea64(x, y, shift);
+        b.st_test_data(16, MemType::B32, dst[0].into());
+        b.st_test_data(20, MemType::B32, dst[1].into());
+
+        let bin = b.compile();
+
+        let mut a = Acorn::new();
+        let mut data = Vec::new();
+        for _ in 0..invocations {
+            data.push([
+                get_iadd_int(&mut a),
+                get_iadd_int(&mut a),
+                get_iadd_int(&mut a),
+                get_iadd_int(&mut a),
+                0,
+                0,
+            ]);
+        }
+
+        run.run.run(&bin, &mut data).unwrap();
+
+        for d in &data {
+            let x = u64::from(d[0]) | (u64::from(d[1]) << 32);
+            let y = u64::from(d[2]) | (u64::from(d[3]) << 32);
+            let dst = (x << shift).wrapping_add(y);
+            assert_eq!(d[4], dst as u32);
+            assert_eq!(d[5], (dst >> 32) as u32);
+        }
     }
 }
 
@@ -1133,5 +1231,80 @@ fn test_shr64() {
             assert_eq!(d[3], dst as u32);
             assert_eq!(d[4], (dst >> 32) as u32);
         }
+    }
+}
+
+#[test]
+fn test_f2fp_pack_ab() {
+    let run = RunSingleton::get();
+    let mut b = TestShaderBuilder::new(run.sm.as_ref());
+
+    let srcs = SSARef::from([
+        b.ld_test_data(0, MemType::B32)[0],
+        b.ld_test_data(4, MemType::B32)[0],
+    ]);
+
+    let dst = b.alloc_ssa(RegFile::GPR, 1);
+    b.push_op(OpF2FP {
+        dst: dst.into(),
+        srcs: [srcs[0].into(), srcs[1].into()],
+        rnd_mode: FRndMode::NearestEven,
+    });
+    b.st_test_data(8, MemType::B32, dst[0].into());
+
+    let dst = b.alloc_ssa(RegFile::GPR, 1);
+    b.push_op(OpF2FP {
+        dst: dst.into(),
+        srcs: [srcs[0].into(), 2.0.into()],
+        rnd_mode: FRndMode::Zero,
+    });
+    b.st_test_data(12, MemType::B32, dst[0].into());
+
+    let bin = b.compile();
+
+    let zero = 0_f32.to_bits();
+    let one = 1_f32.to_bits();
+    let two = 2_f32.to_bits();
+    let complex = 1.4556_f32.to_bits();
+
+    let mut data = Vec::new();
+    data.push([one, two, 0, 0]);
+    data.push([one, zero, 0, 0]);
+    data.push([complex, zero, 0, 0]);
+    run.run.run(&bin, &mut data).unwrap();
+
+    // { 1.0fp16, 2.0fp16 }
+    assert_eq!(data[0][2], 0x3c004000);
+    // { 1.0fp16, 2.0fp16 }
+    assert_eq!(data[0][3], 0x3c004000);
+    // { 1.0fp16, 0.0fp16 }
+    assert_eq!(data[1][2], 0x3c000000);
+    // { 1.0fp16, 0.0fp16 }
+    assert_eq!(data[1][3], 0x3c004000);
+    // { 1.456fp16, 0.0fp16 }
+    assert_eq!(data[2][2], 0x3dd30000);
+    // { 1.455fp16, 0.0fp16 }
+    assert_eq!(data[2][3], 0x3dd24000);
+}
+
+#[test]
+pub fn test_gpr_limit_from_local_size() {
+    let run = RunSingleton::get();
+    let b = TestShaderBuilder::new(run.sm.as_ref());
+    let mut bin = b.compile();
+
+    for local_size in 1..=1024 {
+        let info = &mut bin.bin.info;
+        let cs_info = unsafe {
+            assert_eq!(info.stage, MESA_SHADER_COMPUTE);
+            &mut info.__bindgen_anon_1.cs
+        };
+        cs_info.local_size = [local_size, 1, 1];
+        let num_gprs = gpr_limit_from_local_size(&cs_info.local_size);
+        info.num_gprs = num_gprs.try_into().unwrap();
+
+        run.run.run::<u8>(&bin, &mut [0; 4096]).unwrap_or_else(|_| {
+            panic!("Failed with local_size {local_size}, num_gprs {num_gprs}")
+        });
     }
 }

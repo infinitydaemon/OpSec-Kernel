@@ -773,37 +773,6 @@ static const char* r600_get_name(struct pipe_screen* pscreen)
 	return rscreen->renderer_string;
 }
 
-static float r600_get_paramf(struct pipe_screen* pscreen,
-			     enum pipe_capf param)
-{
-	switch (param) {
-	case PIPE_CAPF_MIN_LINE_WIDTH:
-	case PIPE_CAPF_MIN_LINE_WIDTH_AA:
-	case PIPE_CAPF_MIN_POINT_SIZE:
-	case PIPE_CAPF_MIN_POINT_SIZE_AA:
-		return 1;
-
-	case PIPE_CAPF_POINT_SIZE_GRANULARITY:
-	case PIPE_CAPF_LINE_WIDTH_GRANULARITY:
-		return 0.1;
-
-	case PIPE_CAPF_MAX_LINE_WIDTH:
-	case PIPE_CAPF_MAX_LINE_WIDTH_AA:
-	case PIPE_CAPF_MAX_POINT_SIZE:
-	case PIPE_CAPF_MAX_POINT_SIZE_AA:
-         return 8191.0f;
-	case PIPE_CAPF_MAX_TEXTURE_ANISOTROPY:
-		return 16.0f;
-	case PIPE_CAPF_MAX_TEXTURE_LOD_BIAS:
-		return 16.0f;
-    case PIPE_CAPF_MIN_CONSERVATIVE_RASTER_DILATE:
-    case PIPE_CAPF_MAX_CONSERVATIVE_RASTER_DILATE:
-    case PIPE_CAPF_CONSERVATIVE_RASTER_DILATE_GRANULARITY:
-        return 0.0f;
-	}
-	return 0.0f;
-}
-
 static int r600_get_video_param(struct pipe_screen *screen,
 				enum pipe_video_profile profile,
 				enum pipe_video_entrypoint entrypoint,
@@ -817,7 +786,7 @@ static int r600_get_video_param(struct pipe_screen *screen,
 	case PIPE_VIDEO_CAP_MAX_WIDTH:
 	case PIPE_VIDEO_CAP_MAX_HEIGHT:
 		return vl_video_buffer_max_size(screen);
-	case PIPE_VIDEO_CAP_PREFERED_FORMAT:
+	case PIPE_VIDEO_CAP_PREFERRED_FORMAT:
 		return PIPE_FORMAT_NV12;
 	case PIPE_VIDEO_CAP_PREFERS_INTERLACED:
 		return false;
@@ -878,161 +847,6 @@ const char *r600_get_llvm_processor_name(enum radeon_family family)
 	default:
 		return "";
 	}
-}
-
-static unsigned get_max_threads_per_block(struct r600_common_screen *screen,
-					  enum pipe_shader_ir ir_type)
-{
-	if (ir_type != PIPE_SHADER_IR_TGSI &&
-	    ir_type != PIPE_SHADER_IR_NIR)
-		return 256;
-	if (screen->gfx_level >= EVERGREEN)
-		return 1024;
-	return 256;
-}
-
-static int r600_get_compute_param(struct pipe_screen *screen,
-        enum pipe_shader_ir ir_type,
-        enum pipe_compute_cap param,
-        void *ret)
-{
-	struct r600_common_screen *rscreen = (struct r600_common_screen *)screen;
-
-	//TODO: select these params by asic
-	switch (param) {
-	case PIPE_COMPUTE_CAP_IR_TARGET: {
-		const char *gpu;
-		const char *triple = "r600--";
-		gpu = r600_get_llvm_processor_name(rscreen->family);
-		if (ret) {
-			sprintf(ret, "%s-%s", gpu, triple);
-		}
-		/* +2 for dash and terminating NIL byte */
-		return (strlen(triple) + strlen(gpu) + 2) * sizeof(char);
-	}
-	case PIPE_COMPUTE_CAP_GRID_DIMENSION:
-		if (ret) {
-			uint64_t *grid_dimension = ret;
-			grid_dimension[0] = 3;
-		}
-		return 1 * sizeof(uint64_t);
-
-	case PIPE_COMPUTE_CAP_MAX_GRID_SIZE:
-		if (ret) {
-			uint64_t *grid_size = ret;
-			grid_size[0] = 65535;
-			grid_size[1] = 65535;
-			grid_size[2] = 65535;
-		}
-		return 3 * sizeof(uint64_t) ;
-
-	case PIPE_COMPUTE_CAP_MAX_BLOCK_SIZE:
-		if (ret) {
-			uint64_t *block_size = ret;
-			unsigned threads_per_block = get_max_threads_per_block(rscreen, ir_type);
-			block_size[0] = threads_per_block;
-			block_size[1] = threads_per_block;
-			block_size[2] = threads_per_block;
-		}
-		return 3 * sizeof(uint64_t);
-
-	case PIPE_COMPUTE_CAP_MAX_THREADS_PER_BLOCK:
-		if (ret) {
-			uint64_t *max_threads_per_block = ret;
-			*max_threads_per_block = get_max_threads_per_block(rscreen, ir_type);
-		}
-		return sizeof(uint64_t);
-	case PIPE_COMPUTE_CAP_ADDRESS_BITS:
-		if (ret) {
-			uint32_t *address_bits = ret;
-			address_bits[0] = 32;
-		}
-		return 1 * sizeof(uint32_t);
-
-	case PIPE_COMPUTE_CAP_MAX_GLOBAL_SIZE:
-		if (ret) {
-			uint64_t *max_global_size = ret;
-			uint64_t max_mem_alloc_size;
-
-			r600_get_compute_param(screen, ir_type,
-				PIPE_COMPUTE_CAP_MAX_MEM_ALLOC_SIZE,
-				&max_mem_alloc_size);
-
-			/* In OpenCL, the MAX_MEM_ALLOC_SIZE must be at least
-			 * 1/4 of the MAX_GLOBAL_SIZE.  Since the
-			 * MAX_MEM_ALLOC_SIZE is fixed for older kernels,
-			 * make sure we never report more than
-			 * 4 * MAX_MEM_ALLOC_SIZE.
-			 */
-			*max_global_size = MIN2(4 * max_mem_alloc_size,
-						rscreen->info.max_heap_size_kb * 1024ull);
-		}
-		return sizeof(uint64_t);
-
-	case PIPE_COMPUTE_CAP_MAX_LOCAL_SIZE:
-		if (ret) {
-			uint64_t *max_local_size = ret;
-			/* Value reported by the closed source driver. */
-			*max_local_size = 32768;
-		}
-		return sizeof(uint64_t);
-
-	case PIPE_COMPUTE_CAP_MAX_INPUT_SIZE:
-		if (ret) {
-			uint64_t *max_input_size = ret;
-			/* Value reported by the closed source driver. */
-			*max_input_size = 1024;
-		}
-		return sizeof(uint64_t);
-
-	case PIPE_COMPUTE_CAP_MAX_MEM_ALLOC_SIZE:
-		if (ret) {
-			uint64_t *max_mem_alloc_size = ret;
-
-			*max_mem_alloc_size = (rscreen->info.max_heap_size_kb / 4) * 1024ull;
-		}
-		return sizeof(uint64_t);
-
-	case PIPE_COMPUTE_CAP_MAX_CLOCK_FREQUENCY:
-		if (ret) {
-			uint32_t *max_clock_frequency = ret;
-			*max_clock_frequency = rscreen->info.max_gpu_freq_mhz;
-		}
-		return sizeof(uint32_t);
-
-	case PIPE_COMPUTE_CAP_MAX_COMPUTE_UNITS:
-		if (ret) {
-			uint32_t *max_compute_units = ret;
-			*max_compute_units = rscreen->info.num_cu;
-		}
-		return sizeof(uint32_t);
-
-	case PIPE_COMPUTE_CAP_IMAGES_SUPPORTED:
-		if (ret) {
-			uint32_t *images_supported = ret;
-			*images_supported = 0;
-		}
-		return sizeof(uint32_t);
-	case PIPE_COMPUTE_CAP_MAX_PRIVATE_SIZE:
-		break; /* unused */
-	case PIPE_COMPUTE_CAP_SUBGROUP_SIZES:
-		if (ret) {
-			uint32_t *subgroup_size = ret;
-			*subgroup_size = r600_wavefront_size(rscreen->family);
-		}
-		return sizeof(uint32_t);
-	case PIPE_COMPUTE_CAP_MAX_VARIABLE_THREADS_PER_BLOCK:
-		if (ret) {
-			uint64_t *max_variable_threads_per_block = ret;
-			*max_variable_threads_per_block = 0;
-		}
-		return sizeof(uint64_t);
-        case PIPE_COMPUTE_CAP_MAX_SUBGROUPS:
-           return 0;
-	}
-
-        fprintf(stderr, "unknown PIPE_COMPUTE_CAP %d\n", param);
-        return 0;
 }
 
 static uint64_t r600_get_timestamp(struct pipe_screen *screen)
@@ -1264,9 +1078,7 @@ bool r600_common_screen_init(struct r600_common_screen *rscreen,
 	rscreen->b.get_vendor = r600_get_vendor;
 	rscreen->b.get_device_vendor = r600_get_device_vendor;
 	rscreen->b.get_disk_shader_cache = r600_get_disk_shader_cache;
-	rscreen->b.get_compute_param = r600_get_compute_param;
 	rscreen->b.get_screen_fd = r600_get_screen_fd;
-	rscreen->b.get_paramf = r600_get_paramf;
 	rscreen->b.get_timestamp = r600_get_timestamp;
 	rscreen->b.get_compiler_options = r600_get_compiler_options;
 	rscreen->b.fence_finish = r600_fence_finish;
@@ -1381,11 +1193,9 @@ bool r600_common_screen_init(struct r600_common_screen *rscreen,
 		 */
 		.max_unroll_iterations = 255,
 		.lower_interpolate_at = true,
-		.vectorize_io = true,
 		.has_umad24 = true,
 		.has_umul24 = true,
 		.has_fmulz = true,
-		.use_interpolated_input_intrinsics = true,
 		.has_fsub = true,
 		.has_isub = true,
 		.has_find_msb_rev = true,
@@ -1397,13 +1207,14 @@ bool r600_common_screen_init(struct r600_common_screen *rscreen,
 		.lower_ufind_msb = true,
 		.lower_to_scalar = true,
 		.lower_to_scalar_filter = r600_lower_to_scalar_instr_filter,
-		.linker_ignore_precision = true,
 		.lower_fpow = true,
 		.lower_int64_options = ~0,
 		.lower_cs_local_index_to_id = true,
 		.lower_uniforms_to_ubo = true,
 		.lower_image_offset_to_range_base = 1,
 		.vectorize_tess_levels = 1,
+		.io_options = nir_io_mediump_is_32bit,
+		.vertex_id_zero_based = rscreen->info.gfx_level >= EVERGREEN,
 	};
 
 	rscreen->nir_options = nir_options;
@@ -1439,6 +1250,8 @@ bool r600_common_screen_init(struct r600_common_screen *rscreen,
 
         rscreen->nir_options_fs = rscreen->nir_options;
 	rscreen->nir_options_fs.lower_all_io_to_temps = true;
+	rscreen->nir_options.support_indirect_inputs = (uint8_t)BITFIELD_MASK(PIPE_SHADER_TYPES);
+	rscreen->nir_options.support_indirect_outputs = (uint8_t)BITFIELD_MASK(PIPE_SHADER_TYPES);
 
 	return true;
 }

@@ -9,10 +9,14 @@
 #include "nouveau_context.h"
 #include "nouveau_device.h"
 
+#if !defined(ANDROID_STRICT)
 #include <xf86drm.h>
+#endif
 #include "drm-uapi/nouveau_drm.h"
 
 #define DRM_RS_IOCTL(FOO) \
-   static const unsigned long DRM_RS_IOCTL_##FOO = DRM_IOCTL_##FOO
+   DRM_RS_IOCTL_##FOO = DRM_IOCTL_##FOO
 
-DRM_RS_IOCTL(NOUVEAU_EXEC);
+enum ENUM_PACKED drm_rs_ioctls {
+   DRM_RS_IOCTL(NOUVEAU_EXEC),
+};

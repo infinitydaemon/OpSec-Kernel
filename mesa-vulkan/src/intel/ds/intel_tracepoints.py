@@ -41,16 +41,26 @@ def define_tracepoints(args):
     from u_trace import TracepointArgStruct as ArgStruct
 
     Header('intel_driver_ds.h', scope=HeaderScope.SOURCE)
+    Header('vulkan/vulkan_core.h', scope=HeaderScope.SOURCE|HeaderScope.PERFETTO)
     Header('blorp/blorp_priv.h', scope=HeaderScope.HEADER)
     Header('ds/intel_driver_ds.h', scope=HeaderScope.HEADER)
 
     def begin_end_tp(name, tp_args=[], tp_struct=None, tp_print=None,
                      tp_default_enabled=True, end_pipelined=True,
-                     compute=False,
+                     compute=False, repeat_last=False,
                      need_cs_param=False):
         global intel_default_tps
         if tp_default_enabled:
             intel_default_tps.append(name)
+
+        # Preprocess arguments to handle display_as_hex
+        processed_args = []
+        for arg in tp_args:
+            # Manually handle display_as_hex by modifying the format
+            if "hash" in arg.var:
+                arg = Arg(type=arg.type, var=arg.var, c_format='%#x')  # Convert to hex format
+            processed_args.append(arg)
+
         Tracepoint('intel_begin_{0}'.format(name),
                    toggle_name=name,
                    tp_perfetto='intel_ds_begin_{0}'.format(name),
@@ -58,12 +68,14 @@ def define_tracepoints(args):
         tp_flags = []
         if end_pipelined:
             if compute:
-                tp_flags.append('INTEL_DS_TRACEPOINT_FLAG_END_OF_PIPE_CS')
+                tp_flags.append('INTEL_DS_TRACEPOINT_FLAG_END_CS')
+            elif repeat_last:
+                tp_flags.append('INTEL_DS_TRACEPOINT_FLAG_REPEAST_LAST')
             else:
                 tp_flags.append('INTEL_DS_TRACEPOINT_FLAG_END_OF_PIPE')
         Tracepoint('intel_end_{0}'.format(name),
                    toggle_name=name,
-                   args=tp_args,
+                   args=processed_args,
                    tp_struct=tp_struct,
                    tp_perfetto='intel_ds_end_{0}'.format(name),
                    tp_print=tp_print,
@@ -78,10 +90,9 @@ def define_tracepoints(args):
 
     # Annotations for Queue(Begin|End)DebugUtilsLabelEXT
     begin_end_tp('queue_annotation',
-                 tp_args=[ArgStruct(type='unsigned', var='len'),
-                          ArgStruct(type='const char *', var='str'),],
-                 tp_struct=[Arg(type='uint8_t', name='dummy', var='0', c_format='%hhu'),
-                            Arg(type='char', name='str', var='str', c_format='%s', length_arg='len + 1', copy_func='strncpy'),],
+                 tp_args=[Arg(type='unsigned', var='len'),
+                          Arg(type='str', var='str', c_format='%s', length_arg='len + 1', copy_func='strncpy'),],
+                 tp_struct=[Arg(type='uint8_t', name='dummy', var='0')],
                  end_pipelined=False,
                  need_cs_param=True)
 
@@ -97,10 +108,9 @@ def define_tracepoints(args):
 
     # Annotations for Cmd(Begin|End)DebugUtilsLabelEXT
     begin_end_tp('cmd_buffer_annotation',
-                 tp_args=[ArgStruct(type='unsigned', var='len'),
-                          ArgStruct(type='const char *', var='str'),],
-                 tp_struct=[Arg(type='uint8_t', name='dummy', var='0', c_format='%hhu'),
-                            Arg(type='char', name='str', var='str', c_format='%s', length_arg='len + 1', copy_func='strncpy'),],
+                 tp_args=[Arg(type='unsigned', var='len'),
+                          Arg(type='str', var='str', c_format='%s', length_arg='len + 1', copy_func='strncpy'),],
+                 tp_struct=[Arg(type='uint8_t', name='dummy', var='0'),],
                  end_pipelined=True)
 
     # Transform feedback, only for Anv
@@ -150,39 +160,66 @@ def define_tracepoints(args):
 
     # Various draws/dispatch, Anv & Iris
     begin_end_tp('draw',
-                 tp_args=[Arg(type='uint32_t', var='count', c_format='%u')])
+                 tp_args=[Arg(type='uint32_t', var='count', c_format='%u'),
+                          Arg(type='uint32_t', var='vs_hash', c_format='%u'),
+                          Arg(type='uint32_t', var='fs_hash', c_format='%u')])
     begin_end_tp('draw_multi',
-                 tp_args=[Arg(type='uint32_t', var='count', c_format='%u'),])
+                 tp_args=[Arg(type='uint32_t', var='count', c_format='%u'),
+                          Arg(type='uint32_t', var='vs_hash', c_format='%u'),
+                          Arg(type='uint32_t', var='fs_hash', c_format='%u')])
     begin_end_tp('draw_indexed',
-                 tp_args=[Arg(type='uint32_t', var='count', c_format='%u'),])
+                 tp_args=[Arg(type='uint32_t', var='count', c_format='%u'),
+                          Arg(type='uint32_t', var='vs_hash', c_format='%u'),
+                          Arg(type='uint32_t', var='fs_hash', c_format='%u')])
     begin_end_tp('draw_indexed_multi',
-                 tp_args=[Arg(type='uint32_t', var='count', c_format='%u'),])
+                 tp_args=[Arg(type='uint32_t', var='count', c_format='%u'),
+                          Arg(type='uint32_t', var='vs_hash', c_format='%u'),
+                          Arg(type='uint32_t', var='fs_hash', c_format='%u')])
     begin_end_tp('draw_indirect_byte_count',
-                 tp_args=[Arg(type='uint32_t', var='instance_count', c_format='%u'),])
+                 tp_args=[Arg(type='uint32_t', var='instance_count', c_format='%u'),
+                          Arg(type='uint32_t', var='vs_hash', c_format='%u'),
+                          Arg(type='uint32_t', var='fs_hash', c_format='%u')])
     begin_end_tp('draw_indirect',
-                 tp_args=[Arg(type='uint32_t', var='draw_count', c_format='%u'),])
+                 tp_args=[Arg(type='uint32_t', var='draw_count', c_format='%u'),
+                          Arg(type='uint32_t', var='vs_hash', c_format='%u'),
+                          Arg(type='uint32_t', var='fs_hash', c_format='%u')])
     begin_end_tp('draw_indexed_indirect',
-                 tp_args=[Arg(type='uint32_t', var='draw_count', c_format='%u'),])
+                 tp_args=[Arg(type='uint32_t', var='draw_count', c_format='%u'),
+                          Arg(type='uint32_t', var='vs_hash', c_format='%u'),
+                          Arg(type='uint32_t', var='fs_hash', c_format='%u')])
     begin_end_tp('draw_indirect_count',
-                 tp_args=[Arg(type='uint32_t', var='max_draw_count', c_format='%u'),])
+                 tp_args=[Arg(type='uint32_t', var='draw_count', c_format='%u',
+                              is_indirect=True),
+                          Arg(type='uint32_t', var='vs_hash', c_format='%u'),
+                          Arg(type='uint32_t', var='fs_hash', c_format='%u')])
     begin_end_tp('draw_indexed_indirect_count',
-                 tp_args=[Arg(type='uint32_t', var='max_draw_count', c_format='%u'),])
+                 tp_args=[Arg(type='uint32_t', var='draw_count', c_format='%u',
+                              is_indirect=True),
+                          Arg(type='uint32_t', var='vs_hash', c_format='%u'),
+                          Arg(type='uint32_t', var='fs_hash', c_format='%u')])
 
     begin_end_tp('draw_mesh',
                  tp_args=[Arg(type='uint32_t', var='group_x', c_format='%u'),
                           Arg(type='uint32_t', var='group_y', c_format='%u'),
-                          Arg(type='uint32_t', var='group_z', c_format='%u'),],
-                 tp_print=['group=%ux%ux%u', '__entry->group_x', '__entry->group_y', '__entry->group_z'])
+                          Arg(type='uint32_t', var='group_z', c_format='%u'),])
     begin_end_tp('draw_mesh_indirect',
                  tp_args=[Arg(type='uint32_t', var='draw_count', c_format='%u'),])
     begin_end_tp('draw_mesh_indirect_count',
-                 tp_args=[Arg(type='uint32_t', var='max_draw_count', c_format='%u'),])
+                 tp_args=[Arg(type='uint32_t', var='draw_count', c_format='%u',
+                              is_indirect=True),])
 
     begin_end_tp('compute',
                  tp_args=[Arg(type='uint32_t', var='group_x', c_format='%u'),
                           Arg(type='uint32_t', var='group_y', c_format='%u'),
-                          Arg(type='uint32_t', var='group_z', c_format='%u'),],
-                 tp_print=['group=%ux%ux%u', '__entry->group_x', '__entry->group_y', '__entry->group_z'],
+                          Arg(type='uint32_t', var='group_z', c_format='%u'),
+                          Arg(type='uint32_t', var='cs_hash', c_format='%u')],
+                 compute=True)
+
+    begin_end_tp('compute_indirect',
+                 tp_args=[ArgStruct(type='VkDispatchIndirectCommand', var='size',
+                          is_indirect=True, c_format="%ux%ux%u",
+                          fields=['x', 'y', 'z']),
+                          Arg(type='uint32_t', var='cs_hash', c_format='%u')],
                  compute=True)
 
     # Used to identify copies generated by utrace
@@ -193,12 +230,18 @@ def define_tracepoints(args):
                  need_cs_param=True)
 
     begin_end_tp('as_build')
+    begin_end_tp('as_build_leaves', repeat_last=True)
+    begin_end_tp('as_morton_generate', repeat_last=True)
+    begin_end_tp('as_morton_sort', repeat_last=True)
+    begin_end_tp('as_lbvh_build_internal', repeat_last=True)
+    begin_end_tp('as_ploc_build_internal', repeat_last=True)
+    begin_end_tp('as_encode', repeat_last=True)
+    begin_end_tp('as_copy', repeat_last=True)
 
     begin_end_tp('rays',
                  tp_args=[Arg(type='uint32_t', var='group_x', c_format='%u'),
                           Arg(type='uint32_t', var='group_y', c_format='%u'),
                           Arg(type='uint32_t', var='group_z', c_format='%u'),],
-                 tp_print=['group=%ux%ux%u', '__entry->group_x', '__entry->group_y', '__entry->group_z'],
                  compute=True)
 
     def flag_bits(args):

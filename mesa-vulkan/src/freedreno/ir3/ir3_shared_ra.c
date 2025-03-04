@@ -1,25 +1,7 @@
 /*
- * Copyright (C) 2021 Valve Corporation
- * Copyright (C) 2014 Rob Clark <robclark@freedesktop.org>
- *
- * Permission is hereby granted, free of charge, to any person obtaining a
- * copy of this software and associated documentation files (the "Software"),
- * to deal in the Software without restriction, including without limitation
- * the rights to use, copy, modify, merge, publish, distribute, sublicense,
- * and/or sell copies of the Software, and to permit persons to whom the
- * Software is furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice (including the next
- * paragraph) shall be included in all copies or substantial portions of the
- * Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
- * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
- * SOFTWARE.
+ * Copyright © 2021 Valve Corporation
+ * Copyright © 2014 Rob Clark <robclark@freedesktop.org>
+ * SPDX-License-Identifier: MIT
  */
 
 #include "ir3_ra.h"
@@ -47,6 +29,11 @@ struct ra_interval {
 
    struct rb_node physreg_node;
    physreg_t physreg_start, physreg_end;
+
+   /* If this interval was spilled, the original physreg_start before spilling.
+    * Used when reloading live outs.
+    */
+   physreg_t physreg_start_orig;
 
    /* Where the shared register is spilled to. If there were no uses when it's
     * spilled it could be the original defining instruction.
@@ -303,8 +290,45 @@ static bool
 get_reg_specified(struct ra_ctx *ctx, struct ir3_register *reg, physreg_t physreg)
 {
    for (unsigned i = 0; i < reg_size(reg); i++) {
-      if (!BITSET_TEST(ctx->available, physreg + i))
-         return false;
+      physreg_t cur_physreg = physreg + i;
+
+      if (!BITSET_TEST(ctx->available, cur_physreg)) {
+         /* If physreg is unavailable, we might still be able to use it if the
+          * value it holds is in the same merge set at the same offset as the
+          * value in reg.
+          */
+         if (!reg->merge_set) {
+            return false;
+         }
+
+         /* Find the interval for the current element of physreg. */
+         struct ra_interval *interval = ra_ctx_search_right(ctx, cur_physreg);
+
+         /* It must exist since the physreg is unavailable. */
+         assert(interval->physreg_start <= cur_physreg);
+
+         struct ir3_register *live_reg = interval->interval.reg;
+
+         if (reg->merge_set != live_reg->merge_set) {
+            return false;
+         }
+
+         /* We want to check if the currently live value at physreg+i (live_reg)
+          * is at the same offset as the new value (reg+i) in their shared merge
+          * set. However, we cannot simply compare their merge set offsets as
+          * live_reg may be larger than reg+i (e.g., a collect) and reg+i may
+          * not be at the start of live_reg's interval. To account for this, we
+          * want to know the merge set offset delta between live_reg's value at
+          * physreg+i and the start of its interval. This always equals the
+          * delta between the physregs within intervals.
+          */
+         unsigned cur_merge_set_offset = reg->merge_set_offset + i;
+         unsigned interval_offset = cur_physreg - interval->physreg_start;
+         if (cur_merge_set_offset !=
+             live_reg->merge_set_offset + interval_offset) {
+            return false;
+         }
+      }
    }
 
    return true;
@@ -409,14 +433,13 @@ split(struct ir3_register *def, unsigned offset, struct ir3_instruction *before)
    }
 
    struct ir3_instruction *split =
-      ir3_instr_create(before->block, OPC_META_SPLIT, 1, 1);
+      ir3_instr_create_at(ir3_after_instr(before), OPC_META_SPLIT, 1, 1);
    split->split.off = offset;
    struct ir3_register *dst = __ssa_dst(split);
    struct ir3_register *src =
       ir3_src_create(split, INVALID_REG, def->flags & (IR3_REG_HALF | IR3_REG_SSA));
    src->wrmask = def->wrmask;
    src->def = def;
-   ir3_instr_move_after(split, before);
    return dst;
 }
 
@@ -431,12 +454,10 @@ extract(struct ir3_register *parent_def, unsigned offset, unsigned elems,
       return split(parent_def, offset, before);
 
    struct ir3_instruction *collect =
-      ir3_instr_create(before->block, OPC_META_COLLECT, 1, elems);
+      ir3_instr_create_at(ir3_after_instr(before), OPC_META_COLLECT, 1, elems);
    struct ir3_register *dst = __ssa_dst(collect);
    dst->flags |= parent_def->flags & IR3_REG_HALF;
    dst->wrmask = MASK(elems);
-
-   ir3_instr_move_after(collect, before);
 
    for (unsigned i = 0; i < elems; i++) {
       ir3_src_create(collect, INVALID_REG,
@@ -459,6 +480,7 @@ spill_interval_children(struct ra_interval *interval,
                                      interval->interval.reg->interval_start) /
                                     reg_elem_size(interval->interval.reg),
                                     reg_elems(child->interval.reg), before);
+         interval->physreg_start_orig = child->physreg_start;
       }
       spill_interval_children(child, before);
    }
@@ -487,7 +509,8 @@ spill_interval(struct ra_ctx *ctx, struct ra_interval *interval)
          before = last_phi_input;
       }
 
-      struct ir3_instruction *mov = ir3_instr_create(before->block, OPC_MOV, 1, 1);
+      struct ir3_instruction *mov =
+         ir3_instr_create_at(ir3_after_instr(before), OPC_MOV, 1, 1);
       mov->flags |= IR3_INSTR_SHARED_SPILL;
       struct ir3_register *dst = __ssa_dst(mov);
       dst->flags |= (interval->interval.reg->flags & IR3_REG_HALF);
@@ -500,8 +523,8 @@ spill_interval(struct ra_ctx *ctx, struct ra_interval *interval)
       mov->cat1.src_type = mov->cat1.dst_type =
          (interval->interval.reg->flags & IR3_REG_HALF) ? TYPE_U16 : TYPE_U32;
 
-      ir3_instr_move_after(mov, before);
       interval->spill_def = dst;
+      interval->physreg_start_orig = interval->physreg_start;
    }
 
    spill_interval_children(interval, interval->spill_def->instr);
@@ -711,15 +734,19 @@ reload_src(struct ra_ctx *ctx, struct ir3_instruction *instr,
    interval->physreg_end = best_reg + size;
    interval->needs_reload = true;
    ir3_reg_interval_insert(&ctx->reg_ctx, &interval->interval);
+
+   while (interval->interval.parent)
+      interval = ir3_reg_interval_to_ra_interval(interval->interval.parent);
+
    interval->src = true;
 }
 
 static void
-reload_interval(struct ra_ctx *ctx, struct ir3_instruction *instr,
-                struct ir3_block *block, struct ra_interval *interval)
+reload_interval(struct ra_ctx *ctx, struct ir3_cursor cursor,
+                struct ra_interval *interval)
 {
    struct ir3_register *def = interval->interval.reg;
-   struct ir3_instruction *mov = ir3_instr_create(block, OPC_MOV, 1, 1);
+   struct ir3_instruction *mov = ir3_instr_create_at(cursor, OPC_MOV, 1, 1);
    mov->flags |= IR3_INSTR_SHARED_SPILL;
    unsigned flags = IR3_REG_SHARED | (def->flags & IR3_REG_HALF);
    ir3_dst_create(mov, ra_physreg_to_num(interval->physreg_start, flags),
@@ -733,9 +760,6 @@ reload_interval(struct ra_ctx *ctx, struct ir3_instruction *instr,
    mov_src->wrmask = def->wrmask;
    mov->cat1.src_type = mov->cat1.dst_type =
       (def->flags & IR3_REG_HALF) ? TYPE_U16 : TYPE_U32;
-
-   if (instr)
-      ir3_instr_move_before(mov, instr);
 }
 
 static void
@@ -748,7 +772,7 @@ reload_src_finalize(struct ra_ctx *ctx, struct ir3_instruction *instr,
    if (!interval->needs_reload)
       return;
 
-   reload_interval(ctx, instr, instr->block, interval);
+   reload_interval(ctx, ir3_before_instr(instr), interval);
 
    interval->needs_reload = false;
 }
@@ -879,20 +903,41 @@ handle_dst(struct ra_ctx *ctx, struct ir3_instruction *instr,
       free_space(ctx, physreg, size);
    }
 
+   dst->num = ra_physreg_to_num(physreg, dst->flags);
+
+   /* Non-trivial collects (i.e., ones that will introduce moves because the
+    * sources don't line-up with the destination) may cause source intervals to
+    * get implicitly moved when they are inserted as children of the destination
+    * interval. Since we don't support moving intervals in shared RA, this may
+    * cause illegal register allocations. Prevent this by making sure
+    * non-trivial collects will not share a merge set with (and will not be a
+    * parent interval of) their components. Detect this by checking if a dst got
+    * a register assignment that does not correspond with the existing preferred
+    * reg of its merge set, as this might cause a future collect covering its
+    * interval to become non-trivial.
+    */
+   if (dst->merge_set && dst->merge_set->preferred_reg != (physreg_t)~0 &&
+       physreg != dst->merge_set->preferred_reg + dst->merge_set_offset) {
+      dst->merge_set = NULL;
+      dst->interval_start = ctx->live->interval_offset;
+      dst->interval_end = dst->interval_start + reg_size(dst);
+      ctx->live->interval_offset = dst->interval_end;
+   }
+
+   ra_update_affinity(reg_file_size(dst), dst, physreg);
    interval->physreg_start = physreg;
    interval->physreg_end = physreg + reg_size(dst);
-   dst->num = ra_physreg_to_num(physreg, dst->flags);
    ir3_reg_interval_insert(&ctx->reg_ctx, &interval->interval);
    d("insert dst %u physreg %u", dst->name, physreg);
 
    if (dst->tied) {
-      struct ir3_instruction *mov = ir3_instr_create(instr->block, OPC_META_PARALLEL_COPY, 1, 1);
+      struct ir3_instruction *mov = ir3_instr_create_at(
+         ir3_before_instr(instr), OPC_META_PARALLEL_COPY, 1, 1);
       unsigned flags = IR3_REG_SHARED | (dst->flags & IR3_REG_HALF);
       ir3_dst_create(mov, dst->num, flags)->wrmask = dst->wrmask;
       ir3_src_create(mov, dst->tied->num, flags)->wrmask = dst->wrmask;
       mov->cat1.src_type = mov->cat1.dst_type =
          (dst->flags & IR3_REG_HALF) ? TYPE_U16 : TYPE_U32;;
-      ir3_instr_move_before(mov, instr);
       dst->tied->num = dst->num;
    }
 }
@@ -958,14 +1003,13 @@ handle_split(struct ra_ctx *ctx, struct ir3_instruction *split)
 
    if (src_interval->spill_def) {
       struct ir3_instruction *spill_split =
-         ir3_instr_create(split->block, OPC_META_SPLIT, 1, 1);
+         ir3_instr_create_at(ir3_after_instr(split), OPC_META_SPLIT, 1, 1);
       struct ir3_register *dst = __ssa_dst(spill_split);
       struct ir3_register *src =
          ir3_src_create(spill_split, INVALID_REG, IR3_REG_SSA);
       src->def = src_interval->spill_def;
       src->wrmask = src_interval->spill_def->wrmask;
       spill_split->split.off = split->split.off;
-      ir3_instr_move_after(spill_split, split);
       dst_interval->spill_def = dst;
       list_del(&split->node);
       return;
@@ -1128,7 +1172,17 @@ reload_live_outs(struct ra_ctx *ctx, struct ir3_block *block)
       struct ra_interval *interval = &ctx->intervals[name];
       if (!interval->interval.inserted) {
          d("reloading %d at end of backedge", reg->name);
-         reload_interval(ctx, NULL, block, interval);
+
+         /* When this interval was spilled inside the loop, we probably chose a
+          * different physreg for it than the original physreg when it was
+          * defined outside the loop. Restore the original physreg so that we
+          * spill it correctly.
+          */
+         unsigned size = interval->physreg_end - interval->physreg_start;
+         interval->physreg_start = interval->physreg_start_orig;
+         interval->physreg_end = interval->physreg_start + size;
+
+         reload_interval(ctx, ir3_before_terminator(block), interval);
       }
    }
 }
@@ -1255,8 +1309,8 @@ lower_pcopy(struct ir3 *ir, struct ra_ctx *ctx)
                    * original shared->non-shared copy becomes a
                    * non-shared->non-shared copy).
                    */
-                  struct ir3_instruction *mov =
-                     ir3_instr_create(block, OPC_MOV, 1, 1);
+                  struct ir3_instruction *mov = ir3_instr_create_at(
+                     ir3_before_instr(instr), OPC_MOV, 1, 1);
                   mov->flags |= IR3_INSTR_SHARED_SPILL;
                   struct ir3_register *dst =
                      ir3_dst_create(mov, INVALID_REG, instr->dsts[i]->flags);
@@ -1272,7 +1326,6 @@ lower_pcopy(struct ir3 *ir, struct ra_ctx *ctx)
                      (mov->dsts[0]->flags & IR3_REG_HALF) ? TYPE_U16 : TYPE_U32;
                   instr->srcs[i]->flags = mov->dsts[0]->flags;
                   instr->srcs[i]->def = mov->dsts[0];
-                  ir3_instr_move_before(mov, instr);
                }
             }
 
@@ -1283,7 +1336,7 @@ lower_pcopy(struct ir3 *ir, struct ra_ctx *ctx)
                   /* non-shared->shared. Create a reload move.
                    */
                   struct ir3_instruction *mov =
-                     ir3_instr_create(block, OPC_MOV, 1, 1);
+                     ir3_instr_create_at(ir3_after_instr(instr), OPC_MOV, 1, 1);
                   mov->flags |= IR3_INSTR_SHARED_SPILL;
                   struct ir3_register *dst =
                      ir3_dst_create(mov, instr->dsts[i]->num,
@@ -1328,7 +1381,6 @@ lower_pcopy(struct ir3 *ir, struct ra_ctx *ctx)
                   instr->dsts[i] = instr->dsts[instr->dsts_count - 1];
                   instr->srcs_count--;
                   instr->dsts_count--;
-                  ir3_instr_move_after(mov, instr);
                   continue;
                }
 
@@ -1347,9 +1399,9 @@ lower_pcopy(struct ir3 *ir, struct ra_ctx *ctx)
             }
 
             if (non_shared_copies != 0) {
-               struct ir3_instruction *pcopy =
-                  ir3_instr_create(block, OPC_META_PARALLEL_COPY,
-                                   non_shared_copies, non_shared_copies);
+               struct ir3_instruction *pcopy = ir3_instr_create_at(
+                  ir3_before_terminator(block), OPC_META_PARALLEL_COPY,
+                  non_shared_copies, non_shared_copies);
 
                unsigned j = 0;
                for (unsigned i = 0; i < instr->dsts_count;) {

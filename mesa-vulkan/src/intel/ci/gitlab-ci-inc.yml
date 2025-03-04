@@ -19,11 +19,15 @@
         - src/intel/ci/$GPU_VERSION-fails.txt
         - src/intel/ci/$GPU_VERSION-flakes.txt
         - src/intel/ci/$GPU_VERSION-skips.txt
+        - src/intel/ci/$GPU_VERSION-slow-skips.txt
+        - src/intel/ci/$VK_DRIVER-skips.txt
+        - src/intel/ci/$GALLIUM_DRIVER-skips.txt
+        - src/intel/ci/$DRIVER_NAME-skips.txt
         - src/intel/ci/$PIGLIT_TRACES_FILE
       when: on_success
 
 .intel-common-manual-rules:
-  stage: intel
+  stage: intel-postmerge
   rules:
     - changes:
         *intel_common_file_list
@@ -33,19 +37,27 @@
   stage: intel
   rules:
     - !reference [.test, rules]
+    - !reference [.ondracka-farm-rules, rules]
     - !reference [.gl-rules, rules]
     - !reference [.intel-common-rules, rules]
     - changes: &i915g_file_list
-        - src/gallium/drivers/i915/**/*
+        - src/gallium/drivers/i915/*
         - src/gallium/winsys/i915/**/*
+        - src/gallium/drivers/i915/ci/$GPU_VERSION-fails.txt
+        - src/gallium/drivers/i915/ci/$GPU_VERSION-flakes.txt
+        - src/gallium/drivers/i915/ci/$GPU_VERSION-skips.txt
+        - src/gallium/drivers/i915/ci/deqp-$DEQP_SUITE.toml
+        - src/gallium/drivers/i915/ci/gitlab-ci.yml
       when: on_success
 
 .i915g-manual-rules:
-  stage: intel
+  stage: intel-postmerge
   extends: .no-auto-retry
   rules:
     - !reference [.test, rules]
+    - !reference [.ondracka-farm-manual-rules, rules]
     - !reference [.gl-manual-rules, rules]
+    - !reference [.intel-common-manual-rules, rules]
     - changes:
         *i915g_file_list
       when: manual
@@ -63,12 +75,13 @@
       when: on_success
 
 .crocus-manual-rules:
-  stage: intel
+  stage: intel-postmerge
   extends: .no-auto-retry
   rules:
     - !reference [.test, rules]
     - !reference [.anholt-farm-manual-rules, rules]
     - !reference [.gl-manual-rules, rules]
+    - !reference [.intel-common-manual-rules, rules]
     - changes:
         *crocus_file_list
       when: manual
@@ -87,12 +100,13 @@
       when: on_success
 
 .iris-manual-rules:
-  stage: intel
+  stage: intel-postmerge
   extends: .no-auto-retry
   rules:
     - !reference [.test, rules]
     - !reference [.collabora-farm-manual-rules, rules]
     - !reference [.gl-manual-rules, rules]
+    - !reference [.intel-common-manual-rules, rules]
     - changes:
         *iris_file_list
       when: manual
@@ -101,7 +115,7 @@
 # to do duplicate the files lists to set the job to manual (see
 # .performance-rules)
 .iris-rules-performance:
-  stage: intel
+  stage: performance
   extends: .no-auto-retry
   rules:
     - !reference [.test, rules]
@@ -114,7 +128,8 @@
   allow_failure: true # see comment in .performance-rules, which we don't inherit this line from.
   variables:
     JOB_PRIORITY: 40
-    S3_ARTIFACT_NAME: "mesa-x86_64-default-release"
+    LAVA_S3_ARTIFACT_NAME: mesa-x86_64-default-release
+    S3_ARTIFACT_NAME: mesa-python-ci-artifacts
   needs:
     - kernel+rootfs_x86_64
     - debian-release
@@ -132,7 +147,7 @@
       when: on_success
 
 .anv-manual-rules:
-  stage: intel
+  stage: intel-postmerge
   extends: .no-auto-retry
   rules:
     - !reference [.test, rules]
@@ -155,7 +170,7 @@
       when: on_success
 
 .hasvk-manual-rules:
-  stage: intel
+  stage: intel-postmerge
   extends: .no-auto-retry
   rules:
     - !reference [.test, rules]
@@ -175,7 +190,8 @@
     - !reference [.anv-rules, rules]
 
 .intel-manual-rules:
-  stage: intel
+  stage: intel-postmerge
+  extends: .no-auto-retry
   rules:
     - !reference [.test, rules]
     - !reference [.iris-manual-rules, rules]
@@ -188,9 +204,45 @@
     DEVICE_TYPE: acer-cb317-1h-c3z6-dedede
     FARM: collabora
     FDO_CI_CONCURRENT: 3
-    GPU_VERSION: iris-jsl
+    GPU_VERSION: anv-jsl
     HWCI_KERNEL_MODULES: i915
     RUNNER_TAG: mesa-ci-x86-64-lava-acer-cb317-1h-c3z6-dedede
+
+# Status: https://lava.collabora.dev/scheduler/device_type/acer-cbv514-1h-34uz-brya
+.lava-acer-cbv514-1h-34uz-brya:x86_64:
+  variables:
+    DEVICE_TYPE: acer-cbv514-1h-34uz-brya
+    FARM: collabora
+    FDO_CI_CONCURRENT: 9
+    GPU_VERSION: anv-adl
+    HWCI_KERNEL_MODULES: xe
+    RUNNER_TAG: mesa-ci-x86-64-lava-acer-cbv514-1h-34uz-brya
+    LAVA_CMDLINE: "i915.force_probe=!46b3 xe.force_probe=46b3"
+    INTEL_XE_IGNORE_EXPERIMENTAL_WARNING: 1
+
+# Status: https://lava.collabora.dev/scheduler/device_type/acer-chromebox-cxi5-brask
+.lava-acer-chromebox-cxi5-brask:x86_64:
+  variables:
+    DEVICE_TYPE: acer-chromebox-cxi5-brask
+    FARM: collabora
+    FDO_CI_CONCURRENT: 6
+    GPU_VERSION: anv-adl
+    HWCI_KERNEL_MODULES: xe
+    RUNNER_TAG: mesa-ci-x86-64-lava-acer-chromebox-cxi5-brask
+    LAVA_CMDLINE: "i915.force_probe=!46b3 xe.force_probe=46b3"
+    INTEL_XE_IGNORE_EXPERIMENTAL_WARNING: 1
+
+# Status: https://lava.collabora.dev/scheduler/device_type/acer-n20q11-r856ltn-p1s2-nissa
+.lava-acer-n20q11-r856ltn-p1s2-nissa:x86_64:
+  variables:
+    DEVICE_TYPE: acer-n20q11-r856ltn-p1s2-nissa
+    FARM: collabora
+    FDO_CI_CONCURRENT: 5
+    GPU_VERSION: anv-adl
+    HWCI_KERNEL_MODULES: xe
+    RUNNER_TAG: mesa-ci-x86-64-lava-acer-n20q11-r856ltn-p1s2-nissa
+    LAVA_CMDLINE: "i915.force_probe=!46d0 xe.force_probe=46d0"
+    INTEL_XE_IGNORE_EXPERIMENTAL_WARNING: 1
 
 # Status: https://lava.collabora.dev/scheduler/device_type/asus-C523NA-A20057-coral
 .lava-asus-C523NA-A20057-coral:x86_64:
@@ -215,7 +267,6 @@
 # Status: https://lava.collabora.dev/scheduler/device_type/acer-cp514-2h-1130g7-volteer
 .lava-acer-cp514-2h-1130g7-volteer:x86_64:
   variables:
-    BOOT_METHOD: depthcharge
     DEVICE_TYPE: acer-cp514-2h-1130g7-volteer
     FARM: collabora
     FDO_CI_CONCURRENT: 9
@@ -226,7 +277,6 @@
 # Status: https://lava.collabora.dev/scheduler/device_type/acer-cp514-2h-1160g7-volteer
 .lava-acer-cp514-2h-1160g7-volteer:x86_64:
   variables:
-    BOOT_METHOD: depthcharge
     DEVICE_TYPE: acer-cp514-2h-1160g7-volteer
     FARM: collabora
     FDO_CI_CONCURRENT: 9
@@ -265,6 +315,7 @@
     RUNNER_TAG: mesa-ci-x86-64-lava-dell-latitude-5400-8665U-sarien
 
 # Status: https://lava.collabora.dev/scheduler/device_type/asus-C436FA-Flip-hatch
+# Note: Reported they have too often network problems and fail to boot. Puff device is the alternative.
 .lava-asus-C436FA-Flip-hatch:x86_64:
   variables:
     DEVICE_TYPE: asus-C436FA-Flip-hatch
@@ -273,6 +324,15 @@
     GPU_VERSION: iris-cml
     HWCI_KERNEL_MODULES: i915
     RUNNER_TAG: mesa-ci-x86-64-lava-asus-C436FA-flip-hatch
+
+# Status: https://lava.collabora.dev/scheduler/device_type/acer-chromebox-cxi4-puff
+.lava-acer-chromebox-cxi4-puff:x86_64:
+  variables:
+    DEVICE_TYPE: acer-chromebox-cxi4-puff
+    FDO_CI_CONCURRENT: 9
+    GPU_VERSION: iris-cml
+    HWCI_KERNEL_MODULES: i915
+    RUNNER_TAG: mesa-ci-x86-64-lava-acer-chromebox-cxi4-puff
 
 
 .intel-common-test:
@@ -291,6 +351,8 @@
     - .anv-rules
   variables:
     DRIVER_NAME: anv
+    ANV_VIDEO_DECODE: "true"
+    ANV_VIDEO_ENCODE: "true"
 
 .iris-test:
   extends:
@@ -308,12 +370,9 @@
 .anv-angle-test:
   extends:
     - .anv-test
-    - .intel-rules # Note: Xorg uses iris, so depend on both GL and vulkan
+    - .test-angle
   variables:
     VK_DRIVER: intel
-    USE_ANGLE: 1
-    # ANGLE requires X11 running for some reason.
-    HWCI_START_XORG: 1
 
 ## Iris only
 .iris-apl-test:
@@ -345,8 +404,9 @@
 .iris-cml-test:
   extends:
     - .iris-test
-    - .iris-manual-rules    # Devices have too often network problems and fail to boot.
-    - .lava-asus-C436FA-Flip-hatch:x86_64
+    - .lava-acer-chromebox-cxi4-puff:x86_64
+  variables:
+    LAVA_FORCE_UART: 1
 
 .iris-whl-deqp:
   extends:
@@ -390,7 +450,8 @@
     HWCI_FREQ_MAX: "true"
     LAVA_TAGS: "cbg-0"
     # Ensure that we are using the release build artifact
-    S3_ARTIFACT_NAME: mesa-x86_64-default-release
+    LAVA_S3_ARTIFACT_NAME: mesa-x86_64-default-release
+    S3_ARTIFACT_NAME: mesa-python-ci-artifacts
 
 .iris-whl-traces-performance:
   extends:
@@ -407,6 +468,13 @@
     GPU_VERSION: intel-cml
 
 ## Intel (anv + iris)
+.intel-adl-test:
+  extends:
+    - .anv-test
+    - .intel-test
+  variables:
+    GPU_VERSION: intel-adl
+
 .intel-tgl-test:
   extends:
     - .anv-test

@@ -203,6 +203,28 @@ static uint64_t get_param(struct etna_device *dev, uint32_t core, uint32_t param
 	return req.value;
 }
 
+static void determine_halti(struct etna_gpu *gpu)
+{
+	struct etna_core_info *info = &gpu->info;
+
+	/* Figure out gross GPU architecture. See rnndb/common.xml for a specific
+	 * description of the differences. */
+	if (etna_core_has_feature(info, ETNA_FEATURE_HALTI5))
+		info->halti = 5; /* New GC7000/GC8x00  */
+	else if (etna_core_has_feature(info, ETNA_FEATURE_HALTI4))
+		info->halti = 4; /* Old GC7000/GC7400 */
+	else if (etna_core_has_feature(info, ETNA_FEATURE_HALTI3))
+		info->halti = 3; /* None? */
+	else if (etna_core_has_feature(info, ETNA_FEATURE_HALTI2))
+		info->halti = 2; /* GC2500/GC3000/GC5000/GC6400 */
+	else if (etna_core_has_feature(info, ETNA_FEATURE_HALTI1))
+		info->halti = 1; /* GC900/GC4000/GC7000UL */
+	else if (etna_core_has_feature(info, ETNA_FEATURE_HALTI0))
+		info->halti = 0; /* GC880/GC2000/GC7000TM */
+	else
+		info->halti = -1; /* GC7000nanolite / pre-GC2000 except GC880 */
+}
+
 struct etna_gpu *etna_gpu_new(struct etna_device *dev, unsigned int core)
 {
 	struct etna_gpu *gpu;
@@ -237,7 +259,17 @@ struct etna_gpu *etna_gpu_new(struct etna_device *dev, unsigned int core)
 	if (!core_info_okay) {
 		query_features_from_kernel(gpu);
 		query_limits_from_kernel(gpu);
+
+		/* GC3000 with the instruction cache feature has a incorrect instruction
+		 * limit encoded in HW (HWDB has the correct number). Fix this up so
+		 * other parts of the stack don't have to worry about this.
+		 */
+		if (etna_core_has_feature(&gpu->info, ETNA_FEATURE_INSTRUCTION_CACHE) &&
+		    gpu->info.gpu.max_instructions < 512)
+			gpu->info.gpu.max_instructions = 512;
 	}
+
+	determine_halti(gpu);
 
 	return gpu;
 fail:

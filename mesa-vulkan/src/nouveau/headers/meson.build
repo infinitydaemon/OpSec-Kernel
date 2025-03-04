@@ -15,6 +15,7 @@ nv_classes = [
   'clb197',
   'clb1c0',
   'clc097',
+  'clc197',
   'clc1b5',
   'cla0c0',
   'clc0c0',
@@ -70,9 +71,6 @@ executable(
 
 # Only generate Rust bindings for NVK
 if with_nouveau_vk
-  add_languages('rust', required: true)
-  rust = import('rust')
-
   cl_rs_generated = []
   foreach cl : nv_classes
     cl_rs_generated += custom_target(
@@ -91,7 +89,6 @@ if with_nouveau_vk
                  '--out-rs-mthd', '@OUTPUT0@'],
     )
 
-    fs = import('fs')
     if cl.endswith('c0') and fs.is_file('nvidia/classes/'+cl+'qmd.h')
       cl_rs_generated += custom_target(
         'nvh_classes_' + cl + '_qmd.rs',
@@ -122,7 +119,6 @@ if with_nouveau_vk
     endif
   endforeach
 
-  fs = import('fs')
   foreach family_gen : hwref_gens
     family = fs.parent(family_gen)
     gen = fs.name(family_gen)

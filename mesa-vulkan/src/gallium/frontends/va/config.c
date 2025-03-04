@@ -53,7 +53,7 @@ vlVaQueryConfigProfiles(VADriverContextP ctx, VAProfile *profile_list, int *num_
    *num_profiles = 0;
 
    pscreen = VL_VA_PSCREEN(ctx);
-   for (p = PIPE_VIDEO_PROFILE_MPEG2_SIMPLE; p <= PIPE_VIDEO_PROFILE_AV1_MAIN; ++p) {
+   for (p = PIPE_VIDEO_PROFILE_MPEG2_SIMPLE; p < PIPE_VIDEO_PROFILE_MAX; ++p) {
       if (u_reduce_video_profile(p) == PIPE_VIDEO_FORMAT_MPEG4 && !debug_get_option_mpeg4())
          continue;
 
@@ -141,6 +141,11 @@ static unsigned int get_screen_supported_va_rt_formats(struct pipe_screen *pscre
                                           entrypoint))
       supported_rt_formats |= VA_RT_FORMAT_YUV420_10BPP;
 
+   if (pscreen->is_video_format_supported(pscreen, PIPE_FORMAT_P012,
+                                          profile,
+                                          entrypoint))
+      supported_rt_formats |= VA_RT_FORMAT_YUV420_12;
+
    if (pscreen->is_video_format_supported(pscreen, PIPE_FORMAT_Y8_400_UNORM,
                                           profile,
                                           entrypoint))
@@ -162,13 +167,13 @@ static unsigned int get_screen_supported_va_rt_formats(struct pipe_screen *pscre
    if (pscreen->is_video_format_supported(pscreen, PIPE_FORMAT_R8G8B8A8_UNORM,
                                           profile,
                                           entrypoint) ||
-       pscreen->is_video_format_supported(pscreen, PIPE_FORMAT_R8G8B8A8_UINT,
+       pscreen->is_video_format_supported(pscreen, PIPE_FORMAT_B8G8R8A8_UNORM,
                                           profile,
                                           entrypoint) ||
        pscreen->is_video_format_supported(pscreen, PIPE_FORMAT_R8G8B8X8_UNORM,
                                           profile,
                                           entrypoint) ||
-       pscreen->is_video_format_supported(pscreen, PIPE_FORMAT_R8G8B8X8_UINT,
+       pscreen->is_video_format_supported(pscreen, PIPE_FORMAT_B8G8R8X8_UNORM,
                                           profile,
                                           entrypoint))
       supported_rt_formats |= VA_RT_FORMAT_RGB32;
@@ -281,6 +286,7 @@ vlVaGetConfigAttributes(VADriverContextP ctx, VAProfile profile, VAEntrypoint en
             value = pscreen->get_video_param(pscreen, ProfileToPipe(profile),
                                              PIPE_VIDEO_ENTRYPOINT_ENCODE,
                                              PIPE_VIDEO_CAP_MAX_TEMPORAL_LAYERS);
+            assert(value <= 4);
             if (value > 0) {
                value -= 1;
                value |= (1 << 8);   /* temporal_layer_bitrate_control_flag */
@@ -290,7 +296,7 @@ vlVaGetConfigAttributes(VADriverContextP ctx, VAProfile profile, VAEntrypoint en
             value = VA_ENC_PACKED_HEADER_NONE;
             if ((u_reduce_video_profile(ProfileToPipe(profile)) == PIPE_VIDEO_FORMAT_MPEG4_AVC))
                value |= ENC_PACKED_HEADERS_H264;
-            if ((u_reduce_video_profile(ProfileToPipe(profile)) == PIPE_VIDEO_FORMAT_HEVC))
+            else if ((u_reduce_video_profile(ProfileToPipe(profile)) == PIPE_VIDEO_FORMAT_HEVC))
                value |= ENC_PACKED_HEADERS_HEVC;
             else if (u_reduce_video_profile(ProfileToPipe(profile)) == PIPE_VIDEO_FORMAT_AV1)
                value |= ENC_PACKED_HEADERS_AV1;

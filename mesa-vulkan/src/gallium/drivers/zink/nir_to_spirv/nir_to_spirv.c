@@ -97,7 +97,7 @@ struct ntv_context {
          workgroup_id_var, num_workgroups_var,
          local_invocation_id_var, global_invocation_id_var,
          local_invocation_index_var, helper_invocation_var,
-         local_group_size_var,
+         local_group_size_var, view_index_var,
          base_vertex_var, base_instance_var, draw_id_var;
 
    SpvId shared_mem_size;
@@ -109,7 +109,8 @@ struct ntv_context {
          subgroup_invocation_var,
          subgroup_le_mask_var,
          subgroup_lt_mask_var,
-         subgroup_size_var;
+         subgroup_size_var,
+         num_subgroups_var;
 
    SpvId discard_func;
    SpvId float_array_type[2];
@@ -1706,21 +1707,6 @@ get_def_type(struct ntv_context *ctx, nir_def *def, nir_alu_type type)
    return get_alu_type(ctx, type, def->num_components, def->bit_size);
 }
 
-static bool
-needs_derivative_control(nir_alu_instr *alu)
-{
-   switch (alu->op) {
-   case nir_op_fddx_coarse:
-   case nir_op_fddx_fine:
-   case nir_op_fddy_coarse:
-   case nir_op_fddy_fine:
-      return true;
-
-   default:
-      return false;
-   }
-}
-
 static void
 emit_alu(struct ntv_context *ctx, nir_alu_instr *alu)
 {
@@ -1785,9 +1771,6 @@ emit_alu(struct ntv_context *ctx, nir_alu_instr *alu)
                         (alu_op_is_typeless(alu->op) ? typeless_type : nir_op_infos[alu->op].output_type);
    SpvId dest_type = get_def_type(ctx, &alu->def, atype);
 
-   if (needs_derivative_control(alu))
-      spirv_builder_emit_cap(&ctx->builder, SpvCapabilityDerivativeControl);
-
    SpvId result = 0;
    switch (alu->op) {
    case nir_op_mov:
@@ -1803,12 +1786,6 @@ emit_alu(struct ntv_context *ctx, nir_alu_instr *alu)
 
    UNOP(nir_op_ineg, SpvOpSNegate)
    UNOP(nir_op_fneg, SpvOpFNegate)
-   UNOP(nir_op_fddx, SpvOpDPdx)
-   UNOP(nir_op_fddx_coarse, SpvOpDPdxCoarse)
-   UNOP(nir_op_fddx_fine, SpvOpDPdxFine)
-   UNOP(nir_op_fddy, SpvOpDPdy)
-   UNOP(nir_op_fddy_coarse, SpvOpDPdyCoarse)
-   UNOP(nir_op_fddy_fine, SpvOpDPdyFine)
    UNOP(nir_op_f2i8, SpvOpConvertFToS)
    UNOP(nir_op_f2u8, SpvOpConvertFToU)
    UNOP(nir_op_f2i16, SpvOpConvertFToS)
@@ -2204,7 +2181,10 @@ emit_load_const(struct ntv_context *ctx, nir_load_const_instr *load_const)
          components[i] = spirv_builder_const_bool(&ctx->builder,
                                                   load_const->value[i].b);
    } else {
-      atype = infer_nir_alu_type_from_uses_ssa(&load_const->def);
+      if (ctx->sinfo->broken_arbitary_type_const)
+         atype = nir_type_uint;
+      else
+         atype = infer_nir_alu_type_from_uses_ssa(&load_const->def);
       for (int i = 0; i < num_components; i++) {
          switch (atype) {
          case nir_type_uint: {
@@ -2636,6 +2616,24 @@ emit_load_front_face(struct ntv_context *ctx, nir_intrinsic_instr *intr)
                                           ctx->front_face_var);
    assert(1 == intr->def.num_components);
    store_def(ctx, intr->def.index, result, nir_type_bool);
+}
+
+static void
+emit_load_view_index(struct ntv_context *ctx, nir_intrinsic_instr *intr)
+{
+   SpvId var_type = spirv_builder_type_uint(&ctx->builder, 32);
+   spirv_builder_emit_extension(&ctx->builder, "SPV_KHR_multiview");
+   spirv_builder_emit_cap(&ctx->builder, SpvCapabilityMultiView);
+   if (!ctx->view_index_var)
+      ctx->view_index_var = create_builtin_var(ctx, var_type,
+                                               SpvStorageClassInput,
+                                               "gl_ViewIndex",
+                                               SpvBuiltInViewIndex);
+
+   SpvId result = spirv_builder_emit_load(&ctx->builder, var_type,
+                                          ctx->view_index_var);
+   assert(1 == intr->def.num_components);
+   store_def(ctx, intr->def.index, result, nir_type_uint);
 }
 
 static void
@@ -3168,6 +3166,7 @@ emit_is_helper_invocation(struct ntv_context *ctx, nir_intrinsic_instr *intr)
 {
    spirv_builder_emit_extension(&ctx->builder,
                                 "SPV_EXT_demote_to_helper_invocation");
+   spirv_builder_emit_cap(&ctx->builder, SpvCapabilityDemoteToHelperInvocation);
    SpvId result = spirv_is_helper_invocation(&ctx->builder);
    store_def(ctx, intr->def.index, result, nir_type_bool);
 }
@@ -3209,6 +3208,210 @@ emit_barrier(struct ntv_context *ctx, nir_intrinsic_instr *intr)
       spirv_builder_emit_control_barrier(&ctx->builder, scope, mem_scope, semantics);
    else
       spirv_builder_emit_memory_barrier(&ctx->builder, mem_scope, semantics);
+}
+
+static void
+emit_derivative(struct ntv_context *ctx, nir_intrinsic_instr *intr)
+{
+   SpvOp op;
+   switch (intr->intrinsic) {
+   case nir_intrinsic_ddx:
+      op = SpvOpDPdx;
+      break;
+   case nir_intrinsic_ddy:
+      op = SpvOpDPdy;
+      break;
+   case nir_intrinsic_ddx_fine:
+      op = SpvOpDPdxFine;
+      break;
+   case nir_intrinsic_ddy_fine:
+      op = SpvOpDPdyFine;
+      break;
+   case nir_intrinsic_ddx_coarse:
+      op = SpvOpDPdxCoarse;
+      break;
+   case nir_intrinsic_ddy_coarse:
+      op = SpvOpDPdyCoarse;
+      break;
+   default:
+      unreachable("invalid ddx/ddy");
+   }
+
+   if (op != SpvOpDPdx && op != SpvOpDPdy)
+      spirv_builder_emit_cap(&ctx->builder, SpvCapabilityDerivativeControl);
+
+   SpvId type = get_fvec_type(ctx, intr->def.bit_size, intr->def.num_components);
+
+   nir_alu_type atype;
+   SpvId value = get_src(ctx, &intr->src[0], &atype);
+   if (atype != nir_type_float)
+      value = emit_bitcast(ctx, type, value);
+
+   SpvId result = emit_unop(ctx, op, type, value);
+   store_def(ctx, intr->def.index, result, nir_type_float);
+}
+
+static void
+emit_subgroup(struct ntv_context *ctx, nir_intrinsic_instr *intr)
+{
+   SpvOp op;
+
+   switch (nir_intrinsic_reduction_op(intr)) {
+#define SUBGROUP_CASE(nir, spirv) \
+   case nir_op_##nir: \
+      op = SpvOpGroupNonUniform##spirv; \
+      break
+   SUBGROUP_CASE(iadd, IAdd);
+   SUBGROUP_CASE(fadd, FAdd);
+   SUBGROUP_CASE(imul, IMul);
+   SUBGROUP_CASE(fmul, FMul);
+   SUBGROUP_CASE(imin, SMin);
+   SUBGROUP_CASE(umin, UMin);
+   SUBGROUP_CASE(fmin, FMin);
+   SUBGROUP_CASE(imax, SMax);
+   SUBGROUP_CASE(umax, UMax);
+   SUBGROUP_CASE(fmax, FMax);
+#undef SUBGROUP_CASE
+
+#define SUBGROUP_CASE_LOGICAL(nir, spirv) \
+   case nir_op_##nir: \
+      op = intr->src[0].ssa->bit_size != 1 ? SpvOpGroupNonUniformBitwise##spirv : SpvOpGroupNonUniformLogical##spirv; \
+      break
+   SUBGROUP_CASE_LOGICAL(iand, And);
+   SUBGROUP_CASE_LOGICAL(ior, Or);
+   SUBGROUP_CASE_LOGICAL(ixor, Xor);
+#undef SUBGROUP_CASE_LOGICAL
+   default:
+      fprintf(stderr, "emit_subgroup: reduction op not implemented (%s)\n",
+              nir_intrinsic_infos[nir_intrinsic_reduction_op(intr)].name);
+      unreachable("unhandled intrinsic");
+   }
+
+   SpvGroupOperation groupop;
+   unsigned cluster_size = 0;
+   switch (intr->intrinsic) {
+   case nir_intrinsic_reduce:
+      cluster_size = nir_intrinsic_cluster_size(intr);
+      groupop = cluster_size ? SpvGroupOperationClusteredReduce : SpvGroupOperationReduce;
+      break;
+   case nir_intrinsic_inclusive_scan:
+      groupop = SpvGroupOperationInclusiveScan;
+      break;
+   case nir_intrinsic_exclusive_scan:
+      groupop = SpvGroupOperationExclusiveScan;
+      break;
+   default:
+      fprintf(stderr, "emit_subgroup: not implemented (%s)\n",
+              nir_intrinsic_infos[intr->intrinsic].name);
+      unreachable("unhandled intrinsic");
+   }
+   spirv_builder_emit_cap(&ctx->builder, cluster_size ? SpvCapabilityGroupNonUniformClustered : SpvCapabilityGroupNonUniformArithmetic);
+
+   nir_alu_type atype;
+   SpvId src0 = get_src(ctx, &intr->src[0], &atype);
+   switch (op) {
+   case SpvOpGroupNonUniformFAdd:
+   case SpvOpGroupNonUniformFMul:
+   case SpvOpGroupNonUniformFMin:
+   case SpvOpGroupNonUniformFMax:
+      atype = nir_type_float;
+      src0 = emit_bitcast(ctx, get_def_type(ctx, intr->src[0].ssa, atype), src0);
+      break;
+   default: break;
+   }
+   SpvId type = get_def_type(ctx, intr->src[0].ssa, atype);
+   SpvId result = 0;
+   if (cluster_size)
+      result = spirv_builder_emit_triop_subgroup(&ctx->builder, op, type, groupop, src0, spirv_builder_const_uint(&ctx->builder, 32, cluster_size));
+   else
+      result = spirv_builder_emit_binop_subgroup(&ctx->builder, op, type, groupop, src0);
+   store_def(ctx, intr->def.index, result, atype);
+}
+
+static void
+emit_subgroup_quad(struct ntv_context *ctx, nir_intrinsic_instr *intr)
+{
+   SpvOp op;
+   nir_alu_type atype, itype;
+   SpvId src0 = get_src(ctx, &intr->src[0], &atype);
+   SpvId src1 = 0;
+   enum {
+      QUAD_SWAP_HORIZONTAL,
+      QUAD_SWAP_VERTICAL,
+      QUAD_SWAP_DIAGONAL,
+   };
+
+   switch (intr->intrinsic) {
+   case nir_intrinsic_quad_broadcast:
+      op = SpvOpGroupNonUniformQuadBroadcast;
+      src1 = get_src(ctx, &intr->src[1], &itype);
+      if (itype != nir_type_uint)
+         src1 = emit_bitcast(ctx, get_def_type(ctx, intr->src[1].ssa, nir_type_uint), src1);
+      break;
+   case nir_intrinsic_quad_swap_horizontal:
+      op = SpvOpGroupNonUniformQuadSwap;
+      src1 = spirv_builder_const_uint(&ctx->builder, 32, QUAD_SWAP_HORIZONTAL);
+      break;
+   case nir_intrinsic_quad_swap_vertical:
+      op = SpvOpGroupNonUniformQuadSwap;
+      src1 = spirv_builder_const_uint(&ctx->builder, 32, QUAD_SWAP_VERTICAL);
+      break;
+   case nir_intrinsic_quad_swap_diagonal:
+      op = SpvOpGroupNonUniformQuadSwap;
+      src1 = spirv_builder_const_uint(&ctx->builder, 32, QUAD_SWAP_DIAGONAL);
+      break;
+   default:
+      fprintf(stderr, "emit_subgroup_quad: not implemented (%s)\n",
+              nir_intrinsic_infos[intr->intrinsic].name);
+      unreachable("unhandled intrinsic");
+   }
+   spirv_builder_emit_cap(&ctx->builder, SpvCapabilityGroupNonUniformQuad);
+
+   SpvId result = spirv_builder_emit_binop_subgroup(&ctx->builder, op, get_def_type(ctx, intr->src[0].ssa, atype), src0, src1);
+   store_def(ctx, intr->def.index, result, atype);
+}
+
+static void
+emit_shuffle(struct ntv_context *ctx, nir_intrinsic_instr *intr)
+{
+   SpvOp op;
+
+   switch (intr->intrinsic) {
+   case nir_intrinsic_shuffle:
+      op = SpvOpGroupNonUniformShuffle;
+      spirv_builder_emit_cap(&ctx->builder, SpvCapabilityGroupNonUniformShuffle);
+      break;
+   case nir_intrinsic_shuffle_xor:
+      op = SpvOpGroupNonUniformShuffleXor;
+      spirv_builder_emit_cap(&ctx->builder, SpvCapabilityGroupNonUniformShuffle);
+      break;
+   case nir_intrinsic_shuffle_up:
+      op = SpvOpGroupNonUniformShuffleUp;
+      spirv_builder_emit_cap(&ctx->builder, SpvCapabilityGroupNonUniformShuffleRelative);
+      break;
+   case nir_intrinsic_shuffle_down:
+      op = SpvOpGroupNonUniformShuffleDown;
+      spirv_builder_emit_cap(&ctx->builder, SpvCapabilityGroupNonUniformShuffleRelative);
+      break;
+   default:
+      fprintf(stderr, "emit_shuffle: not implemented (%s)\n",
+              nir_intrinsic_infos[intr->intrinsic].name);
+      unreachable("unhandled intrinsic");
+   }
+   nir_alu_type atype, unused;
+   SpvId src0 = get_src(ctx, &intr->src[0], &atype);
+   SpvId src1 = get_src(ctx, &intr->src[1], &unused);
+
+   SpvId result = spirv_builder_emit_binop_subgroup(&ctx->builder, op, get_def_type(ctx, intr->src[0].ssa, atype), src0, src1);
+   store_def(ctx, intr->def.index, result, atype);
+}
+
+static void
+emit_elect(struct ntv_context *ctx, nir_intrinsic_instr *intr)
+{
+   spirv_builder_emit_cap(&ctx->builder, SpvCapabilityGroupNonUniform);
+   SpvId result = spirv_builder_emit_unop_const(&ctx->builder, SpvOpGroupNonUniformElect, spirv_builder_type_bool(&ctx->builder), SpvScopeSubgroup);
+   store_def(ctx, intr->def.index, result, nir_type_bool);
 }
 
 static void
@@ -3259,6 +3462,10 @@ emit_intrinsic(struct ntv_context *ctx, nir_intrinsic_instr *intr)
 
    case nir_intrinsic_load_front_face:
       emit_load_front_face(ctx, intr);
+      break;
+
+   case nir_intrinsic_load_view_index:
+      emit_load_view_index(ctx, intr);
       break;
 
    case nir_intrinsic_load_base_instance:
@@ -3420,6 +3627,7 @@ emit_intrinsic(struct ntv_context *ctx, nir_intrinsic_instr *intr)
    LOAD_SHADER_BALLOT(subgroup_le_mask, SubgroupLeMask);
    LOAD_SHADER_BALLOT(subgroup_lt_mask, SubgroupLtMask);
    LOAD_SHADER_BALLOT(subgroup_size, SubgroupSize);
+   LOAD_SHADER_BALLOT(num_subgroups, NumSubgroups);
 
    case nir_intrinsic_ballot:
       emit_ballot(ctx, intr);
@@ -3471,6 +3679,39 @@ emit_intrinsic(struct ntv_context *ctx, nir_intrinsic_instr *intr)
 
    case nir_intrinsic_is_helper_invocation:
       emit_is_helper_invocation(ctx, intr);
+      break;
+
+   case nir_intrinsic_ddx:
+   case nir_intrinsic_ddy:
+   case nir_intrinsic_ddx_fine:
+   case nir_intrinsic_ddy_fine:
+   case nir_intrinsic_ddx_coarse:
+   case nir_intrinsic_ddy_coarse:
+      emit_derivative(ctx, intr);
+      break;
+
+   case nir_intrinsic_reduce:
+   case nir_intrinsic_inclusive_scan:
+   case nir_intrinsic_exclusive_scan:
+      emit_subgroup(ctx, intr);
+      break;
+
+   case nir_intrinsic_quad_broadcast:
+   case nir_intrinsic_quad_swap_horizontal:
+   case nir_intrinsic_quad_swap_vertical:
+   case nir_intrinsic_quad_swap_diagonal:
+      emit_subgroup_quad(ctx, intr);
+      break;
+
+   case nir_intrinsic_shuffle:
+   case nir_intrinsic_shuffle_xor:
+   case nir_intrinsic_shuffle_up:
+   case nir_intrinsic_shuffle_down:
+      emit_shuffle(ctx, intr);
+      break;
+
+   case nir_intrinsic_elect:
+      emit_elect(ctx, intr);
       break;
 
    default:
@@ -4403,8 +4644,6 @@ nir_to_spirv(struct nir_shader *s, const struct zink_shader_info *sinfo, const s
 
    case MESA_SHADER_GEOMETRY:
       spirv_builder_emit_cap(&ctx.builder, SpvCapabilityGeometry);
-      if (s->info.gs.active_stream_mask)
-         spirv_builder_emit_cap(&ctx.builder, SpvCapabilityGeometryStreams);
       if (s->info.outputs_written & BITFIELD64_BIT(VARYING_SLOT_PSIZ))
          spirv_builder_emit_cap(&ctx.builder, SpvCapabilityGeometryPointSize);
       break;
@@ -4734,12 +4973,12 @@ nir_to_spirv(struct nir_shader *s, const struct zink_shader_info *sinfo, const s
          spirv_builder_emit_specid(&ctx.builder, ctx.shared_mem_size, ZINK_VARIABLE_SHARED_MEM);
          spirv_builder_emit_name(&ctx.builder, ctx.shared_mem_size, "variable_shared_mem");
       }
-      if (s->info.cs.derivative_group) {
+      if (s->info.derivative_group) {
          SpvCapability caps[] = { 0, SpvCapabilityComputeDerivativeGroupQuadsNV, SpvCapabilityComputeDerivativeGroupLinearNV };
          SpvExecutionMode modes[] = { 0, SpvExecutionModeDerivativeGroupQuadsNV, SpvExecutionModeDerivativeGroupLinearNV };
          spirv_builder_emit_extension(&ctx.builder, "SPV_NV_compute_shader_derivatives");
-         spirv_builder_emit_cap(&ctx.builder, caps[s->info.cs.derivative_group]);
-         spirv_builder_emit_exec_mode(&ctx.builder, entry_point, modes[s->info.cs.derivative_group]);
+         spirv_builder_emit_cap(&ctx.builder, caps[s->info.derivative_group]);
+         spirv_builder_emit_exec_mode(&ctx.builder, entry_point, modes[s->info.derivative_group]);
          ctx.explicit_lod = false;
       }
       break;
@@ -4834,6 +5073,9 @@ nir_to_spirv(struct nir_shader *s, const struct zink_shader_info *sinfo, const s
    spirv_builder_emit_entry_point(&ctx.builder, exec_model, entry_point,
                                   "main", ctx.entry_ifaces,
                                   ctx.num_entry_ifaces);
+
+   if (ctx.num_subgroups_var)
+      spirv_builder_emit_cap(&ctx.builder, SpvCapabilityGroupNonUniform);
 
    size_t num_words = spirv_builder_get_num_words(&ctx.builder);
 

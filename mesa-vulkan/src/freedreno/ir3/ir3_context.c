@@ -1,24 +1,6 @@
 /*
- * Copyright (C) 2015-2018 Rob Clark <robclark@freedesktop.org>
- *
- * Permission is hereby granted, free of charge, to any person obtaining a
- * copy of this software and associated documentation files (the "Software"),
- * to deal in the Software without restriction, including without limitation
- * the rights to use, copy, modify, merge, publish, distribute, sublicense,
- * and/or sell copies of the Software, and to permit persons to whom the
- * Software is furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice (including the next
- * paragraph) shall be included in all copies or substantial portions of the
- * Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
- * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
- * SOFTWARE.
+ * Copyright © 2015-2018 Rob Clark <robclark@freedesktop.org>
+ * SPDX-License-Identifier: MIT
  *
  * Authors:
  *    Rob Clark <robclark@freedesktop.org>
@@ -84,7 +66,7 @@ ir3_context_init(struct ir3_compiler *compiler, struct ir3_shader *shader,
     */
 
    ctx->s = nir_shader_clone(ctx, shader->nir);
-   ir3_nir_lower_variant(so, ctx->s);
+   ir3_nir_lower_variant(so, &shader->options.nir_options, ctx->s);
 
    bool progress = false;
    bool needs_late_alg = false;
@@ -113,22 +95,39 @@ ir3_context_init(struct ir3_compiler *compiler, struct ir3_shader *shader,
 
    /* This must run after the last nir_opt_algebraic or it gets undone. */
    if (compiler->has_branch_and_or)
-      NIR_PASS_V(ctx->s, ir3_nir_opt_branch_and_or_not);
+      NIR_PASS(_, ctx->s, ir3_nir_opt_branch_and_or_not);
+
+   if (compiler->has_bitwise_triops) {
+      bool triops_progress = false;
+      NIR_PASS(triops_progress, ctx->s, ir3_nir_opt_triops_bitwise);
+
+      if (triops_progress) {
+         NIR_PASS(_, ctx->s, nir_opt_dce);
+      }
+   }
 
    /* Enable the texture pre-fetch feature only a4xx onwards.  But
     * only enable it on generations that have been tested:
     */
    if ((so->type == MESA_SHADER_FRAGMENT) && compiler->has_fs_tex_prefetch)
-      NIR_PASS_V(ctx->s, ir3_nir_lower_tex_prefetch);
+      NIR_PASS(_, ctx->s, ir3_nir_lower_tex_prefetch);
+
+   bool vectorized = false;
+   NIR_PASS(vectorized, ctx->s, nir_opt_vectorize, ir3_nir_vectorize_filter,
+            NULL);
+
+   if (vectorized) {
+      NIR_PASS(_, ctx->s, nir_opt_undef);
+      NIR_PASS(_, ctx->s, nir_copy_prop);
+      NIR_PASS(_, ctx->s, nir_opt_dce);
+   }
 
    NIR_PASS(progress, ctx->s, nir_convert_to_lcssa, true, true);
-
-   NIR_PASS(progress, ctx->s, nir_lower_phis_to_scalar, true);
 
    /* This has to go at the absolute end to make sure that all SSA defs are
     * correctly marked.
     */
-   NIR_PASS_V(ctx->s, nir_divergence_analysis);
+   nir_divergence_analysis(ctx->s);
 
    /* Super crude heuristic to limit # of tex prefetch in small
     * shaders.  This completely ignores loops.. but that's really
@@ -155,7 +154,15 @@ ir3_context_init(struct ir3_compiler *compiler, struct ir3_shader *shader,
 
       unsigned instruction_count = 0;
       nir_foreach_block (block, fxn) {
-         instruction_count += exec_list_length(&block->instr_list);
+         nir_foreach_instr (instr, block) {
+            /* Vectorized ALU instructions expand to one scalar instruction per
+             * component.
+             */
+            if (instr->type == nir_instr_type_alu)
+               instruction_count += nir_instr_as_alu(instr)->def.num_components;
+            else
+               instruction_count++;
+         }
       }
 
       if (instruction_count < 50) {
@@ -237,11 +244,12 @@ ir3_get_src_maybe_shared(struct ir3_context *ctx, nir_src *src)
 }
 
 static struct ir3_instruction *
-get_shared(struct ir3_block *block, struct ir3_instruction *src, bool shared)
+get_shared(struct ir3_builder *build, struct ir3_instruction *src, bool shared)
 {
    if (!!(src->dsts[0]->flags & IR3_REG_SHARED) != shared) {
       struct ir3_instruction *mov =
-         ir3_MOV(block, src, (src->dsts[0]->flags & IR3_REG_HALF) ? TYPE_U16 : TYPE_U32);
+         ir3_MOV(build, src,
+                 (src->dsts[0]->flags & IR3_REG_HALF) ? TYPE_U16 : TYPE_U32);
       mov->dsts[0]->flags &= ~IR3_REG_SHARED;
       mov->dsts[0]->flags |= COND(shared, IR3_REG_SHARED);
       return mov;
@@ -269,7 +277,7 @@ ir3_get_src_shared(struct ir3_context *ctx, nir_src *src, bool shared)
    struct ir3_instruction **new_value =
       ralloc_array(ctx, struct ir3_instruction *, num_components);
    for (unsigned i = 0; i < num_components; i++)
-      new_value[i] = get_shared(ctx->block, value[i], shared);
+      new_value[i] = get_shared(&ctx->build, value[i], shared);
 
    return new_value;
 }
@@ -303,8 +311,8 @@ dest_flags(struct ir3_instruction *instr)
 }
 
 struct ir3_instruction *
-ir3_create_collect(struct ir3_block *block, struct ir3_instruction *const *arr,
-                   unsigned arrsz)
+ir3_create_collect(struct ir3_builder *build,
+                   struct ir3_instruction *const *arr, unsigned arrsz)
 {
    struct ir3_instruction *collect;
 
@@ -314,9 +322,21 @@ ir3_create_collect(struct ir3_block *block, struct ir3_instruction *const *arr,
    if (arrsz == 1)
       return arr[0];
 
-   unsigned flags = dest_flags(arr[0]);
+   int non_undef_src = -1;
+   for (unsigned i = 0; i < arrsz; i++) {
+      if (arr[i]) {
+         non_undef_src = i;
+         break;
+      }
+   }
 
-   collect = ir3_instr_create(block, OPC_META_COLLECT, 1, arrsz);
+   /* There should be at least one non-undef source to determine the type of the
+    * destination.
+    */
+   assert(non_undef_src != -1);
+   unsigned flags = dest_flags(arr[non_undef_src]);
+
+   collect = ir3_build_instr(build, OPC_META_COLLECT, 1, arrsz);
    __ssa_dst(collect)->flags |= flags;
    for (unsigned i = 0; i < arrsz; i++) {
       struct ir3_instruction *elem = arr[i];
@@ -345,13 +365,17 @@ ir3_create_collect(struct ir3_block *block, struct ir3_instruction *const *arr,
        * scalar registers.
        *
        */
-      if (elem->dsts[0]->flags & IR3_REG_ARRAY) {
+      if (elem && elem->dsts[0]->flags & IR3_REG_ARRAY) {
          type_t type = (flags & IR3_REG_HALF) ? TYPE_U16 : TYPE_U32;
-         elem = ir3_MOV(block, elem, type);
+         elem = ir3_MOV(build, elem, type);
       }
 
-      assert(dest_flags(elem) == flags);
-      __ssa_src(collect, elem, flags);
+      if (elem) {
+         assert(dest_flags(elem) == flags);
+         __ssa_src(collect, elem, flags);
+      } else {
+         ir3_src_create(collect, INVALID_REG, flags | IR3_REG_SSA);
+      }
    }
 
    collect->dsts[0]->wrmask = MASK(arrsz);
@@ -363,7 +387,7 @@ ir3_create_collect(struct ir3_block *block, struct ir3_instruction *const *arr,
  * outputs which need to have a split meta instruction inserted
  */
 void
-ir3_split_dest(struct ir3_block *block, struct ir3_instruction **dst,
+ir3_split_dest(struct ir3_builder *build, struct ir3_instruction **dst,
                struct ir3_instruction *src, unsigned base, unsigned n)
 {
    if ((n == 1) && (src->dsts[0]->wrmask == 0x1) &&
@@ -387,7 +411,7 @@ ir3_split_dest(struct ir3_block *block, struct ir3_instruction **dst,
 
    for (int i = 0, j = 0; i < n; i++) {
       struct ir3_instruction *split =
-         ir3_instr_create(block, OPC_META_SPLIT, 1, 1);
+         ir3_build_instr(build, OPC_META_SPLIT, 1, 1);
       __ssa_dst(split)->flags |= flags;
       __ssa_src(split, src, flags);
       split->split.off = i + base;
@@ -419,11 +443,11 @@ ir3_context_error(struct ir3_context *ctx, const char *format, ...)
 }
 
 static struct ir3_instruction *
-create_addr0(struct ir3_block *block, struct ir3_instruction *src, int align)
+create_addr0(struct ir3_builder *build, struct ir3_instruction *src, int align)
 {
    struct ir3_instruction *instr, *immed;
 
-   instr = ir3_COV(block, src, TYPE_U32, TYPE_S16);
+   instr = ir3_COV(build, src, TYPE_U32, TYPE_S16);
    bool shared = (src->dsts[0]->flags & IR3_REG_SHARED);
 
    switch (align) {
@@ -432,18 +456,18 @@ create_addr0(struct ir3_block *block, struct ir3_instruction *src, int align)
       break;
    case 2:
       /* src *= 2	=> src <<= 1: */
-      immed = create_immed_typed_shared(block, 1, TYPE_S16, shared);
-      instr = ir3_SHL_B(block, instr, 0, immed, 0);
+      immed = create_immed_typed_shared(build, 1, TYPE_S16, shared);
+      instr = ir3_SHL_B(build, instr, 0, immed, 0);
       break;
    case 3:
       /* src *= 3: */
-      immed = create_immed_typed_shared(block, 3, TYPE_S16, shared);
-      instr = ir3_MULL_U(block, instr, 0, immed, 0);
+      immed = create_immed_typed_shared(build, 3, TYPE_S16, shared);
+      instr = ir3_MULL_U(build, instr, 0, immed, 0);
       break;
    case 4:
       /* src *= 4 => src <<= 2: */
-      immed = create_immed_typed_shared(block, 2, TYPE_S16, shared);
-      instr = ir3_SHL_B(block, instr, 0, immed, 0);
+      immed = create_immed_typed_shared(build, 2, TYPE_S16, shared);
+      instr = ir3_SHL_B(build, instr, 0, immed, 0);
       break;
    default:
       unreachable("bad align");
@@ -452,7 +476,7 @@ create_addr0(struct ir3_block *block, struct ir3_instruction *src, int align)
 
    instr->dsts[0]->flags |= IR3_REG_HALF;
 
-   instr = ir3_MOV(block, instr, TYPE_S16);
+   instr = ir3_MOV(build, instr, TYPE_S16);
    instr->dsts[0]->num = regid(REG_A0, 0);
    instr->dsts[0]->flags &= ~IR3_REG_SHARED;
 
@@ -460,11 +484,11 @@ create_addr0(struct ir3_block *block, struct ir3_instruction *src, int align)
 }
 
 static struct ir3_instruction *
-create_addr1(struct ir3_block *block, unsigned const_val)
+create_addr1(struct ir3_builder *build, unsigned const_val)
 {
    struct ir3_instruction *immed =
-      create_immed_typed(block, const_val, TYPE_U16);
-   struct ir3_instruction *instr = ir3_MOV(block, immed, TYPE_U16);
+      create_immed_typed(build, const_val, TYPE_U16);
+   struct ir3_instruction *instr = ir3_MOV(build, immed, TYPE_U16);
    instr->dsts[0]->num = regid(REG_A0, 1);
    return instr;
 }
@@ -490,7 +514,7 @@ ir3_get_addr0(struct ir3_context *ctx, struct ir3_instruction *src, int align)
          return entry->data;
    }
 
-   addr = create_addr0(ctx->block, src, align);
+   addr = create_addr0(&ctx->build, src, align);
    _mesa_hash_table_insert(ctx->addr0_ht[idx], src, addr);
 
    return addr;
@@ -510,7 +534,7 @@ ir3_get_addr1(struct ir3_context *ctx, unsigned const_val)
          return addr;
    }
 
-   addr = create_addr1(ctx->block, const_val);
+   addr = create_addr1(&ctx->build, const_val);
    _mesa_hash_table_u64_insert(ctx->addr1_ht, const_val, addr);
 
    return addr;
@@ -526,27 +550,19 @@ ir3_get_predicate(struct ir3_context *ctx, struct ir3_instruction *src)
    if (src_entry)
       return src_entry->data;
 
-   struct ir3_block *b = src->block;
+   struct ir3_builder b = ir3_builder_at(ir3_after_instr_and_phis(src));
    struct ir3_instruction *cond;
 
    /* NOTE: we use cpms.s.ne x, 0 to move x into a predicate register */
    struct ir3_instruction *zero =
-         create_immed_typed_shared(b, 0, is_half(src) ? TYPE_U16 : TYPE_U32,
-                                   src->dsts[0]->flags & IR3_REG_SHARED);
-   cond = ir3_CMPS_S(b, src, 0, zero, 0);
+      create_immed_typed_shared(&b, 0, is_half(src) ? TYPE_U16 : TYPE_U32,
+                                src->dsts[0]->flags & IR3_REG_SHARED);
+   cond = ir3_CMPS_S(&b, src, 0, zero, 0);
    cond->cat2.condition = IR3_COND_NE;
 
    /* condition always goes in predicate register: */
    cond->dsts[0]->flags |= IR3_REG_PREDICATE;
    cond->dsts[0]->flags &= ~IR3_REG_SHARED;
-
-   /* phi's should stay first in a block */
-   if (src->opc == OPC_META_PHI)
-      ir3_instr_move_after(zero, ir3_block_get_last_phi(src->block));
-   else
-      ir3_instr_move_after(zero, src);
-
-   ir3_instr_move_after(cond, zero);
 
    _mesa_hash_table_insert(ctx->predicate_conversions, src, cond);
    return cond;
@@ -598,7 +614,7 @@ ir3_create_array_load(struct ir3_context *ctx, struct ir3_array *arr, int n,
    struct ir3_register *src;
    unsigned flags = 0;
 
-   mov = ir3_instr_create(block, OPC_MOV, 1, 1);
+   mov = ir3_build_instr(&ctx->build, OPC_MOV, 1, 1);
    if (arr->half) {
       mov->cat1.src_type = TYPE_U16;
       mov->cat1.dst_type = TYPE_U16;
@@ -638,7 +654,7 @@ ir3_create_array_store(struct ir3_context *ctx, struct ir3_array *arr, int n,
    struct ir3_register *dst;
    unsigned flags = 0;
 
-   mov = ir3_instr_create(block, OPC_MOV, 1, 1);
+   mov = ir3_build_instr(&ctx->build, OPC_MOV, 1, 1);
    if (arr->half) {
       mov->cat1.src_type = TYPE_U16;
       mov->cat1.dst_type = TYPE_U16;
@@ -692,8 +708,8 @@ ir3_lower_imm_offset(struct ir3_context *ctx, nir_intrinsic_instr *intr,
        * among multiple contiguous accesses.
        */
       uint32_t full_offset = base + nir_const_offset->u32;
-      *offset =
-         create_immed(ctx->block, ROUND_DOWN_TO(full_offset, imm_offset_bound));
+      *offset = create_immed(&ctx->build,
+                             ROUND_DOWN_TO(full_offset, imm_offset_bound));
       *imm_offset = full_offset % imm_offset_bound;
    } else {
       *offset = ir3_get_src(ctx, offset_src)[0];

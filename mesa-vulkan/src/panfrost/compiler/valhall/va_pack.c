@@ -349,8 +349,6 @@ static enum va_lanes_8_bit
 va_pack_shift_lanes(const bi_instr *I, enum bi_swizzle swz)
 {
    switch (swz) {
-   case BI_SWIZZLE_H01:
-      return VA_LANES_8_BIT_B02;
    case BI_SWIZZLE_B0000:
       return VA_LANES_8_BIT_B00;
    case BI_SWIZZLE_B1111:
@@ -410,7 +408,7 @@ va_pack_rhadd(const bi_instr *I)
 }
 
 static uint64_t
-va_pack_alu(const bi_instr *I)
+va_pack_alu(const bi_instr *I, unsigned arch)
 {
    struct va_opcode_info info = valhall_opcodes[I->op];
    uint64_t hex = 0;
@@ -425,6 +423,15 @@ va_pack_alu(const bi_instr *I)
          hex |= 1ull << 24;
       if (I->log)
          hex |= 1ull << 25;
+      break;
+
+   case BI_OPCODE_FLUSH_F32:
+   case BI_OPCODE_FLUSH_V2F16:
+      hex |= I->nan_mode << 8;
+      if (I->ftz)
+         hex |= 1ull << 10;
+      if (I->flush_inf)
+         hex |= 1ull << 11;
       break;
 
    /* Add mux type */
@@ -463,8 +470,8 @@ va_pack_alu(const bi_instr *I)
       break;
 
    case BI_OPCODE_LEA_BUF_IMM:
-      /* Buffer table index */
-      hex |= 0xD << 8;
+      hex |= ((uint64_t)I->table) << 8;
+      hex |= ((uint64_t)I->index) << 12;
       break;
 
    case BI_OPCODE_LEA_ATTR_IMM:
@@ -499,7 +506,10 @@ va_pack_alu(const bi_instr *I)
          hex |= ((uint64_t)I->varying_name) << 12; /* instead of index */
       else if (I->op == BI_OPCODE_LD_VAR_BUF_IMM_F16 ||
                I->op == BI_OPCODE_LD_VAR_BUF_IMM_F32) {
-         hex |= ((uint64_t)I->index) << 16;
+         if (arch >= 11)
+            hex |= ((uint64_t)I->index) << 8;
+         else
+            hex |= ((uint64_t)I->index) << 16;
       } else if (I->op == BI_OPCODE_LD_VAR_IMM ||
                  I->op == BI_OPCODE_LD_VAR_FLAT_IMM) {
          hex |= ((uint64_t)I->table) << 8;
@@ -520,6 +530,10 @@ va_pack_alu(const bi_instr *I)
    case BI_OPCODE_LEA_TEX_IMM:
       hex |= ((uint64_t)I->table) << 16;
       hex |= ((uint64_t)I->texture_index) << 20;
+      break;
+
+   case BI_OPCODE_WMASK:
+      hex |= ((uint64_t)I->subgroup) << 36;
       break;
 
    case BI_OPCODE_ZS_EMIT:
@@ -552,7 +566,7 @@ va_pack_alu(const bi_instr *I)
    bool swap12 = va_swap_12(I->op);
 
    /* First src is staging if we read, skip it when packing sources */
-   unsigned src_offset = bi_opcode_props[I->op].sr_read ? 1 : 0;
+   unsigned src_offset = bi_get_opcode_props(I)->sr_read ? 1 : 0;
 
    for (unsigned i = 0; i < info.nr_srcs; ++i) {
       unsigned logical_i = (swap12 && i == 1) ? 2 : (swap12 && i == 2) ? 1 : i;
@@ -780,7 +794,7 @@ va_pack_register_format(const bi_instr *I)
 }
 
 uint64_t
-va_pack_instr(const bi_instr *I)
+va_pack_instr(const bi_instr *I, unsigned arch)
 {
    struct va_opcode_info info = valhall_opcodes[I->op];
 
@@ -791,7 +805,7 @@ va_pack_instr(const bi_instr *I)
       hex |= ((uint64_t)I->slot << 30);
 
    if (info.sr_count) {
-      bool read = bi_opcode_props[I->op].sr_read;
+      bool read = bi_get_opcode_props(I)->sr_read;
       bi_index sr = read ? I->src[0] : I->dest[0];
 
       unsigned count =
@@ -904,14 +918,16 @@ va_pack_instr(const bi_instr *I)
       break;
    }
 
+   case BI_OPCODE_TEX_GRADIENT:
    case BI_OPCODE_TEX_SINGLE:
    case BI_OPCODE_TEX_FETCH:
    case BI_OPCODE_TEX_GATHER: {
       /* Image to read from */
       hex |= ((uint64_t)va_pack_src(I, 1)) << 0;
 
-      if (I->op == BI_OPCODE_TEX_FETCH && I->shadow)
-         invalid_instruction(I, "TEX_FETCH does not support .shadow");
+      if ((I->op == BI_OPCODE_TEX_FETCH || I->op == BI_OPCODE_TEX_GRADIENT) &&
+          I->shadow)
+         invalid_instruction(I, "texture instruction does not support .shadow");
 
       if (I->wide_indices)
          hex |= (1ull << 8);
@@ -926,6 +942,17 @@ va_pack_instr(const bi_instr *I)
       if (!bi_is_regfmt_16(I->register_format))
          hex |= (1ull << 46);
 
+      if (I->op == BI_OPCODE_TEX_GRADIENT) {
+         if (I->force_delta_enable)
+            hex |= (1ull << 12);
+         if (I->lod_bias_disable)
+            hex |= (1ull << 13);
+         if (I->lod_clamp_disable)
+            hex |= (1ull << 14);
+         if (I->derivative_enable)
+            hex |= (1ull << 15);
+      }
+
       if (I->op == BI_OPCODE_TEX_SINGLE)
          hex |= ((uint64_t)va_pack_lod_mode(I)) << 13;
 
@@ -936,7 +963,6 @@ va_pack_instr(const bi_instr *I)
       }
 
       hex |= (I->write_mask << 22);
-      hex |= ((uint64_t)va_pack_register_type(I)) << 26;
       hex |= ((uint64_t)I->dimension) << 28;
 
       break;
@@ -946,7 +972,7 @@ va_pack_instr(const bi_instr *I)
       if (!info.exact && I->op != BI_OPCODE_NOP)
          invalid_instruction(I, "opcode");
 
-      hex |= va_pack_alu(I);
+      hex |= va_pack_alu(I, arch);
       break;
    }
 
@@ -1082,7 +1108,7 @@ bi_pack_valhall(bi_context *ctx, struct util_dynarray *emission)
          if (I->op == BI_OPCODE_BRANCHZ_I16)
             va_lower_branch_target(ctx, block, I);
 
-         uint64_t hex = va_pack_instr(I);
+         uint64_t hex = va_pack_instr(I, ctx->arch);
          util_dynarray_append(emission, uint64_t, hex);
       }
    }

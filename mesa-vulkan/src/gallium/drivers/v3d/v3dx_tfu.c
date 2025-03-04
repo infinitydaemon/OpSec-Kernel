@@ -23,6 +23,7 @@
 
 #include "v3d_context.h"
 #include "broadcom/common/v3d_tfu.h"
+#include "util/perf/cpu_trace.h"
 
 bool
 v3dX(tfu)(struct pipe_context *pctx,
@@ -82,6 +83,8 @@ v3dX(tfu)(struct pipe_context *pctx,
                 assert(for_mipmap);
                 return false;
         }
+
+        MESA_TRACE_FUNC();
 
         v3d_flush_jobs_writing_resource(v3d, psrc, V3D_FLUSH_DEFAULT, false);
         v3d_flush_jobs_reading_resource(v3d, pdst, V3D_FLUSH_DEFAULT, false);
@@ -193,6 +196,10 @@ v3dX(tfu)(struct pipe_context *pctx,
         if (ret != 0) {
                 fprintf(stderr, "Failed to submit TFU job: %d\n", ret);
                 return false;
+        }
+        if (V3D_DBG(SYNC)) {
+                drmSyncobjWait(v3d->fd, &v3d->out_sync, 1, INT64_MAX,
+                               DRM_SYNCOBJ_WAIT_FLAGS_WAIT_ALL, NULL);
         }
 
         dst->writes++;

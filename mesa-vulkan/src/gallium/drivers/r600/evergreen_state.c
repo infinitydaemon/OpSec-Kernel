@@ -20,6 +20,9 @@
 
 #include <assert.h>
 
+static const unsigned neutral_swz[4] = { PIPE_SWIZZLE_X, PIPE_SWIZZLE_Y,
+					 PIPE_SWIZZLE_Z, PIPE_SWIZZLE_W };
+
 static inline unsigned evergreen_array_mode(unsigned mode)
 {
 	switch (mode) {
@@ -595,7 +598,8 @@ static void *evergreen_create_sampler_state(struct pipe_context *ctx,
 	 * MIP_FILTER will also be set to NONE. However, if more then one LOD is
 	 * configured, then the texture lookup seems to fail for some specific texture
 	 * formats. Forcing the number of LODs to one in this case fixes it. */
-	if (state->min_mip_filter == PIPE_TEX_MIPFILTER_NONE)
+	if (state->min_mip_filter == PIPE_TEX_MIPFILTER_NONE &&
+	    state->mag_img_filter == state->min_img_filter)
 		max_lod = state->min_lod;
 
 	ss->border_color_use = sampler_state_needs_border_color(state);
@@ -2141,7 +2145,8 @@ static void evergreen_emit_vertex_buffers(struct r600_context *rctx,
 		radeon_emit(cs, PKT3(PKT3_SET_RESOURCE, 8, 0) | pkt_flags);
 		radeon_emit(cs, (resource_offset + buffer_index) * 8);
 		radeon_emit(cs, va); /* RESOURCEi_WORD0 */
-		radeon_emit(cs, rbuffer->b.b.width0 - vb->buffer_offset - 1); /* RESOURCEi_WORD1 */
+		radeon_emit(cs, rbuffer->b.b.width0 - vb->buffer_offset - 1 +
+			    (shader ? shader->width_correction[buffer_index] : 0)); /* RESOURCEi_WORD1 */
 		radeon_emit(cs, /* RESOURCEi_WORD2 */
 				 S_030008_ENDIAN_SWAP(r600_endian_swap(32)) |
 				 S_030008_STRIDE(stride) |
@@ -2405,32 +2410,109 @@ static void evergreen_emit_cs_sampler_views(struct r600_context *rctx, struct r6
 	                             EG_FETCH_CONSTANTS_OFFSET_CS + R600_MAX_CONST_BUFFERS, RADEON_CP_PACKET3_COMPUTE_MODE);
 }
 
+static void border_swizzle_nr_channels_2(const unsigned *swizzle,
+					 unsigned *output_swz)
+{
+	memcpy(output_swz, neutral_swz, sizeof(neutral_swz));
+
+	if (swizzle[PIPE_SWIZZLE_X] < PIPE_SWIZZLE_Z &&
+	    swizzle[PIPE_SWIZZLE_Z] < PIPE_SWIZZLE_Z) {
+		output_swz[PIPE_SWIZZLE_Z] = PIPE_SWIZZLE_W;
+		output_swz[PIPE_SWIZZLE_W] = PIPE_SWIZZLE_Z;
+	} else if (swizzle[PIPE_SWIZZLE_Y] < PIPE_SWIZZLE_Z &&
+		   swizzle[PIPE_SWIZZLE_Z] < PIPE_SWIZZLE_Z) {
+		const bool inverted =
+			(swizzle[PIPE_SWIZZLE_Y] == PIPE_SWIZZLE_X) ^
+			(swizzle[PIPE_SWIZZLE_W] == PIPE_SWIZZLE_1);
+		output_swz[PIPE_SWIZZLE_Y] = inverted ?
+			PIPE_SWIZZLE_W : PIPE_SWIZZLE_X;
+		output_swz[PIPE_SWIZZLE_Z] = inverted ?
+			PIPE_SWIZZLE_X : PIPE_SWIZZLE_W;
+		output_swz[PIPE_SWIZZLE_X] = PIPE_SWIZZLE_Z;
+		output_swz[PIPE_SWIZZLE_W] = PIPE_SWIZZLE_Y;
+	} else if (swizzle[PIPE_SWIZZLE_Z] < PIPE_SWIZZLE_Z &&
+		   swizzle[PIPE_SWIZZLE_W] < PIPE_SWIZZLE_Z) {
+		const bool inverted =
+			(swizzle[PIPE_SWIZZLE_W] == PIPE_SWIZZLE_X) ^
+			(swizzle[PIPE_SWIZZLE_X] == PIPE_SWIZZLE_1);
+		output_swz[PIPE_SWIZZLE_Z] = inverted ?
+			PIPE_SWIZZLE_W : PIPE_SWIZZLE_X;
+		output_swz[PIPE_SWIZZLE_W] = inverted ?
+			PIPE_SWIZZLE_X : PIPE_SWIZZLE_W;
+		output_swz[PIPE_SWIZZLE_X] = PIPE_SWIZZLE_Z;
+	} else if (swizzle[PIPE_SWIZZLE_X] < PIPE_SWIZZLE_Z &&
+		   swizzle[PIPE_SWIZZLE_W] < PIPE_SWIZZLE_Z) {
+		output_swz[PIPE_SWIZZLE_W] = PIPE_SWIZZLE_Y;
+		output_swz[PIPE_SWIZZLE_Y] = PIPE_SWIZZLE_W;
+	} else if (swizzle[PIPE_SWIZZLE_Y] < PIPE_SWIZZLE_Z &&
+		   swizzle[PIPE_SWIZZLE_W] < PIPE_SWIZZLE_Z) {
+		const bool inverted =
+			(swizzle[PIPE_SWIZZLE_Y] == PIPE_SWIZZLE_X) ^
+			(swizzle[PIPE_SWIZZLE_Z] == PIPE_SWIZZLE_1);
+		output_swz[PIPE_SWIZZLE_Y] = inverted ?
+			PIPE_SWIZZLE_Y : PIPE_SWIZZLE_X;
+		output_swz[PIPE_SWIZZLE_W] = inverted ?
+			PIPE_SWIZZLE_X : PIPE_SWIZZLE_Y;
+		output_swz[PIPE_SWIZZLE_X] = PIPE_SWIZZLE_W;
+	}
+}
+
 static void cayman_convert_border_color(union pipe_color_union *in,
                                         union pipe_color_union *out,
                                         struct pipe_sampler_view *view)
 {
-   enum  pipe_format format = view->format;
-   const struct util_format_description *d = util_format_description(format);
+	const enum pipe_format format = view->format;
+	const struct util_format_description *d = util_format_description(format);
 
-   if ((!util_format_is_alpha(format) &&
-        !util_format_is_luminance(format) &&
-        !util_format_is_luminance_alpha(format) &&
-        !util_format_is_intensity(format) &&
-        //!util_format_is_depth_or_stencil(format) &&
-        (format != PIPE_FORMAT_RGTC1_SNORM) &&
-        (format != PIPE_FORMAT_RGTC1_UNORM) &&
-        (format != PIPE_FORMAT_RGTC2_SNORM) &&
-        (format != PIPE_FORMAT_RGTC2_UNORM) &&
-        !(d->channel[0].size < 8) &&
-        (d->nr_channels > 2)) ||
-       (util_format_is_srgb(format) ||
-        util_format_is_s3tc(format))
-       ) {
-                const float values[PIPE_SWIZZLE_MAX] = {
-                   in->f[0], in->f[1], in->f[2], in->f[3], 0.0f, 1.0f, 0.0f /* none */
-                };
+	if (unlikely((d->nr_channels <= 2 &&
+		      !util_format_is_compressed(format)) ||
+		     format == PIPE_FORMAT_RGTC1_UNORM ||
+		     format == PIPE_FORMAT_RGTC1_SNORM ||
+		     format == PIPE_FORMAT_RGTC2_UNORM ||
+		     format == PIPE_FORMAT_RGTC2_SNORM)) {
+		const unsigned swizzle[4] = { view->swizzle_r, view->swizzle_g,
+					      view->swizzle_b, view->swizzle_a };
+		unsigned output_swz[4];
 
-                STATIC_ASSERT(PIPE_SWIZZLE_0 == 4);
+		if ((d->nr_channels == 2 &&
+		     (swizzle[PIPE_SWIZZLE_X] > PIPE_SWIZZLE_Y ||
+		      swizzle[PIPE_SWIZZLE_Y] > PIPE_SWIZZLE_Y)) ||
+		    format == PIPE_FORMAT_RGTC2_UNORM ||
+		    format == PIPE_FORMAT_RGTC2_SNORM) {
+			border_swizzle_nr_channels_2(swizzle, output_swz);
+		} else if (d->nr_channels == 1 && swizzle[PIPE_SWIZZLE_X] != PIPE_SWIZZLE_X) {
+			memcpy(output_swz, neutral_swz, sizeof(output_swz));
+			for (unsigned i = PIPE_SWIZZLE_Y; i <= PIPE_SWIZZLE_W; ++i) {
+				if (swizzle[i] == PIPE_SWIZZLE_X) {
+					output_swz[PIPE_SWIZZLE_W] = i;
+					output_swz[i] = PIPE_SWIZZLE_W;
+					break;
+				}
+			}
+		} else {
+			memcpy(output_swz, neutral_swz, sizeof(output_swz));
+		}
+		out->f[output_swz[0]] = in->f[0];
+		out->f[output_swz[1]] = in->f[1];
+		out->f[output_swz[2]] = in->f[2];
+		out->f[output_swz[3]] = in->f[3];
+	} else if ((!util_format_is_alpha(format) &&
+		    !util_format_is_luminance(format) &&
+		    !util_format_is_luminance_alpha(format) &&
+		    !util_format_is_intensity(format) &&
+		    //!util_format_is_depth_or_stencil(format) &&
+		    !(d->channel[0].size < 8) &&
+		    (d->nr_channels > 2)) ||
+		   (util_format_is_srgb(format) ||
+		    util_format_is_s3tc(format) ||
+		    format == PIPE_FORMAT_BPTC_RGBA_UNORM ||
+		    format == PIPE_FORMAT_BPTC_RGB_FLOAT ||
+		    format == PIPE_FORMAT_BPTC_RGB_UFLOAT)) {
+		const float values[PIPE_SWIZZLE_MAX] = {
+			in->f[0], in->f[1], in->f[2], in->f[3], 0.0f, 1.0f, 0.0f /* none */
+		};
+
+		STATIC_ASSERT(PIPE_SWIZZLE_0 == 4);
                 STATIC_ASSERT(PIPE_SWIZZLE_1 == 5);
                 STATIC_ASSERT(PIPE_SWIZZLE_NONE == 6);
                 STATIC_ASSERT(PIPE_SWIZZLE_MAX == 7);
@@ -2439,61 +2521,95 @@ static void cayman_convert_border_color(union pipe_color_union *in,
                 out->f[1] = values[view->swizzle_g];
                 out->f[2] = values[view->swizzle_b];
                 out->f[3] = values[view->swizzle_a];
-   } else {
-      memcpy(out->f, in->f, 4 * sizeof(float));
-   }
+	} else {
+		memcpy(out->f, in->f, 4 * sizeof(float));
+	}
 }
 
 static void evergreen_convert_border_color(union pipe_color_union *in,
                                            union pipe_color_union *out,
                                            struct pipe_sampler_view *view)
 {
-   enum  pipe_format format = view->format;
-   const struct util_format_description *d = util_format_description(format);
+	const enum pipe_format format = view->format;
+	const struct util_format_description *d = util_format_description(format);
+	unsigned swizzle[4] = { view->swizzle_r, view->swizzle_g,
+				view->swizzle_b, view->swizzle_a };
+	const unsigned *input_swz = swizzle;
+	const unsigned *output_swz = neutral_swz;
+	unsigned misc_swz[4];
+	const bool is_luminance_or_alpha =
+		util_format_is_alpha(format) ||
+		util_format_is_luminance(format) ||
+		util_format_is_luminance_alpha(format);
+	const bool is_lai =
+		is_luminance_or_alpha ||
+		util_format_is_intensity(format) ||
+		d->channel[0].size < 8;
 
-   int swizzle[4] = { view->swizzle_r, view->swizzle_g, view->swizzle_b,
-                      view->swizzle_a };
+	if (is_lai)
+		memcpy(swizzle, neutral_swz, sizeof(swizzle));
 
-   bool is_lai = util_format_is_alpha(format) ||
-                 util_format_is_luminance(format) ||
-                 util_format_is_luminance_alpha(format) ||
-                 util_format_is_intensity(format) ||
-                 d->channel[0].size < 8;
+	if (!util_format_is_depth_or_stencil(format)) {
+		const bool is_pure_integer = util_format_is_pure_integer(format);
 
-   if (is_lai) {
-         for (int i = 0; i < 4; ++i) {
-            swizzle[i] = i;
-         }
-   }
+		if (unlikely((d->nr_channels <= 2 && !util_format_is_compressed(format)) ||
+			     format == PIPE_FORMAT_RGTC1_UNORM ||
+			     format == PIPE_FORMAT_RGTC1_SNORM ||
+			     format == PIPE_FORMAT_RGTC2_UNORM ||
+			     format == PIPE_FORMAT_RGTC2_SNORM)) {
+			if ((d->nr_channels == 2 &&
+			     (swizzle[PIPE_SWIZZLE_X] > PIPE_SWIZZLE_Y ||
+			      swizzle[PIPE_SWIZZLE_Y] > PIPE_SWIZZLE_Y)) ||
+			    format == PIPE_FORMAT_RGTC2_UNORM ||
+			    format == PIPE_FORMAT_RGTC2_SNORM) {
+				border_swizzle_nr_channels_2(swizzle, misc_swz);
+				input_swz = neutral_swz;
+				output_swz = misc_swz;
+			} else if (d->nr_channels == 1 && swizzle[PIPE_SWIZZLE_X] != PIPE_SWIZZLE_X) {
+				for (unsigned i = PIPE_SWIZZLE_Y; i <= PIPE_SWIZZLE_W; ++i) {
+					if (swizzle[i] == PIPE_SWIZZLE_X) {
+						memcpy(misc_swz, neutral_swz, sizeof(misc_swz));
+						misc_swz[PIPE_SWIZZLE_W] = i;
+						misc_swz[i] = PIPE_SWIZZLE_W;
+						input_swz = neutral_swz;
+						output_swz = misc_swz;
+						break;
+					}
+				}
+			}
+		}
 
-   if (!util_format_is_depth_or_stencil(format)) {
+		for (unsigned i = 0; i <= PIPE_SWIZZLE_W; ++i) {
+			unsigned swz = swizzle[i];
 
-      for (int i = 0; i < 4; ++i) {
+			if (swz == PIPE_SWIZZLE_0) {
+				out->f[output_swz[i]] = 0.0f;
+				continue;
+			}
 
-         if (swizzle[i] == 4) {
-            out->f[i] = 0.0f;
-            continue;
-         }
+			if (swz == PIPE_SWIZZLE_1) {
+				out->f[output_swz[i]] = 1.0f;
+				continue;
+			}
 
-         if (swizzle[i] == 5) {
-            out->f[i] = 1.0f;
-            continue;
-         }
-
-         if (util_format_is_pure_integer(format)) {
-            int cs = d->channel[d->swizzle[i]].size;
-            if (d->channel[d->swizzle[i]].type == UTIL_FORMAT_TYPE_SIGNED)
-               out->f[i] = ((double)(in->i[swizzle[i]])) / ((1ul << (cs - 1)) - 1 );
-            else if (d->channel[d->swizzle[i]].type == UTIL_FORMAT_TYPE_UNSIGNED)
-               out->f[i] = ((double)(in->ui[swizzle[i]])) / ((1ul << cs) - 1 );
-            else
-               out->f[i] = 0;
-         } else {
-            out->f[i] = in->f[swizzle[i]];
-         }
-      }
-
-   } else {
+			if (is_pure_integer) {
+				if (is_luminance_or_alpha)
+					swz = d->swizzle[i];
+				{
+					const unsigned cs = d->channel[swz].size;
+					const unsigned type = d->channel[swz].type;
+					if (type == UTIL_FORMAT_TYPE_SIGNED)
+						out->f[output_swz[i]] = ((double)(in->i[input_swz[i]])) / ((1ul << (cs - 1)) - 1 );
+					else if (type == UTIL_FORMAT_TYPE_UNSIGNED)
+						out->f[output_swz[i]] = ((double)(in->ui[input_swz[i]])) / ((1ul << cs) - 1 );
+					else
+						out->f[output_swz[i]] = 0;
+				}
+			} else {
+				out->f[output_swz[i]] = in->f[input_swz[i]];
+			}
+		}
+	} else {
 		switch (format) {
 		case PIPE_FORMAT_X24S8_UINT:
 		case PIPE_FORMAT_X32_S8X24_UINT:
@@ -4599,9 +4715,11 @@ void evergreen_init_state_functions(struct r600_context *rctx)
  * uint32_t perpatch_output_offset
  * and the same constbuf is bound to LS/HS/VS(ES).
  */
-void evergreen_setup_tess_constants(struct r600_context *rctx, const struct pipe_draw_info *info, unsigned *num_patches)
+void evergreen_setup_tess_constants(struct r600_context *rctx,
+				    const struct pipe_draw_info *info,
+				    unsigned *num_patches,
+				    const bool vertexid)
 {
-	struct pipe_constant_buffer constbuf = {0};
 	struct r600_pipe_shader_selector *tcs = rctx->tcs_shader ? rctx->tcs_shader : rctx->tes_shader;
 	struct r600_pipe_shader_selector *ls = rctx->vs_shader;
 	unsigned num_tcs_input_cp = rctx->patch_vertices;
@@ -4612,7 +4730,6 @@ void evergreen_setup_tess_constants(struct r600_context *rctx, const struct pipe
 	unsigned input_vertex_size, output_vertex_size;
 	unsigned input_patch_size, pervertex_output_patch_size, output_patch_size;
 	unsigned output_patch0_offset, perpatch_output_offset, lds_size;
-	uint32_t values[8];
 	unsigned num_waves;
 	unsigned num_pipes = rctx->screen->b.info.r600_max_quad_pipes;
 	unsigned wave_divisor = (16 * num_pipes);
@@ -4621,8 +4738,16 @@ void evergreen_setup_tess_constants(struct r600_context *rctx, const struct pipe
 
 	if (!rctx->tes_shader) {
 		rctx->lds_alloc = 0;
-		rctx->b.b.set_constant_buffer(&rctx->b.b, PIPE_SHADER_VERTEX,
-					      R600_LDS_INFO_CONST_BUFFER, false, NULL);
+
+		if (unlikely(vertexid))
+			rctx->b.b.set_constant_buffer(&rctx->b.b, PIPE_SHADER_VERTEX,
+						      R600_LDS_INFO_CONST_BUFFER, false,
+						      &rctx->lds_constbuf_pipe);
+		else
+			rctx->b.b.set_constant_buffer(&rctx->b.b, PIPE_SHADER_VERTEX,
+						      R600_LDS_INFO_CONST_BUFFER, false,
+						      NULL);
+
 		rctx->b.b.set_constant_buffer(&rctx->b.b, PIPE_SHADER_TESS_CTRL,
 					      R600_LDS_INFO_CONST_BUFFER, false, NULL);
 		rctx->b.b.set_constant_buffer(&rctx->b.b, PIPE_SHADER_TESS_EVAL,
@@ -4662,15 +4787,15 @@ void evergreen_setup_tess_constants(struct r600_context *rctx, const struct pipe
 
 	lds_size = output_patch0_offset + output_patch_size * *num_patches;
 
-	values[0] = input_patch_size;
-	values[1] = input_vertex_size;
-	values[2] = num_tcs_input_cp;
-	values[3] = num_tcs_output_cp;
+	rctx->lds_constant_buffer.input_patch_size = input_patch_size;
+	rctx->lds_constant_buffer.input_vertex_size = input_vertex_size;
+	rctx->lds_constant_buffer.num_tcs_input_cp = num_tcs_input_cp;
+	rctx->lds_constant_buffer.num_tcs_output_cp = num_tcs_output_cp;
 
-	values[4] = output_patch_size;
-	values[5] = output_vertex_size;
-	values[6] = output_patch0_offset;
-	values[7] = perpatch_output_offset;
+	rctx->lds_constant_buffer.output_patch_size = output_patch_size;
+	rctx->lds_constant_buffer.output_vertex_size = output_vertex_size;
+	rctx->lds_constant_buffer.output_patch0_offset = output_patch0_offset;
+	rctx->lds_constant_buffer.perpatch_output_offset = perpatch_output_offset;
 
 	/* docs say HS_NUM_WAVES - CEIL((LS_HS_CONFIG.NUM_PATCHES *
 	   LS_HS_CONFIG.HS_NUM_OUTPUT_CP) / (NUM_GOOD_PIPES * 16)) */
@@ -4682,15 +4807,15 @@ void evergreen_setup_tess_constants(struct r600_context *rctx, const struct pipe
 	rctx->last_tcs = tcs;
 	rctx->last_num_tcs_input_cp = num_tcs_input_cp;
 
-	constbuf.user_buffer = values;
-	constbuf.buffer_size = 8 * 4;
-
 	rctx->b.b.set_constant_buffer(&rctx->b.b, PIPE_SHADER_VERTEX,
-				      R600_LDS_INFO_CONST_BUFFER, false, &constbuf);
+				      R600_LDS_INFO_CONST_BUFFER, false,
+				      &rctx->lds_constbuf_pipe);
 	rctx->b.b.set_constant_buffer(&rctx->b.b, PIPE_SHADER_TESS_CTRL,
-				      R600_LDS_INFO_CONST_BUFFER, false, &constbuf);
+				      R600_LDS_INFO_CONST_BUFFER, false,
+				      &rctx->lds_constbuf_pipe);
 	rctx->b.b.set_constant_buffer(&rctx->b.b, PIPE_SHADER_TESS_EVAL,
-				      R600_LDS_INFO_CONST_BUFFER, true, &constbuf);
+				      R600_LDS_INFO_CONST_BUFFER, true,
+				      &rctx->lds_constbuf_pipe);
 }
 
 uint32_t evergreen_get_ls_hs_config(struct r600_context *rctx,

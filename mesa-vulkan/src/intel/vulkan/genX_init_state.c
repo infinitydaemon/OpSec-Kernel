@@ -31,7 +31,7 @@
 
 #include "vk_standard_sample_locations.h"
 
-#if GFX_VERx10 >= 125 && ANV_SUPPORT_RT
+#if GFX_VERx10 >= 125 && ANV_SUPPORT_RT_GRL
 #include "grl/genX_grl.h"
 #endif
 
@@ -183,6 +183,17 @@ genX(emit_slice_hashing_state)(struct anv_device *device,
 }
 
 static void
+state_system_mem_fence_address_emit(struct anv_device *device, struct anv_batch *batch)
+{
+#if GFX_VERx10 >= 200
+   struct anv_address addr = { .bo = device->mem_fence_bo };
+   anv_batch_emit(batch, GENX(STATE_SYSTEM_MEM_FENCE_ADDRESS), mem_fence_addr) {
+      mem_fence_addr.SystemMemoryFenceAddress = addr;
+   }
+#endif
+}
+
+static void
 init_common_queue_state(struct anv_queue *queue, struct anv_batch *batch)
 {
    UNUSED struct anv_device *device = queue->device;
@@ -237,7 +248,10 @@ init_common_queue_state(struct anv_queue *queue, struct anv_batch *batch)
    uint32_t mocs = device->isl_dev.mocs.internal;
    anv_batch_emit(batch, GENX(STATE_BASE_ADDRESS), sba) {
       sba.GeneralStateBaseAddress = (struct anv_address) { NULL, 0 };
-      sba.GeneralStateBufferSize  = 0xfffff;
+      sba.GeneralStateBufferSize  = DIV_ROUND_UP(
+         device->physical->va.first_2mb.size +
+         device->physical->va.general_state_pool.size +
+         device->physical->va.low_heap.size, 4096);
       sba.GeneralStateMOCS = mocs;
       sba.GeneralStateBaseAddressModifyEnable = true;
       sba.GeneralStateBufferSizeModifyEnable = true;
@@ -312,6 +326,18 @@ init_common_queue_state(struct anv_queue *queue, struct anv_batch *batch)
 #endif
    }
 
+   /* Disable the POOL_ALLOC mechanism in HW. We found that this state can get
+    * corrupted (likely due to leaking from another context), the default
+    * value should be disabled. It doesn't cost anything to set it once at
+    * device initialization.
+    */
+#if GFX_VER >= 11 && GFX_VERx10 < 125
+   anv_batch_emit(batch, GENX(3DSTATE_BINDING_TABLE_POOL_ALLOC), btpa) {
+      btpa.MOCS = mocs;
+      btpa.BindingTablePoolEnable = false;
+   }
+#endif
+
    struct mi_builder b;
    mi_builder_init(&b, device->info, batch);
 
@@ -338,12 +364,14 @@ init_common_queue_state(struct anv_queue *queue, struct anv_batch *batch)
              */
             .offset = device->btd_fifo_bo->offset,
          };
-#if INTEL_NEEDS_WA_14017794102
+#if INTEL_NEEDS_WA_14017794102 || INTEL_NEEDS_WA_14023061436
          btd.BTDMidthreadpreemption = false;
 #endif
       }
    }
 #endif
+
+   state_system_mem_fence_address_emit(device, batch);
 }
 
 #if GFX_VER >= 20
@@ -592,8 +620,8 @@ init_render_queue_state(struct anv_queue *queue, bool is_companion_rcs_batch)
     * the dynamic state base address we need to emit this instruction after
     * STATE_BASE_ADDRESS in init_common_queue_state().
     */
-#if GFX_VER == 11
-   anv_batch_emit(batch, GENX(3DSTATE_CPS), cps);
+#if GFX_VER >= 30
+   anv_batch_emit(batch, GENX(3DSTATE_COARSE_PIXEL), cps);
 #elif GFX_VER >= 12
    anv_batch_emit(batch, GENX(3DSTATE_CPS_POINTERS), cps) {
       assert(device->cps_states.alloc_size != 0);
@@ -601,10 +629,15 @@ init_render_queue_state(struct anv_queue *queue, bool is_companion_rcs_batch)
       cps.CoarsePixelShadingStateArrayPointer =
          device->cps_states.offset;
    }
+#elif GFX_VER == 11
+   anv_batch_emit(batch, GENX(3DSTATE_CPS), cps);
 #endif
 
 #if GFX_VERx10 >= 125
    anv_batch_emit(batch, GENX(STATE_COMPUTE_MODE), cm) {
+#if GFX_VER >= 30
+      cm.EnableVariableRegisterSizeAllocation = true;
+#endif
       cm.Mask1 = 0xffff;
 #if GFX_VERx10 >= 200
       cm.Mask2 = 0xffff;
@@ -739,9 +772,26 @@ init_compute_queue_state(struct anv_queue *queue)
    }
 
    anv_batch_emit(batch, GENX(STATE_COMPUTE_MODE), cm) {
-#if GFX_VER < 20
-      cm.PixelAsyncComputeThreadLimit = 4;
+#if GFX_VER >= 30
+      cm.EnableVariableRegisterSizeAllocationMask = 1;
+      cm.EnableVariableRegisterSizeAllocation = true;
+#endif
+#if GFX_VER >= 20
+      cm.AsyncComputeThreadLimit = ACTL_Max8;
+      cm.ZPassAsyncComputeThreadLimit = ZPACTL_Max60;
+      cm.ZAsyncThrottlesettings = ZATS_DefertoAsyncComputeThreadLimit;
+      cm.AsyncComputeThreadLimitMask = 0x7;
+      cm.ZPassAsyncComputeThreadLimitMask = 0x7;
+      cm.ZAsyncThrottlesettingsMask = 0x3;
+#else
+      cm.PixelAsyncComputeThreadLimit = PACTL_Max24;
+      cm.ZPassAsyncComputeThreadLimit = ZPACTL_Max60;
       cm.PixelAsyncComputeThreadLimitMask = 0x7;
+      cm.ZPassAsyncComputeThreadLimitMask = 0x7;
+      if (intel_device_info_is_mtl_or_arl(devinfo)) {
+         cm.ZAsyncThrottlesettings = ZATS_DefertoPixelAsyncComputeThreadLimit;
+         cm.ZAsyncThrottlesettingsMask = 0x3;
+      }
 #endif
    }
 #endif
@@ -777,20 +827,20 @@ init_compute_queue_state(struct anv_queue *queue)
 static VkResult
 init_copy_video_queue_state(struct anv_queue *queue)
 {
-#if GFX_VER >= 12
    struct anv_device *device = queue->device;
-   const struct intel_device_info *devinfo = device->info;
+   UNUSED const struct intel_device_info *devinfo = device->info;
 
+   struct anv_async_submit *submit;
+   VkResult result = anv_async_submit_create(queue,
+                                             &device->batch_bo_pool,
+                                             false, true, &submit);
+   if (result != VK_SUCCESS)
+      return result;
+
+   struct anv_batch *batch = &submit->batch;
+
+#if GFX_VER >= 12
    if (devinfo->has_aux_map) {
-      struct anv_async_submit *submit;
-      VkResult result = anv_async_submit_create(queue,
-                                                &device->batch_bo_pool,
-                                                false, true, &submit);
-      if (result != VK_SUCCESS)
-         return result;
-
-      struct anv_batch *batch = &submit->batch;
-
       uint64_t reg = GENX(VD0_AUX_TABLE_BASE_ADDR_num);
 
       if (queue->family->engine_class == INTEL_ENGINE_CLASS_COPY) {
@@ -810,7 +860,14 @@ init_copy_video_queue_state(struct anv_queue *queue)
          lri.RegisterOffset = reg + 4;
          lri.DataDWord = aux_base_addr >> 32;
       }
+   }
+#else
+   assert(!queue->device->info->has_aux_map);
+#endif
 
+   state_system_mem_fence_address_emit(device, batch);
+
+   if (batch->start != batch->next) {
       anv_batch_emit(batch, GENX(MI_BATCH_BUFFER_END), bbe);
 
       result = batch->status;
@@ -826,10 +883,9 @@ init_copy_video_queue_state(struct anv_queue *queue)
       }
 
       queue->init_submit = submit;
+   } else {
+      anv_async_submit_destroy(submit);
    }
-#else
-   assert(!queue->device->info->has_aux_map);
-#endif
 
    return VK_SUCCESS;
 }
@@ -838,12 +894,19 @@ void
 genX(init_physical_device_state)(ASSERTED struct anv_physical_device *pdevice)
 {
    assert(pdevice->info.verx10 == GFX_VERx10);
+
 #if GFX_VERx10 >= 125 && ANV_SUPPORT_RT
+#if ANV_SUPPORT_RT_GRL
    genX(grl_load_rt_uuid)(pdevice->rt_uuid);
    pdevice->max_grl_scratch_size = genX(grl_max_scratch_size)();
+#else
+   STATIC_ASSERT(sizeof(ANV_RT_UUID_MACRO) == VK_UUID_SIZE);
+   memcpy(pdevice->rt_uuid, ANV_RT_UUID_MACRO, VK_UUID_SIZE);
+#endif
 #endif
 
    pdevice->cmd_emit_timestamp = genX(cmd_emit_timestamp);
+   pdevice->cmd_capture_data = genX(cmd_capture_data);
 
    pdevice->gpgpu_pipeline_value = GPGPU;
 
@@ -926,7 +989,7 @@ genX(init_device_state)(struct anv_device *device)
 void
 genX(init_cps_device_state)(struct anv_device *device)
 {
-#if GFX_VER >= 12
+#if GFX_VER >= 12 && GFX_VER < 30
    void *cps_state_ptr = device->cps_states.map;
 
    /* Disabled CPS mode */
@@ -981,7 +1044,7 @@ genX(init_cps_device_state)(struct anv_device *device)
          }
       }
    }
-#endif /* GFX_VER >= 12 */
+#endif /* GFX_VER >= 12 && GFX_VER < 30 */
 }
 
 void
@@ -1114,9 +1177,21 @@ vk_to_intel_tex_filter(VkFilter filter, bool anisotropyEnable)
    default:
       unreachable("Invalid filter");
    case VK_FILTER_NEAREST:
-      return anisotropyEnable ? MAPFILTER_ANISOTROPIC : MAPFILTER_NEAREST;
+      return anisotropyEnable ?
+#if GFX_VER >= 30
+             MAPFILTER_ANISOTROPIC_FAST :
+#else
+             MAPFILTER_ANISOTROPIC :
+#endif
+             MAPFILTER_NEAREST;
    case VK_FILTER_LINEAR:
-      return anisotropyEnable ? MAPFILTER_ANISOTROPIC : MAPFILTER_LINEAR;
+      return anisotropyEnable ?
+#if GFX_VER >= 30
+             MAPFILTER_ANISOTROPIC_FAST :
+#else
+             MAPFILTER_ANISOTROPIC :
+#endif
+             MAPFILTER_LINEAR;
    }
 }
 
@@ -1230,7 +1305,7 @@ VkResult genX(CreateSampler)(
 
       const struct anv_format *format_desc =
          sampler->vk.format != VK_FORMAT_UNDEFINED ?
-         anv_get_format(sampler->vk.format) : NULL;
+         anv_get_format(device->physical, sampler->vk.format) : NULL;
 
       if (format_desc && format_desc->n_planes == 1 &&
           !isl_swizzle_is_identity(format_desc->planes[0].swizzle)) {
@@ -1268,7 +1343,7 @@ VkResult genX(CreateSampler)(
        *   "Mip Mode Filter must be set to MIPFILTER_NONE for Planar YUV surfaces."
        */
       enum isl_format plane0_isl_format = sampler->vk.ycbcr_conversion ?
-         anv_get_format(sampler->vk.format)->planes[0].isl_format :
+         anv_get_format(device->physical, sampler->vk.format)->planes[0].isl_format :
          ISL_FORMAT_UNSUPPORTED;
       const bool isl_format_is_planar_yuv =
          plane0_isl_format != ISL_FORMAT_UNSUPPORTED &&
@@ -1284,7 +1359,8 @@ VkResult genX(CreateSampler)(
          .TextureBorderColorMode = DX10OGL,
 
 #if GFX_VER >= 11
-         .CPSLODCompensationEnable = true,
+         /* This field is marked as disabled on Gfx20+ */
+         .CPSLODCompensationEnable = device->info->ver < 20,
 #endif
 
          .LODPreClampMode = CLAMP_MODE_OGL,
@@ -1426,9 +1502,15 @@ genX(apply_task_urb_workaround)(struct anv_cmd_buffer *cmd_buffer)
       return;
 
    for (int i = 0; i <= MESA_SHADER_GEOMETRY; i++) {
+#if GFX_VER >= 12
+      anv_batch_emit(&cmd_buffer->batch, GENX(3DSTATE_URB_ALLOC_VS), urb) {
+         urb._3DCommandSubOpcode += i;
+      }
+#else
       anv_batch_emit(&cmd_buffer->batch, GENX(3DSTATE_URB_VS), urb) {
          urb._3DCommandSubOpcode += i;
       }
+#endif
    }
 
    anv_batch_emit(&cmd_buffer->batch, GENX(3DSTATE_URB_ALLOC_MESH), zero);

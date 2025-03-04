@@ -45,7 +45,6 @@
 #include "main/transformfeedback.h"
 #include "main/uniforms.h"
 #include "compiler/glsl/glsl_parser_extras.h"
-#include "compiler/glsl/ir_uniform.h"
 #include "program/program.h"
 #include "program/prog_parameter.h"
 #include "util/ralloc.h"
@@ -94,7 +93,7 @@ _mesa_new_pipeline_object(struct gl_context *ctx, GLuint name)
 void
 _mesa_init_pipeline(struct gl_context *ctx)
 {
-   _mesa_InitHashTable(&ctx->Pipeline.Objects);
+   _mesa_InitHashTable(&ctx->Pipeline.Objects, ctx->Shared->ReuseGLNames);
 
    ctx->Pipeline.Current = NULL;
 

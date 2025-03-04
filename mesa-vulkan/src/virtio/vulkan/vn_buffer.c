@@ -32,6 +32,9 @@ vn_buffer_get_cache_index(const VkBufferCreateInfo *create_info,
     *
     * Btw, we assume VkBufferCreateFlagBits won't exhaust all 32bits, at least
     * no earlier than VkBufferUsageFlagBits.
+    *
+    * TODO: extend cache to cover VkBufferUsageFlags2CreateInfo (introduced in
+    * VK_KHR_maintenance5 and promoted to 1.4).
     */
    assert(!(create_info->flags & 0x80000000));
 
@@ -454,6 +457,13 @@ vn_BindBufferMemory2(VkDevice device,
    struct vn_device *dev = vn_device_from_handle(device);
    vn_async_vkBindBufferMemory2(dev->primary_ring, device, bindInfoCount,
                                 pBindInfos);
+
+   for (uint32_t i = 0; i < bindInfoCount; i++) {
+      const VkBindMemoryStatus *bind_status =
+         vk_find_struct((void *)pBindInfos[i].pNext, BIND_MEMORY_STATUS);
+      if (bind_status)
+         *bind_status->pResult = VK_SUCCESS;
+   }
 
    return VK_SUCCESS;
 }

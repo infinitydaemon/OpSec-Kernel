@@ -45,7 +45,7 @@ intel_nir_lower_non_uniform_barycentric_at_sample_instr(nir_builder *b,
       return false;
 
    if (nir_src_is_always_uniform(intrin->src[0]) ||
-       !nir_src_is_divergent(intrin->src[0]))
+       !nir_src_is_divergent(&intrin->src[0]))
       return false;
 
    if (intrin->def.parent_instr->pass_flags != 0)
@@ -93,7 +93,7 @@ intel_nir_lower_non_uniform_interpolated_input_instr(nir_builder *b,
       return false;
 
    if (nir_src_is_always_uniform(bary->src[0]) ||
-       !nir_src_is_divergent(bary->src[0]))
+       !nir_src_is_divergent(&bary->src[0]))
       return false;
 
    nir_def *sample_id = bary->src[0].ssa;
@@ -131,6 +131,7 @@ intel_nir_lower_non_uniform_barycentric_at_sample(nir_shader *nir)
 {
    bool progress;
 
+   nir_divergence_analysis(nir);
    nir_shader_clear_pass_flags(nir);
 
    progress = nir_shader_instructions_pass(

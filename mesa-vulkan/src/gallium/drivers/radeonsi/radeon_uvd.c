@@ -80,9 +80,10 @@ static int flush(struct ruvd_decoder *dec, unsigned flags, struct pipe_fence_han
    return dec->ws->cs_flush(&dec->cs, flags, fence);
 }
 
-static int ruvd_dec_get_decoder_fence(struct pipe_video_codec *decoder,
-                                      struct pipe_fence_handle *fence,
-                                      uint64_t timeout) {
+static int ruvd_dec_fence_wait(struct pipe_video_codec *decoder,
+                               struct pipe_fence_handle *fence,
+                               uint64_t timeout)
+{
    struct ruvd_decoder *dec = (struct ruvd_decoder *)decoder;
    return dec->ws->fence_wait(dec->ws, fence, timeout);
 }
@@ -513,32 +514,12 @@ static struct ruvd_h264 get_h264_msg(struct ruvd_decoder *dec, struct pipe_h264_
    result.sps_info_flags |= pic->pps->sps->frame_mbs_only_flag << 2;
    result.sps_info_flags |= pic->pps->sps->delta_pic_order_always_zero_flag << 3;
 
+   result.chroma_format = pic->pps->sps->chroma_format_idc;
    result.bit_depth_luma_minus8 = pic->pps->sps->bit_depth_luma_minus8;
    result.bit_depth_chroma_minus8 = pic->pps->sps->bit_depth_chroma_minus8;
    result.log2_max_frame_num_minus4 = pic->pps->sps->log2_max_frame_num_minus4;
    result.pic_order_cnt_type = pic->pps->sps->pic_order_cnt_type;
    result.log2_max_pic_order_cnt_lsb_minus4 = pic->pps->sps->log2_max_pic_order_cnt_lsb_minus4;
-
-   switch (dec->base.chroma_format) {
-   case PIPE_VIDEO_CHROMA_FORMAT_NONE:
-      /* TODO: assert? */
-      break;
-   case PIPE_VIDEO_CHROMA_FORMAT_400:
-      result.chroma_format = 0;
-      break;
-   case PIPE_VIDEO_CHROMA_FORMAT_420:
-      result.chroma_format = 1;
-      break;
-   case PIPE_VIDEO_CHROMA_FORMAT_422:
-      result.chroma_format = 2;
-      break;
-   case PIPE_VIDEO_CHROMA_FORMAT_444:
-      result.chroma_format = 3;
-      break;
-   case PIPE_VIDEO_CHROMA_FORMAT_440:
-      result.chroma_format = 4;
-      break;
-   }
 
    result.pps_info_flags = 0;
    result.pps_info_flags |= pic->pps->transform_8x8_mode_flag << 0;
@@ -1045,25 +1026,39 @@ static void ruvd_decode_bitstream(struct pipe_video_codec *decoder,
    if (!dec->bs_ptr)
       return;
 
-   for (i = 0; i < num_buffers; ++i) {
-      struct rvid_buffer *buf = &dec->bs_buffers[dec->cur_buffer];
-      unsigned new_size = dec->bs_size + sizes[i];
+   unsigned long total_bs_size = dec->bs_size;
+   for (i = 0; i < num_buffers; ++i)
+      total_bs_size += sizes[i];
 
-      if (new_size > buf->res->buf->size) {
-         dec->ws->buffer_unmap(dec->ws, buf->res->buf);
-         if (!si_vid_resize_buffer(dec->screen, &dec->cs, buf, new_size, NULL)) {
-            RVID_ERR("Can't resize bitstream buffer!");
+   struct rvid_buffer *buf = &dec->bs_buffers[dec->cur_buffer];
+
+   if (total_bs_size > buf->res->buf->size) {
+      dec->ws->buffer_unmap(dec->ws, buf->res->buf);
+      dec->bs_ptr = NULL;
+
+      total_bs_size = align(total_bs_size, 128);
+
+      if (!dec->bs_size) {
+         struct rvid_buffer old_buf = *buf;
+         if (!si_vid_create_buffer(dec->screen, buf, total_bs_size, buf->usage)) {
+            RVID_ERR("Can't create bitstream buffer!");
             return;
          }
-
-         dec->bs_ptr = dec->ws->buffer_map(dec->ws, buf->res->buf, &dec->cs,
-                                           PIPE_MAP_WRITE | RADEON_MAP_TEMPORARY);
-         if (!dec->bs_ptr)
-            return;
-
-         dec->bs_ptr += dec->bs_size;
+         si_vid_destroy_buffer(&old_buf);
+      } else if (!si_vid_resize_buffer(dec->base.context, &dec->cs, buf, total_bs_size, NULL)) {
+         RVID_ERR("Can't resize bitstream buffer!");
+         return;
       }
 
+      dec->bs_ptr = dec->ws->buffer_map(dec->ws, buf->res->buf, &dec->cs,
+                                        PIPE_MAP_WRITE | RADEON_MAP_TEMPORARY);
+      if (!dec->bs_ptr)
+         return;
+
+      dec->bs_ptr += dec->bs_size;
+   }
+
+   for (i = 0; i < num_buffers; ++i) {
       memcpy(dec->bs_ptr, buffers[i], sizes[i]);
       dec->bs_size += sizes[i];
       dec->bs_ptr += sizes[i];
@@ -1073,7 +1068,7 @@ static void ruvd_decode_bitstream(struct pipe_video_codec *decoder,
 /**
  * end decoding of the current frame
  */
-static void ruvd_end_frame(struct pipe_video_codec *decoder, struct pipe_video_buffer *target,
+static int ruvd_end_frame(struct pipe_video_codec *decoder, struct pipe_video_buffer *target,
                            struct pipe_picture_desc *picture)
 {
    struct ruvd_decoder *dec = (struct ruvd_decoder *)decoder;
@@ -1084,7 +1079,7 @@ static void ruvd_end_frame(struct pipe_video_codec *decoder, struct pipe_video_b
    assert(decoder);
 
    if (!dec->bs_ptr)
-      return;
+      return 1;
 
    msg_fb_it_buf = &dec->msg_fb_it_buffers[dec->cur_buffer];
    bs_buf = &dec->bs_buffers[dec->cur_buffer];
@@ -1143,7 +1138,6 @@ static void ruvd_end_frame(struct pipe_video_codec *decoder, struct pipe_video_b
          if (!si_vid_create_buffer(dec->screen, &dec->ctx, ctx_size, PIPE_USAGE_DEFAULT)) {
             RVID_ERR("Can't allocated context buffer.\n");
          }
-         si_vid_clear_buffer(decoder->context, &dec->ctx);
       }
 
       if (dec->ctx.res)
@@ -1169,7 +1163,7 @@ static void ruvd_end_frame(struct pipe_video_codec *decoder, struct pipe_video_b
 
    default:
       assert(0);
-      return;
+      return 1;
    }
 
    dec->msg->body.decode.db_surf_tile_config = dec->msg->body.decode.dt_surf_tile_config;
@@ -1199,6 +1193,7 @@ static void ruvd_end_frame(struct pipe_video_codec *decoder, struct pipe_video_b
 
    flush(dec, picture->flush_flags, picture->fence);
    next_buffer(dec);
+   return 0;
 }
 
 /**
@@ -1261,7 +1256,7 @@ struct pipe_video_codec *si_common_uvd_create_decoder(struct pipe_context *conte
    dec->base.decode_bitstream = ruvd_decode_bitstream;
    dec->base.end_frame = ruvd_end_frame;
    dec->base.flush = ruvd_flush;
-   dec->base.get_decoder_fence = ruvd_dec_get_decoder_fence;
+   dec->base.fence_wait = ruvd_dec_fence_wait;
    dec->base.destroy_fence = ruvd_dec_destroy_fence;
 
    dec->stream_type = profile2stream_type(dec, sctx->family);
@@ -1278,7 +1273,7 @@ struct pipe_video_codec *si_common_uvd_create_decoder(struct pipe_context *conte
    for (i = 0; i < 16; i++)
       dec->render_pic_list[i] = NULL;
    dec->fb_size = (sctx->family == CHIP_TONGA) ? FB_BUFFER_SIZE_TONGA : FB_BUFFER_SIZE;
-   bs_buf_size = width * height * (512 / (16 * 16));
+   bs_buf_size = align(width * height / 32, 128);
    for (i = 0; i < NUM_BUFFERS; ++i) {
       unsigned msg_fb_it_size = FB_BUFFER_OFFSET + dec->fb_size;
       STATIC_ASSERT(sizeof(struct ruvd_msg) <= FB_BUFFER_OFFSET);
@@ -1295,9 +1290,6 @@ struct pipe_video_codec *si_common_uvd_create_decoder(struct pipe_context *conte
          RVID_ERR("Can't allocated bitstream buffers.\n");
          goto error;
       }
-
-      si_vid_clear_buffer(context, &dec->msg_fb_it_buffers[i]);
-      si_vid_clear_buffer(context, &dec->bs_buffers[i]);
    }
 
    dpb_size = calc_dpb_size(dec);
@@ -1306,7 +1298,6 @@ struct pipe_video_codec *si_common_uvd_create_decoder(struct pipe_context *conte
          RVID_ERR("Can't allocated dpb.\n");
          goto error;
       }
-      si_vid_clear_buffer(context, &dec->dpb);
    }
 
    if (dec->stream_type == RUVD_CODEC_H264_PERF && sctx->family >= CHIP_POLARIS10) {
@@ -1315,7 +1306,6 @@ struct pipe_video_codec *si_common_uvd_create_decoder(struct pipe_context *conte
          RVID_ERR("Can't allocated context buffer.\n");
          goto error;
       }
-      si_vid_clear_buffer(context, &dec->ctx);
    }
 
    if (sctx->family >= CHIP_POLARIS10) {
@@ -1324,7 +1314,6 @@ struct pipe_video_codec *si_common_uvd_create_decoder(struct pipe_context *conte
          RVID_ERR("Can't allocated session ctx.\n");
          goto error;
       }
-      si_vid_clear_buffer(context, &dec->sessionctx);
    }
 
    if (sctx->family >= CHIP_VEGA10) {
@@ -1484,9 +1473,7 @@ void si_uvd_set_dt_surfaces(struct ruvd_msg *msg, struct radeon_surf *luma,
       break;
    case RUVD_SURFACE_TYPE_GFX9:
       msg->body.decode.dt_pitch = luma->u.gfx9.surf_pitch * luma->blk_w;
-      /* SWIZZLE LINEAR MODE */
-      msg->body.decode.dt_tiling_mode = RUVD_TILE_LINEAR;
-      msg->body.decode.dt_array_mode = RUVD_ARRAY_MODE_LINEAR;
+      msg->body.decode.dt_wa_chroma_bottom_offset = luma->u.gfx9.swizzle_mode;
       msg->body.decode.dt_luma_top_offset = texture_offset(luma, 0, type);
       msg->body.decode.dt_chroma_top_offset = texture_offset(chroma, 0, type);
       if (msg->body.decode.dt_field_mode) {

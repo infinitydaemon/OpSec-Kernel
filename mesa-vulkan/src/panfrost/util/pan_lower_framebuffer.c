@@ -202,7 +202,7 @@ static nir_def *
 pan_fsat(nir_builder *b, nir_def *v, bool is_signed)
 {
    if (is_signed)
-      return nir_fsat_signed_mali(b, v);
+      return nir_fsat_signed(b, v);
    else
       return nir_fsat(b, v);
 }
@@ -417,7 +417,7 @@ pan_unpack(nir_builder *b, const struct util_format_description *desc,
       break;
    }
 
-   fprintf(stderr, "%s\n", desc->name);
+   mesa_loge("%s\n", desc->name);
    unreachable("Unknown format");
 }
 
@@ -488,7 +488,7 @@ static nir_def *pan_pack(nir_builder *b,
       break;
    }
 
-   fprintf(stderr, "%s\n", desc->name);
+   mesa_loge("%s\n", desc->name);
    unreachable("Unknown format");
 }
 

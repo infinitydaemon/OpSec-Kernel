@@ -14,6 +14,7 @@
         - src/panfrost/ci/$GPU_VERSION-fails.txt
         - src/panfrost/ci/$GPU_VERSION-flakes.txt
         - src/panfrost/ci/$GPU_VERSION-skips.txt
+        - src/panfrost/ci/$DRIVER_NAME-skips.txt
         - src/panfrost/ci/$PIGLIT_TRACES_FILE
         - src/panfrost/include/*
         - src/panfrost/lib/*
@@ -27,7 +28,7 @@
       when: on_success
 
 .panfrost-midgard-manual-rules:
-  stage: arm
+  stage: arm-postmerge
   extends: .no-auto-retry
   rules:
     - !reference [.test, rules]
@@ -58,7 +59,7 @@
       when: on_success
 
 .panfrost-bifrost-gl-manual-rules:
-  stage: arm
+  stage: arm-postmerge
   extends: .no-auto-retry
   rules:
     - !reference [.test, rules]
@@ -74,7 +75,7 @@
         *panfrost_bifrost_file_list
       when: manual
 
-.panfrost-bifrost-vk-rules:
+.panfrost-vk-rules:
   stage: arm
   rules:
     - !reference [.test, rules]
@@ -90,8 +91,8 @@
         - src/panfrost/compiler/**/*
       when: on_success
 
-.panfrost-bifrost-vk-manual-rules:
-  stage: arm
+.panfrost-vk-manual-rules:
+  stage: arm-postmerge
   extends: .no-auto-retry
   rules:
     - !reference [.test, rules]
@@ -105,6 +106,39 @@
       when: manual
     - changes:
         *panfrost_bifrost_file_list
+      when: manual
+
+.panfrost-valhall-gl-rules:
+  stage: arm
+  rules:
+    - !reference [.test, rules]
+    - !reference [.collabora-farm-rules, rules]
+    - !reference [.gl-rules, rules]
+    - changes:
+        *panfrost_common_file_list
+      when: on_success
+    - changes:
+        *panfrost_gallium_file_list
+      when: on_success
+    - changes: &panfrost_valhall_file_list
+        - src/panfrost/compiler/**/*
+      when: on_success
+
+.panfrost-valhall-gl-manual-rules:
+  stage: arm-postmerge
+  extends: .no-auto-retry
+  rules:
+    - !reference [.test, rules]
+    - !reference [.collabora-farm-manual-rules, rules]
+    - !reference [.gl-manual-rules, rules]
+    - changes:
+        *panfrost_common_file_list
+      when: manual
+    - changes:
+        *panfrost_gallium_file_list
+      when: manual
+    - changes:
+        *panfrost_valhall_file_list
       when: manual
 
 .panfrost-test:
@@ -156,13 +190,14 @@
     GPU_VERSION: panfrost-g57
     KERNEL_IMAGE_TYPE: ""
     RUNNER_TAG: mesa-ci-x86-64-lava-mt8192-asurada-spherion-r0
+    # Force fixed 6.6 kernel, we're not reliably getting a GPU on 6.13
+    EXTERNAL_KERNEL_TAG: "v6.6.21-mesa-f8ea"
 
 .lava-rk3288-veyron-jaq:arm32:
   variables:
     BOOT_METHOD: depthcharge
     DEVICE_TYPE: rk3288-veyron-jaq
     DEQP_SUITE: panfrost-t760
-    DRIVER_NAME: panfrost
     DTB: rk3288-veyron-jaq
     FDO_CI_CONCURRENT: 6
     FARM: collabora
@@ -177,11 +212,25 @@
     DTB: $DEVICE_TYPE
     FARM: collabora
     GPU_VERSION: panfrost-t860
-    DRIVER_NAME: panfrost
 #   FDO_CI_CONCURRENT: ?
     BOOT_METHOD: depthcharge
     KERNEL_IMAGE_TYPE: ""
     RUNNER_TAG: mesa-ci-x86-64-lava-rk3399-gru-kevin
+
+# Status: https://lava.collabora.dev/scheduler/device_type/rk3588-rock-5b
+.lava-rk3588-rock-5b:arm64:
+  variables:
+    DEVICE_TYPE: rk3588-rock-5b
+    DTB: $DEVICE_TYPE
+    FARM: collabora
+    GPU_VERSION: panfrost-g610
+    FDO_CI_CONCURRENT: 6
+    HWCI_KERNEL_MODULES: panthor
+    BOOT_METHOD: u-boot
+    KERNEL_IMAGE_NAME: Image
+    KERNEL_IMAGE_TYPE: "image"
+    RUNNER_TAG: mesa-ci-x86-64-lava-rk3588-rock-5b
+    VK_DRIVER: panfrost
 
 # Status: https://lava.collabora.dev/scheduler/device_type/sun50i-h6-pine-h64
 .lava-sun50i-h6-pine-h64:arm64:
@@ -211,8 +260,6 @@ panfrost-t760-gles:arm32:
     - .panfrost-midgard-manual-rules
     - .panfrost-test
     - .lava-rk3288-veyron-jaq:arm32
-  variables:
-    JOB_TIMEOUT: 60
 
 panfrost-t760-traces:arm32:
   extends:
@@ -221,6 +268,19 @@ panfrost-t760-traces:arm32:
     - .panfrost-test
     - .lava-rk3288-veyron-jaq:arm32
     - .panfrost-traces
+
+panfrost-t860-cl:arm64:
+  extends:
+    - .lava-test-deqp:arm64
+    - .panfrost-midgard-manual-rules
+    - .panfrost-test
+    - .lava-rk3399-gru-kevin:arm64
+  rules:
+    - !reference [.panfrost-midgard-manual-rules, rules]
+    - !reference [.rusticl-manual-rules, rules]
+  variables:
+    HWCI_START_WESTON: 1
+    DEQP_SUITE: panfrost-t860-cl
 
 panfrost-t860-gl:arm64:
   parallel: 3
@@ -252,7 +312,7 @@ panfrost-t860-traces:arm64:
     - .panfrost-traces
 
 panfrost-g52-gl:arm64:
-  parallel: 3
+  parallel: 4
   extends:
     - .lava-test-deqp:arm64
     - .panfrost-bifrost-gl-rules
@@ -269,24 +329,36 @@ panfrost-g52-vk:arm64:
     - .lava-test-deqp:arm64
     - .panfrost-test
     - .lava-meson-g12b-a311d-khadas-vim3:arm64
-    - .panfrost-bifrost-vk-manual-rules
+    - .panfrost-vk-rules
   variables:
+    DRIVER_NAME: panvk
+    # Using more than 4 cores cause instabilities
+    FDO_CI_CONCURRENT: 4
     MESA_VK_IGNORE_CONFORMANCE_WARNING: 1
     PAN_I_WANT_A_BROKEN_VULKAN_DRIVER: 1
     PANVK_DEBUG: "no_known_warn,sync"
     DEQP_SUITE: panfrost-g52-vk
+    DEQP_FRACTION: 16
     HWCI_START_WESTON: 1
+
+panfrost-g52-vk-full:arm64:
+  parallel: 4
+  extends:
+    - panfrost-g52-vk:arm64
+    - .panfrost-vk-manual-rules
+  timeout: 1h 30m
+  variables:
+    DEQP_FRACTION: 1
 
 panfrost-g52-piglit-gles2:arm64:
   extends:
-    - .lava-piglit:arm64
-    - .panfrost-bifrost-gl-rules
+    - .lava-test-deqp:arm64
+    - .panfrost-bifrost-gl-manual-rules
     - .panfrost-test
     - .lava-meson-g12b-a311d-khadas-vim3:arm64
   variables:
     HWCI_START_WESTON: 1
-    DEQP_VER: gles2
-    PIGLIT_PROFILES: quick_gl
+    DEQP_SUITE: panfrost-g52-piglit
 
 panfrost-g72-gl:arm64:
   parallel: 3
@@ -307,3 +379,49 @@ panfrost-g57-gl:arm64:
   parallel: 6
   variables:
     DEQP_SUITE: panfrost-g57
+
+panfrost-g610-gl:arm64:
+  parallel: 2
+  extends:
+    - .lava-test-deqp:arm64
+    - .panfrost-valhall-gl-rules
+    - .panfrost-test
+    - .lava-rk3588-rock-5b:arm64
+  variables:
+    DEQP_SUITE: panfrost-g610
+    PAN_MESA_DEBUG: "deqp,sync,indirect"
+
+# Disable this for now until it gets more stable
+.panfrost-g610-gl-piglit:arm64:
+  extends:
+    - panfrost-g610-gl:arm64
+    - .panfrost-valhall-gl-manual-rules
+  variables:
+    DEQP_SUITE: panfrost-g610-piglit
+    HWCI_START_WESTON: 1
+
+panfrost-g610-vk:arm64:
+  parallel: 5
+  extends:
+    - .lava-test-deqp:arm64
+    - .panfrost-test
+    - .lava-rk3588-rock-5b:arm64
+    - .panfrost-vk-manual-rules
+  variables:
+    DRIVER_NAME: panvk
+    # Using more than 4 cores cause instabilities
+    FDO_CI_CONCURRENT: 4
+    MESA_VK_IGNORE_CONFORMANCE_WARNING: 1
+    PANVK_DEBUG: "no_known_warn,sync,cs"
+    DEQP_SUITE: panfrost-g610-vk
+    DEQP_FRACTION: 4
+    HWCI_START_WESTON: 1
+    LAVA_TAGS: at-least-8gb
+
+panfrost-g610-vk-full:arm64:
+  extends:
+    - panfrost-g610-vk:arm64
+    - .panfrost-vk-manual-rules
+  timeout: 1h 35m
+  variables:
+    DEQP_FRACTION: 1

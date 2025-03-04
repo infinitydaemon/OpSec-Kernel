@@ -2283,7 +2283,7 @@ st_TexSubImage(struct gl_context *ctx, GLuint dims,
                                    &src_templ.depth0, &src_templ.array_size);
 
    /* Check for NPOT texture support. */
-   if (!screen->get_param(screen, PIPE_CAP_NPOT_TEXTURES) &&
+   if (!screen->caps.npot_textures &&
        (!util_is_power_of_two_or_zero(src_templ.width0) ||
         !util_is_power_of_two_or_zero(src_templ.height0) ||
         !util_is_power_of_two_or_zero(src_templ.depth0))) {
@@ -2490,7 +2490,7 @@ st_CompressedTexSubImage(struct gl_context *ctx, GLuint dims,
    }
 
    if (!st->pbo.upload_enabled ||
-       !screen->get_param(screen, PIPE_CAP_SURFACE_REINTERPRET_BLOCKS)) {
+       !screen->caps.surface_reinterpret_blocks) {
       goto fallback;
    }
 
@@ -3285,6 +3285,9 @@ st_finalize_texture(struct gl_context *ctx,
    if (!tObj->pt && !tObj->NullTexture) {
       GLuint bindings = default_bindings(st, firstImageFormat);
 
+      if (tObj->IsProtected) 
+         bindings |= PIPE_BIND_PROTECTED;
+
       tObj->pt = st_texture_create(st,
                                     gl_target_to_pipe(tObj->Target),
                                     firstImageFormat,
@@ -3449,6 +3452,9 @@ st_texture_storage(struct gl_context *ctx,
       memObj->TextureTiling = texObj->TextureTiling;
       bindings |= PIPE_BIND_SHARED;
    }
+
+   if (texObj->IsProtected)
+      bindings |= PIPE_BIND_PROTECTED;
 
    if (num_samples > 0) {
       /* Find msaa sample count which is actually supported.  For example,

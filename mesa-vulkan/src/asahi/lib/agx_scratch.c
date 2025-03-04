@@ -4,13 +4,9 @@
  */
 
 #include "agx_scratch.h"
-#include "asahi/compiler/agx_compile.h"
-#include "shaders/helper.h"
-#include "util/u_hexdump.h"
+#include "libagx/helper.h"
 #include "agx_bo.h"
 #include "libagx_shaders.h"
-#include "nir.h"
-#include "nir_builder_opcodes.h"
 
 #define AGX_ADDR_SHIFT        8
 #define AGX_THREADS_PER_GROUP 32
@@ -28,21 +24,6 @@ struct spill_size {
    uint32_t log4_bsize;
    uint32_t count;
 };
-
-struct agx_bo *
-agx_build_helper(struct agx_device *dev)
-{
-   struct agx_bo *bo = agx_bo_create(
-      dev, sizeof(libagx_g13_helper),
-      AGX_BO_READONLY | AGX_BO_EXEC | AGX_BO_LOW_VA, "Helper shader");
-   assert(bo);
-   memcpy(bo->ptr.cpu, libagx_g13_helper, sizeof(libagx_g13_helper));
-
-   if (dev->debug & AGX_DBG_SCRATCH)
-      fprintf(stderr, "Helper: 0x%" PRIx64 "\n", bo->ptr.gpu);
-
-   return bo;
-}
 
 static struct spill_size
 agx_scratch_get_spill_size(unsigned dwords)
@@ -92,7 +73,7 @@ static void
 agx_scratch_realloc(struct agx_scratch *scratch)
 {
    if (scratch->buf)
-      agx_bo_unreference(scratch->buf);
+      agx_bo_unreference(scratch->dev, scratch->buf);
 
    struct spill_size size = agx_scratch_get_spill_size(scratch->size_dwords);
 
@@ -130,24 +111,24 @@ agx_scratch_realloc(struct agx_scratch *scratch)
 #ifdef SCRATCH_DEBUG
    flags = AGX_BO_WRITEBACK;
 #endif
-   scratch->buf = agx_bo_create_aligned(scratch->dev, total_alloc,
-                                        block_size_bytes, flags, "Scratch");
-   memset(scratch->buf->ptr.cpu, 0, blocks_off);
+   scratch->buf = agx_bo_create(scratch->dev, total_alloc, block_size_bytes,
+                                flags, "Scratch");
+   void *map = agx_bo_map(scratch->buf);
+   memset(map, 0, blocks_off);
 
-   struct agx_helper_header *hdr = scratch->buf->ptr.cpu;
+   struct agx_helper_header *hdr = map;
    scratch->header = hdr;
 
-   uint64_t blocklist_gpu = scratch->buf->ptr.gpu + blocklist_off;
-   struct agx_helper_block *blocklist_cpu =
-      scratch->buf->ptr.cpu + blocklist_off;
+   uint64_t blocklist_gpu = scratch->buf->va->addr + blocklist_off;
+   struct agx_helper_block *blocklist_cpu = map + blocklist_off;
 
 #ifdef SCRATCH_DEBUG
    scratch->blocklist = blocklist_cpu;
-   scratch->data = scratch->buf->ptr.cpu + blocks_off;
+   scratch->data = scratch->buf->map + blocks_off;
    scratch->core_size = block_size_bytes * block_count * scratch->subgroups;
 #endif
 
-   uint64_t blocks_gpu = scratch->buf->ptr.gpu + blocks_off;
+   uint64_t blocks_gpu = scratch->buf->va->addr + blocks_off;
 
    hdr->subgroups = scratch->subgroups;
 
@@ -197,7 +178,7 @@ agx_scratch_realloc(struct agx_scratch *scratch)
 
    if (scratch->dev->debug & AGX_DBG_SCRATCH)
       fprintf(stderr, "New Scratch @ 0x%" PRIx64 " (size: 0x%zx)\n",
-              scratch->buf->ptr.gpu, scratch->buf->size);
+              scratch->buf->va->addr, scratch->buf->size);
 }
 
 void
@@ -252,7 +233,7 @@ agx_scratch_debug_post(struct agx_scratch *scratch)
    if (!scratch->buf)
       return;
 
-   fprintf(stderr, "Scratch @ 0x%" PRIx64 "\n", scratch->buf->ptr.gpu);
+   fprintf(stderr, "Scratch @ 0x%" PRIx64 "\n", scratch->buf->va->addr);
 
    for (int core = 0; core < scratch->max_core_id; core++) {
       fprintf(stderr, "Core %3d: max %d, failed %d, counts:", core,
@@ -290,10 +271,7 @@ agx_scratch_init(struct agx_device *dev, struct agx_scratch *scratch)
 #ifdef SCRATCH_DEBUG_CORES
    scratch->num_cores = SCRATCH_DEBUG_CORES;
 #else
-   scratch->num_cores = 0;
-   for (unsigned cl = 0; cl < dev->params.num_clusters_total; cl++) {
-      scratch->num_cores += util_bitcount(dev->params.core_masks[cl]);
-   }
+   scratch->num_cores = agx_get_num_cores(dev);
 #endif
 }
 
@@ -301,6 +279,6 @@ void
 agx_scratch_fini(struct agx_scratch *scratch)
 {
    if (scratch->buf)
-      agx_bo_unreference(scratch->buf);
+      agx_bo_unreference(scratch->dev, scratch->buf);
    scratch->buf = NULL;
 }

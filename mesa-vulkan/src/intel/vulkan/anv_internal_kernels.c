@@ -48,25 +48,8 @@ lower_base_workgroup_id(nir_builder *b, nir_intrinsic_instr *intrin,
    return true;
 }
 
-static void
-link_libanv(nir_shader *nir, const nir_shader *libanv)
-{
-   nir_link_shader_functions(nir, libanv);
-   NIR_PASS_V(nir, nir_inline_functions);
-   NIR_PASS_V(nir, nir_remove_non_entrypoints);
-   NIR_PASS_V(nir, nir_lower_vars_to_explicit_types, nir_var_function_temp,
-              glsl_get_cl_type_size_align);
-   NIR_PASS_V(nir, nir_opt_deref);
-   NIR_PASS_V(nir, nir_lower_vars_to_ssa);
-   NIR_PASS_V(nir, nir_lower_explicit_io,
-              nir_var_shader_temp | nir_var_function_temp | nir_var_mem_shared |
-                 nir_var_mem_global,
-              nir_address_format_62bit_generic);
-}
-
 static struct anv_shader_bin *
 compile_shader(struct anv_device *device,
-               const nir_shader *libanv,
                enum anv_internal_kernel_name shader_name,
                gl_shader_stage stage,
                const char *name,
@@ -85,12 +68,14 @@ compile_shader(struct anv_device *device,
 
    nir_shader *nir = b.shader;
 
-   link_libanv(nir, libanv);
-
    NIR_PASS_V(nir, nir_lower_vars_to_ssa);
    NIR_PASS_V(nir, nir_opt_cse);
    NIR_PASS_V(nir, nir_opt_gcm, true);
-   NIR_PASS_V(nir, nir_opt_peephole_select, 1, false, false);
+
+   nir_opt_peephole_select_options peephole_select_options = {
+      .limit = 1,
+   };
+   NIR_PASS_V(nir, nir_opt_peephole_select, &peephole_select_options);
 
    NIR_PASS_V(nir, nir_lower_variable_initializers, ~0);
 
@@ -181,26 +166,28 @@ compile_shader(struct anv_device *device,
       };
       program = brw_compile_fs(compiler, &params);
 
-      unsigned stat_idx = 0;
-      if (prog_data.wm.dispatch_8) {
-         assert(stats[stat_idx].spills == 0);
-         assert(stats[stat_idx].fills == 0);
-         assert(stats[stat_idx].sends == sends_count_expectation);
-         stat_idx++;
-      }
-      if (prog_data.wm.dispatch_16) {
-         assert(stats[stat_idx].spills == 0);
-         assert(stats[stat_idx].fills == 0);
-         assert(stats[stat_idx].sends == sends_count_expectation);
-         stat_idx++;
-      }
-      if (prog_data.wm.dispatch_32) {
-         assert(stats[stat_idx].spills == 0);
-         assert(stats[stat_idx].fills == 0);
-         assert(stats[stat_idx].sends ==
-                sends_count_expectation *
-                (device->info->ver < 20 ? 2 : 1));
-         stat_idx++;
+      if (!INTEL_DEBUG(DEBUG_SHADER_PRINT)) {
+         unsigned stat_idx = 0;
+         if (prog_data.wm.dispatch_8) {
+            assert(stats[stat_idx].spills == 0);
+            assert(stats[stat_idx].fills == 0);
+            assert(stats[stat_idx].sends == sends_count_expectation);
+            stat_idx++;
+         }
+         if (prog_data.wm.dispatch_16) {
+            assert(stats[stat_idx].spills == 0);
+            assert(stats[stat_idx].fills == 0);
+            assert(stats[stat_idx].sends == sends_count_expectation);
+            stat_idx++;
+         }
+         if (prog_data.wm.dispatch_32) {
+            assert(stats[stat_idx].spills == 0);
+            assert(stats[stat_idx].fills == 0);
+            assert(stats[stat_idx].sends ==
+                   sends_count_expectation *
+                   (device->info->ver < 20 ? 2 : 1));
+            stat_idx++;
+         }
       }
    } else {
       struct brw_compile_stats stats;
@@ -217,9 +204,11 @@ compile_shader(struct anv_device *device,
       };
       program = brw_compile_cs(compiler, &params);
 
-      assert(stats.spills == 0);
-      assert(stats.fills == 0);
-      assert(stats.sends == sends_count_expectation);
+      if (!INTEL_DEBUG(DEBUG_SHADER_PRINT)) {
+         assert(stats.spills == 0);
+         assert(stats.fills == 0);
+         assert(stats.sends == sends_count_expectation);
+      }
    }
 
    assert(prog_data.base.total_scratch == 0);
@@ -281,7 +270,11 @@ anv_device_get_internal_shader(struct anv_device *device,
                           * 2 * (2 loads + 3 stores) +
                           * 3 stores
                           */
-                         14),
+                         14) +
+         /* 3 loads + 3 stores */
+         (intel_needs_workaround(device->info, 16011107343) ? 6 : 0) +
+         /* 3 loads + 3 stores */
+         (intel_needs_workaround(device->info, 22018402687) ? 6 : 0),
       },
       [ANV_INTERNAL_KERNEL_COPY_QUERY_RESULTS_COMPUTE] = {
          .key        = {
@@ -329,13 +322,7 @@ anv_device_get_internal_shader(struct anv_device *device,
       return VK_SUCCESS;
    }
 
-   void *mem_ctx = ralloc_context(NULL);
-
-   nir_shader *libanv_shaders =
-      anv_genX(device->info, load_libanv_shader)(device, mem_ctx);
-
    bin = compile_shader(device,
-                        libanv_shaders,
                         name,
                         internal_kernels[name].stage,
                         internal_kernels[name].key.name,

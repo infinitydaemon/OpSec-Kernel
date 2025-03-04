@@ -60,7 +60,7 @@ fn get_disk_cache() -> &'static Option<DiskCache> {
     ];
     unsafe {
         DISK_CACHE_ONCE.call_once(|| {
-            DISK_CACHE = DiskCache::new("rusticl", &func_ptrs, 0);
+            DISK_CACHE = DiskCache::new(c"rusticl", &func_ptrs, 0);
         });
         &*addr_of!(DISK_CACHE)
     }
@@ -122,11 +122,10 @@ impl ProgramBuild {
                 let build_result = convert_spirv_to_nir(self, kernel_name, &args, dev);
                 kernel_info_set.insert(build_result.kernel_info);
 
-                self.builds
-                    .get_mut(dev)
-                    .unwrap()
-                    .kernels
-                    .insert(kernel_name.clone(), Arc::new(build_result.nir_kernel_build));
+                self.builds.get_mut(dev).unwrap().kernels.insert(
+                    kernel_name.clone(),
+                    Arc::new(build_result.nir_kernel_builds),
+                );
             }
 
             // we want the same (internal) args for every compiled kernel, for now
@@ -229,7 +228,7 @@ pub struct ProgramDevBuild {
     options: String,
     log: String,
     bin_type: cl_program_binary_type,
-    pub kernels: HashMap<String, Arc<NirKernelBuild>>,
+    pub kernels: HashMap<String, Arc<NirKernelBuilds>>,
 }
 
 fn prepare_options(options: &str, dev: &Device) -> Vec<CString> {
@@ -343,7 +342,7 @@ impl Program {
 
                     debug_assert!(
                         // `blob_read_*` doesn't advance the pointer on failure to read
-                        blob.current.offset_from(blob.data) == BIN_HEADER_SIZE_V1 as isize
+                        blob.current.byte_offset_from(blob.data) == BIN_HEADER_SIZE_V1 as isize
                             || blob.overrun,
                     );
 
@@ -357,7 +356,7 @@ impl Program {
                     }
 
                     let name: &[u8] = slice::from_raw_parts(name.cast(), name_length);
-                    if dev.screen().name().as_bytes() != name {
+                    if dev.screen().name().to_bytes() != name {
                         return Err(CL_INVALID_BINARY);
                     }
 
@@ -472,29 +471,24 @@ impl Program {
             let info = lock.dev_build(d);
 
             res.push(info.spirv.as_ref().map_or(0, |s| {
-                s.to_bin().len() + d.screen().name().as_bytes().len() + BIN_HEADER_SIZE
+                s.to_bin().len() + d.screen().name().to_bytes().len() + BIN_HEADER_SIZE
             }));
         }
         res
     }
 
-    pub fn binaries(&self, vals: &[u8]) -> CLResult<Vec<*mut u8>> {
-        // if the application didn't provide any pointers, just return the length of devices
-        if vals.is_empty() {
-            return Ok(vec![std::ptr::null_mut(); self.devs.len()]);
-        }
-
-        // vals is an array of pointers where we should write the device binaries into
-        if vals.len() != self.devs.len() * size_of::<*const u8>() {
+    pub fn binaries(&self, ptrs: &[*mut u8]) -> CLResult<()> {
+        // ptrs is an array of pointers where we should write the device binaries into
+        if ptrs.len() < self.devs.len() {
             return Err(CL_INVALID_VALUE);
         }
 
-        let ptrs: &[*mut u8] = unsafe {
-            slice::from_raw_parts(vals.as_ptr().cast(), vals.len() / size_of::<*mut u8>())
-        };
-
         let lock = self.build_info();
-        for (i, d) in self.devs.iter().enumerate() {
+        for (d, ptr) in self.devs.iter().zip(ptrs) {
+            if ptr.is_null() {
+                return Err(CL_INVALID_VALUE);
+            }
+
             let info = lock.dev_build(d);
 
             // no spirv means nothing to write
@@ -507,7 +501,7 @@ impl Program {
                 let mut blob = blob::default();
 
                 // sadly we have to trust the buffer to be correctly sized...
-                blob_init_fixed(&mut blob, ptrs[i].cast(), usize::MAX);
+                blob_init_fixed(&mut blob, ptr.cast(), usize::MAX);
 
                 blob_write_bytes(
                     &mut blob,
@@ -519,7 +513,7 @@ impl Program {
                 blob_write_uint32(&mut blob, 1_u32.to_le());
 
                 let device_name = d.screen().name();
-                let device_name = device_name.as_bytes();
+                let device_name = device_name.to_bytes();
 
                 blob_write_uint32(&mut blob, (device_name.len() as u32).to_le());
                 blob_write_uint32(&mut blob, (spirv.len() as u32).to_le());
@@ -532,7 +526,7 @@ impl Program {
             }
         }
 
-        Ok(ptrs.to_vec())
+        Ok(())
     }
 
     // TODO: at the moment we do not support compiling programs with different signatures across

@@ -54,6 +54,11 @@ struct clc_optional_features {
    bool fp64;
    bool int64;
    bool images;
+   bool images_depth;
+   bool images_gl_depth;
+   bool images_gl_msaa;
+   bool images_mipmap;
+   bool images_mipmap_writes;
    bool images_read_write;
    bool images_write_3d;
    bool integer_dot_product;
@@ -66,6 +71,7 @@ struct clc_optional_features {
    bool subgroups_ifp;
    bool subgroups_shuffle;
    bool subgroups_shuffle_relative;
+   bool subgroups_ballot;
 };
 
 struct clc_compile_args {
@@ -205,10 +211,14 @@ void clc_libclc_serialize(struct clc_libclc *lib, void **serialized, size_t *siz
 void clc_libclc_free_serialized(void *serialized);
 struct clc_libclc *clc_libclc_deserialize(const void *serialized, size_t size);
 
+/* Forward declare */
+struct set;
+
 bool
 clc_compile_c_to_spir(const struct clc_compile_args *args,
                       const struct clc_logger *logger,
-                      struct clc_binary *out_spir);
+                      struct clc_binary *out_spir,
+                      struct set *dependencies);
 
 void
 clc_free_spir(struct clc_binary *spir);
@@ -224,7 +234,8 @@ clc_free_spirv(struct clc_binary *spirv);
 bool
 clc_compile_c_to_spirv(const struct clc_compile_args *args,
                        const struct clc_logger *logger,
-                       struct clc_binary *out_spirv);
+                       struct clc_binary *out_spirv,
+                       struct set *dependencies);
 
 bool
 clc_link_spirv(const struct clc_linker_args *args,

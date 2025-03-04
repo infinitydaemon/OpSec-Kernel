@@ -13,9 +13,17 @@
         - src/amd/ci/$GPU_VERSION-fails.txt
         - src/amd/ci/$GPU_VERSION-flakes.txt
         - src/amd/ci/$GPU_VERSION-skips.txt
+        - src/amd/ci/$GPU_VERSION-slow-skips.txt
+        - src/amd/ci/$VK_DRIVER-skips.txt
+        - src/amd/ci/$GALLIUM_DRIVER-skips.txt
+        - src/amd/ci/$DRIVER_NAME-skips.txt
         - src/amd/ci/$PIGLIT_TRACES_FILE
-        - src/amd/ci/$VKD3D_PROTON_RESULTS-vkd3d.txt
+        - src/amd/ci/$GPU_VERSION-vkd3d-fails.txt
+        - src/amd/ci/$GPU_VERSION-vkd3d-flakes.txt
+        - src/amd/ci/$GPU_VERSION-vkd3d-skips.txt
         - src/amd/common/**/*
+        - src/amd/common/nir/**/*
+        - src/amd/compiler/**/*
         - src/amd/llvm/**/*
         - src/amd/registers/**/*
       when: on_success
@@ -25,6 +33,20 @@
         - src/gallium/winsys/amdgpu/**/*
         - src/amd/vpelib/**/*
       when: on_success
+
+.radeonsi-manual-rules:
+  stage: amd-postmerge
+  extends: .no-auto-retry
+  rules:
+    - !reference [.test, rules]
+    - !reference [.collabora-farm-manual-rules, rules]
+    - !reference [.gl-manual-rules, rules]
+    - changes:
+        *amd_common_file_list
+      when: manual
+    - changes:
+        *radeonsi_file_list
+      when: manual
 
 .radv-rules:
   stage: amd
@@ -41,7 +63,7 @@
       when: on_success
 
 .radv-manual-rules:
-  stage: amd
+  stage: amd-postmerge
   rules:
     - !reference [.test, rules]
     - !reference [.vulkan-manual-rules, rules]
@@ -59,12 +81,20 @@
     - !reference [.collabora-farm-rules, rules]
     - !reference [.radv-rules, rules]
 
-.radv-collabora-rules-restricted:
+.radv-collabora-restricted-rules:
   stage: amd
   rules:
     - !reference [.test, rules]
     - !reference [.restricted-rules, rules]
     - !reference [.radv-collabora-rules, rules]
+
+.radv-collabora-manual-rules:
+  stage: amd-postmerge
+  extends: .no-auto-retry
+  rules:
+    - !reference [.test, rules]
+    - !reference [.collabora-farm-manual-rules, rules]
+    - !reference [.radv-manual-rules, rules]
 
 .radv-valve-rules:
   stage: amd
@@ -74,7 +104,7 @@
     - !reference [.radv-rules, rules]
 
 .radv-valve-manual-rules:
-  stage: amd
+  stage: amd-postmerge
   extends: .no-auto-retry
   rules:
     - !reference [.test, rules]
@@ -99,7 +129,7 @@
       when: on_success
 
 .radeonsi-vaapi-manual-rules:
-  stage: amd
+  stage: amd-postmerge
   rules:
     - !reference [.test, rules]
     - !reference [.collabora-farm-manual-rules, rules]
@@ -116,7 +146,7 @@
     - !reference [.radeonsi-rules, rules]
 
 .radeonsi-valve-manual-rules:
-  stage: amd
+  stage: amd-postmerge
   rules:
     - !reference [.test, rules]
     - !reference [.valve-farm-manual-rules, rules]
@@ -169,6 +199,9 @@
     HWCI_KERNEL_MODULES: amdgpu
     KERNEL_IMAGE_TYPE: ""
     RUNNER_TAG: mesa-ci-x86-64-lava-asus-CM1400CXA-dalboz
+    # Force fixed 6.6 kernel, amdgpu doesn't revcover from GPU resets on 6.13
+    # https://gitlab.freedesktop.org/drm/amd/-/issues/3861
+    EXTERNAL_KERNEL_TAG: "v6.6.21-mesa-f8ea"
 
 # Status: https://lava.collabora.dev/scheduler/device_type/lenovo-TPad-C13-Yoga-zork
 .lava-lenovo-TPad-C13-Yoga-zork:x86_64:
@@ -182,13 +215,31 @@
     HWCI_KERNEL_MODULES: amdgpu
     KERNEL_IMAGE_TYPE: ""
     RUNNER_TAG: mesa-ci-x86-64-lava-lenovo-TPad-C13-Yoga-zork
+    # Force fixed 6.6 kernel, amdgpu doesn't revcover from GPU resets on 6.13
+    # https://gitlab.freedesktop.org/drm/amd/-/issues/3861
+    EXTERNAL_KERNEL_TAG: "v6.6.21-mesa-f8ea"
+
+# Status: https://lava.collabora.dev/scheduler/device_type/hp-x360-14a-cb0001xx-zork
+.lava-hp-x360-14a-cb0001xx-zork:x86_64:
+  variables:
+    BOOT_METHOD: depthcharge
+    DEVICE_TYPE: hp-x360-14a-cb0001xx-zork
+    DTB: ""
+    FARM: collabora
+    FDO_CI_CONCURRENT: 4
+    HWCI_FREQ_MAX: "true"
+    HWCI_KERNEL_MODULES: amdgpu
+    KERNEL_IMAGE_TYPE: ""
+    RUNNER_TAG: mesa-ci-x86-64-lava-hp-x360-14a-cb0001xx-zork
+    # Force fixed 6.6 kernel, amdgpu doesn't revcover from GPU resets on 6.13
+    # https://gitlab.freedesktop.org/drm/amd/-/issues/3861
+    EXTERNAL_KERNEL_TAG: "v6.6.21-mesa-f8ea"
 
 
 ############### LAVA
 # job prefixes: radeonsi (OpenGL), radv (Vulkan), amd (radeonsi+radv)
 .stoney-test:x86_64:
   variables:
-    DEQP_EXPECTED_RENDERER: STONEY
     FLAKES_CHANNEL: "#amd-ci"
 
 .radeonsi-stoney-test:x86_64:
@@ -207,7 +258,6 @@
     - .lava-hp-14-db0003na-grunt:x86_64
     - .radv-collabora-rules
   variables:
-    DEQP_VER: vk
     DRIVER_NAME: radv
     GPU_VERSION: radv-stoney-aco
 
@@ -264,31 +314,44 @@
 
 .tahiti-test-valve:
   variables:
-    FDO_CI_CONCURRENT: 8
+    FDO_CI_CONCURRENT: 24
     RUNNER_FARM_LOCATION: mupuf
-    B2C_KERNEL_CMDLINE_EXTRAS: 'b2c.swap=8g'
+    B2C_MARS_SETUP_TAGS: amdgpu:codename:TAHITI
+    B2C_KERNEL_CMDLINE_EXTRAS: 'b2c.swap=16g'
   tags:
     - farm:$RUNNER_FARM_LOCATION
-    - amdgpu:codename:TAHITI
+    - $B2C_MARS_SETUP_TAGS
+
+.hawaii-test-valve:
+  variables:
+    FDO_CI_CONCURRENT: 24
+    RUNNER_FARM_LOCATION: mupuf
+    B2C_MARS_SETUP_TAGS: amdgpu:codename:HAWAII
+    B2C_KERNEL_CMDLINE_EXTRAS: 'b2c.swap=16g'
+  tags:
+    - farm:$RUNNER_FARM_LOCATION
+    - $B2C_MARS_SETUP_TAGS
 
 .kabini-test-valve:
   variables:
     RUNNER_FARM_LOCATION: mupuf
+    B2C_MARS_SETUP_TAGS: amdgpu:codename:KABINI
     B2C_KERNEL_CMDLINE_EXTRAS: 'b2c.swap=8g'
   tags:
     - farm:$RUNNER_FARM_LOCATION
-    - amdgpu:codename:KABINI
+    - $B2C_MARS_SETUP_TAGS
 
 .polaris10-test-valve:
   variables:
     FDO_CI_CONCURRENT: 16
     B2C_TIMEOUT_BOOT_RETRIES: 4
+    B2C_MARS_SETUP_TAGS: amdgpu:codename:POLARIS10
     # (2022-01) tsc=unstable was added in response to this message in kmsg,
     #    TSC found unstable after boot, most likely due to broken BIOS. Use 'tsc=unstable'.
     B2C_KERNEL_CMDLINE_EXTRAS: 'b2c.swap=16g tsc=unstable'
   tags:
     - farm:$RUNNER_FARM_LOCATION
-    - amdgpu:codename:POLARIS10
+    - $B2C_MARS_SETUP_TAGS
 
 .polaris10-test-valve-mupuf:
   extends: .polaris10-test-valve
@@ -303,22 +366,24 @@
 .vega10-test-valve:
   variables:
     RUNNER_FARM_LOCATION: keywords
+    B2C_MARS_SETUP_TAGS: amdgpu:codename:VEGA10
     FDO_CI_CONCURRENT: 16
     B2C_KERNEL_CMDLINE_EXTRAS: 'b2c.swap=16g'
   tags:
     - farm:$RUNNER_FARM_LOCATION
-    - amdgpu:codename:VEGA10
+    - $B2C_MARS_SETUP_TAGS
 
 .renoir-test-valve:
   variables:
     RUNNER_FARM_LOCATION: mupuf
+    B2C_MARS_SETUP_TAGS: amdgpu:codename:RENOIR
     FDO_CI_CONCURRENT: 16
     B2C_KERNEL_CMDLINE_EXTRAS: 'b2c.swap=16g'
     B2C_TIMEOUT_BOOT_MINUTES: 60
     B2C_TIMEOUT_OVERALL_MINUTES: 120
   tags:
     - farm:$RUNNER_FARM_LOCATION
-    - amdgpu:codename:RENOIR
+    - $B2C_MARS_SETUP_TAGS
 
 .navi10-test-valve:
   variables:
@@ -327,9 +392,10 @@
     # IRQs. This tends to confuse the interrupt controller and breaks
     # MSI IRQs leading to GPU hangs on amdgpu.
     B2C_KERNEL_CMDLINE_EXTRAS: 'b2c.swap=16g noapic'
+    B2C_MARS_SETUP_TAGS: amdgpu:codename:NAVI10
   tags:
     - farm:$RUNNER_FARM_LOCATION
-    - amdgpu:codename:NAVI10
+    - $B2C_MARS_SETUP_TAGS
 
 .navi10-test-valve-mupuf:
   extends:
@@ -348,32 +414,45 @@
 .navi21-test-valve:
   variables:
     RUNNER_FARM_LOCATION: keywords
+    B2C_MARS_SETUP_TAGS: amdgpu:codename:NAVI21
     FDO_CI_CONCURRENT: 32
     B2C_KERNEL_CMDLINE_EXTRAS: 'b2c.swap=16g'
   tags:
     - farm:$RUNNER_FARM_LOCATION
-    - amdgpu:codename:NAVI21
+    - $B2C_MARS_SETUP_TAGS
 
 .vangogh-test-valve:
   variables:
     RUNNER_FARM_LOCATION: mupuf
+    B2C_MARS_SETUP_TAGS: amdgpu:codename:VANGOGH
     FDO_CI_CONCURRENT: 8
     B2C_TIMEOUT_BOOT_MINUTES: 85
     B2C_TIMEOUT_OVERALL_MINUTES: 120
     B2C_KERNEL_CMDLINE_EXTRAS: 'b2c.swap=16g'
   tags:
     - farm:$RUNNER_FARM_LOCATION
-    - amdgpu:codename:VANGOGH
+    - $B2C_MARS_SETUP_TAGS
     - $VALVE_INFRA_VANGOGH_JOB_PRIORITY
 
-.navi31-test-valve:
+.raphael-test-valve:
   variables:
     RUNNER_FARM_LOCATION: keywords
+    B2C_MARS_SETUP_TAGS: amdgpu:codename:RAPHAEL
     FDO_CI_CONCURRENT: 32
     B2C_KERNEL_CMDLINE_EXTRAS: 'b2c.swap=16g'
   tags:
     - farm:$RUNNER_FARM_LOCATION
-    - amdgpu:codename:NAVI31
+    - $B2C_MARS_SETUP_TAGS
+
+.navi31-test-valve:
+  variables:
+    RUNNER_FARM_LOCATION: keywords
+    B2C_MARS_SETUP_TAGS: amdgpu:codename:NAVI31
+    FDO_CI_CONCURRENT: 32
+    B2C_KERNEL_CMDLINE_EXTRAS: 'b2c.swap=16g'
+  tags:
+    - farm:$RUNNER_FARM_LOCATION
+    - $B2C_MARS_SETUP_TAGS
 
 ############### VKCTS tests ###############
 
@@ -386,7 +465,7 @@
     - .b2c-test-radv-vk
     - .b2c-deqp-test
   variables:
-    DEQP_VER: vk
+    DEQP_SUITE: radv-valve
 
 ############### vkd3d-proton
 .vkd3d-kabini-valve:
@@ -396,4 +475,17 @@
     - .kabini-test-valve
     - .radv-valve-manual-rules
   variables:
-    VKD3D_PROTON_RESULTS: radv-kabini
+    GPU_VERSION: radv-kabini
+
+############### Fluster tests ###############
+.radeonsi-raven-vaapi-fluster:
+  extends:
+    - .lava-fluster:x86_64
+  rules:
+    - !reference [.radeonsi-vaapi-rules, rules]
+    - changes:
+      - .gitlab-ci/fluster/*
+      - src/amd/ci/$GPU_VERSION-fluster-fails.txt
+      - src/amd/ci/$GPU_VERSION-fluster-flakes.txt
+      - src/amd/ci/$GPU_VERSION-fluster-skips.txt
+      when: on_success

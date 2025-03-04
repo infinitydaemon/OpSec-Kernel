@@ -23,7 +23,6 @@
 
 #include "vk_util.h"
 
-#include "v3dv_debug.h"
 #include "v3dv_private.h"
 
 #include "common/v3d_debug.h"
@@ -34,6 +33,7 @@
 
 #include "util/u_atomic.h"
 #include "util/os_time.h"
+#include "util/perf/cpu_trace.h"
 
 #include "vk_format.h"
 #include "vk_nir_convert_ycbcr.h"
@@ -41,24 +41,6 @@
 
 static VkResult
 compute_vpm_config(struct v3dv_pipeline *pipeline);
-
-void
-v3dv_print_v3d_key(struct v3d_key *key,
-                   uint32_t v3d_key_size)
-{
-   struct mesa_sha1 ctx;
-   unsigned char sha1[20];
-   char sha1buf[41];
-
-   _mesa_sha1_init(&ctx);
-
-   _mesa_sha1_update(&ctx, key, v3d_key_size);
-
-   _mesa_sha1_final(&ctx, sha1);
-   _mesa_sha1_format(sha1buf, sha1);
-
-   fprintf(stderr, "key %p: %s\n", key, sha1buf);
-}
 
 static void
 pipeline_compute_sha1_from_nir(struct v3dv_pipeline_stage *p_stage)
@@ -69,7 +51,7 @@ pipeline_compute_sha1_from_nir(struct v3dv_pipeline_stage *p_stage)
       .stage = mesa_to_vk_shader_stage(p_stage->nir->info.stage),
    };
 
-   vk_pipeline_hash_shader_stage(&info, NULL, p_stage->shader_sha1);
+   vk_pipeline_hash_shader_stage(0, &info, NULL, p_stage->shader_sha1);
 }
 
 void
@@ -218,8 +200,10 @@ v3dv_pipeline_get_nir_options(const struct v3d_device_info *devinfo)
       .lower_to_scalar = true,
       .lower_device_index_to_zero = true,
       .lower_fquantize2f16 = true,
+      .lower_ufind_msb = true,
       .has_fsub = true,
       .has_isub = true,
+      .has_uclz = true,
       .vertex_id_zero_based = false, /* FIXME: to set this to true, the intrinsic
                                       * needs to be supported */
       .lower_interpolate_at = true,
@@ -228,6 +212,7 @@ v3dv_pipeline_get_nir_options(const struct v3d_device_info *devinfo)
       .divergence_analysis_options =
          nir_divergence_multiple_workgroup_per_compute_subgroup,
       .discard_is_demote = true,
+      .scalarize_ddx = true,
    };
 
    if (!initialized) {
@@ -349,21 +334,6 @@ shader_module_compile_to_nir(struct v3dv_device *device,
 
    gl_shader_stage gl_stage = broadcom_shader_stage_to_gl(stage->stage);
 
-   if (V3D_DBG(DUMP_SPIRV)) {
-      char *spirv_data = NULL;
-      uint32_t spirv_size = 0;
-      if (stage->module != NULL && !stage->module->nir) {
-         spirv_data = (char *) stage->module->data;
-         spirv_size = stage->module->size;
-      } else if (stage->module_info) {
-         spirv_data = (char *) stage->module_info->pCode;
-         spirv_size = stage->module_info->codeSize;
-      }
-
-      if (spirv_data)
-         v3dv_print_spirv(spirv_data, spirv_size, stderr);
-   }
-
    const VkPipelineShaderStageCreateInfo stage_info = {
       .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
       .pNext = !stage->module ? stage->module_info : NULL,
@@ -378,6 +348,7 @@ shader_module_compile_to_nir(struct v3dv_device *device,
     * so we don't have to call it here.
     */
    VkResult result = vk_pipeline_shader_stage_to_nir(&device->vk,
+                                                     stage->pipeline->flags,
                                                      &stage_info,
                                                      &default_spirv_options,
                                                      nir_options,
@@ -393,7 +364,7 @@ shader_module_compile_to_nir(struct v3dv_device *device,
    }
 
    if (V3D_DBG(NIR) || v3d_debug_flag_for_shader_stage(gl_stage)) {
-      fprintf(stderr, "NIR after vk_shader_module_to_nir: %s prog %d NIR:\n",
+      fprintf(stderr, "NIR after vk_pipeline_shader_stage_to_nir: %s prog %d NIR:\n",
               broadcom_shader_stage_name(stage->stage),
               stage->program_id);
       nir_print_shader(nir, stderr);
@@ -669,13 +640,6 @@ lower_tex_src(nir_builder *b,
    struct v3dv_descriptor_set_binding_layout *binding_layout =
       &set_layout->binding[binding];
 
-   /* For input attachments, the shader includes the attachment_idx. As we are
-    * treating them as a texture, we only want the base_index
-    */
-   uint32_t array_index = binding_layout->type != VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT ?
-      deref->var->data.index + base_index :
-      base_index;
-
    uint8_t return_size;
    if (V3D_DBG(TMU_16BIT))
       return_size = 16;
@@ -691,7 +655,7 @@ lower_tex_src(nir_builder *b,
       descriptor_map_add(map,
                          deref->var->data.descriptor_set,
                          deref->var->data.binding,
-                         array_index,
+                         base_index,
                          binding_layout->array_size,
                          0,
                          return_size,
@@ -779,15 +743,13 @@ lower_image_deref(nir_builder *b,
    }
 
    if (index)
-      index = nir_umin(b, index, nir_imm_int(b, array_elements - 1));
+      nir_umin(b, index, nir_imm_int(b, array_elements - 1));
 
    uint32_t set = deref->var->data.descriptor_set;
    uint32_t binding = deref->var->data.binding;
    struct v3dv_descriptor_set_layout *set_layout = state->layout->set[set].layout;
    struct v3dv_descriptor_set_binding_layout *binding_layout =
       &set_layout->binding[binding];
-
-   uint32_t array_index = deref->var->data.index + base_index;
 
    assert(binding_layout->type == VK_DESCRIPTOR_TYPE_STORAGE_IMAGE ||
           binding_layout->type == VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER);
@@ -800,7 +762,7 @@ lower_image_deref(nir_builder *b,
       descriptor_map_add(map,
                          deref->var->data.descriptor_set,
                          deref->var->data.binding,
-                         array_index,
+                         base_index,
                          binding_layout->array_size,
                          0,
                          32 /* return_size: doesn't apply for textures */,
@@ -1119,11 +1081,20 @@ enable_line_smooth(struct v3dv_pipeline *pipeline,
    if (!ls_info)
       return false;
 
-   /* Although topology is dynamic now, the topology class can't change
-    * because we don't support dynamicPrimitiveTopologyUnrestricted, so we can
-    * use the static topology from the pipeline for this.
-    */
-   switch(pipeline->topology) {
+   enum mesa_prim output_topology;
+   if (pipeline->has_gs) {
+      struct v3dv_pipeline_stage *p_stage_gs = pipeline->stages[BROADCOM_SHADER_GEOMETRY];
+      assert(p_stage_gs);
+      output_topology = p_stage_gs->nir->info.gs.output_primitive;
+   } else {
+      /* Although topology is dynamic now, the topology class can't change
+       * because we don't support dynamicPrimitiveTopologyUnrestricted, so we
+       * can use the static topology from the pipeline for this.
+       */
+      output_topology = pipeline->topology;
+   }
+
+   switch(output_topology) {
    case MESA_PRIM_LINES:
    case MESA_PRIM_LINE_LOOP:
    case MESA_PRIM_LINE_STRIP:
@@ -1474,13 +1445,13 @@ upload_assembly(struct v3dv_pipeline *pipeline)
    struct v3dv_bo *bo = v3dv_bo_alloc(pipeline->device, total_size,
                                       "pipeline shader assembly", true);
    if (!bo) {
-      fprintf(stderr, "failed to allocate memory for shader\n");
+      mesa_loge("failed to allocate memory for shader\n");
       return false;
    }
 
    bool ok = v3dv_bo_map(pipeline->device, bo, total_size);
    if (!ok) {
-      fprintf(stderr, "failed to map source shader buffer\n");
+      mesa_loge("failed to map source shader buffer\n");
       return false;
    }
 
@@ -1698,9 +1669,9 @@ pipeline_compile_shader_variant(struct v3dv_pipeline_stage *p_stage,
    struct v3dv_shader_variant *variant = NULL;
 
    if (!qpu_insts) {
-      fprintf(stderr, "Failed to compile %s prog %d NIR to VIR\n",
-              broadcom_shader_stage_name(p_stage->stage),
-              p_stage->program_id);
+      mesa_loge("Failed to compile %s prog %d NIR to VIR\n",
+                broadcom_shader_stage_name(p_stage->stage),
+                p_stage->program_id);
       *out_vk_result = VK_ERROR_UNKNOWN;
    } else {
       variant =
@@ -2424,7 +2395,8 @@ pipeline_compile_graphics(struct v3dv_pipeline *pipeline,
       vk_pipeline_robustness_state_fill(&device->vk, &p_stage->robustness,
                                         pCreateInfo->pNext, sinfo->pNext);
 
-      vk_pipeline_hash_shader_stage(&pCreateInfo->pStages[i],
+      vk_pipeline_hash_shader_stage(pipeline->flags,
+                                    &pCreateInfo->pStages[i],
                                     &p_stage->robustness,
                                     p_stage->shader_sha1);
 
@@ -2854,7 +2826,7 @@ pipeline_init_dynamic_state(struct v3dv_device *device,
       /* FIXME: right now we don't support multiViewport so viewporst[0] would
        * work now, but would need to change if we allow multiple viewports.
        */
-      v3dv_X(device, viewport_compute_xform)(&dyn->vp.viewports[0],
+      v3d_X((&device->devinfo), viewport_compute_xform)(&dyn->vp.viewports[0],
                                              v3dv_dyn->viewport.scale[0],
                                              v3dv_dyn->viewport.translate[0]);
 
@@ -2958,7 +2930,7 @@ pipeline_init(struct v3dv_pipeline *pipeline,
    if (depth_clip_control)
       pipeline->negative_one_to_one = depth_clip_control->negativeOneToOne;
 
-   v3dv_X(device, pipeline_pack_state)(pipeline, cb_info, ds_info,
+   v3d_X((&device->devinfo), pipeline_pack_state)(pipeline, cb_info, ds_info,
                                        rs_info, pv_info, ls_info,
                                        ms_info,
                                        &pipeline_state);
@@ -2983,11 +2955,11 @@ pipeline_init(struct v3dv_pipeline *pipeline,
       vk_find_struct_const(vi_info->pNext,
                            PIPELINE_VERTEX_INPUT_DIVISOR_STATE_CREATE_INFO_EXT);
 
-   v3dv_X(device, pipeline_pack_compile_state)(pipeline, vi_info, vd_info);
+   v3d_X((&device->devinfo), pipeline_pack_compile_state)(pipeline, vi_info, vd_info);
 
-   if (v3dv_X(device, pipeline_needs_default_attribute_values)(pipeline)) {
+   if (v3d_X((&device->devinfo), pipeline_needs_default_attribute_values)(pipeline)) {
       pipeline->default_attribute_values =
-         v3dv_X(pipeline->device, create_default_attribute_values)(pipeline->device, pipeline);
+         v3d_X((&pipeline->device->devinfo), create_default_attribute_values)(pipeline->device, pipeline);
 
       if (!pipeline->default_attribute_values)
          return VK_ERROR_OUT_OF_DEVICE_MEMORY;
@@ -3065,6 +3037,7 @@ v3dv_CreateGraphicsPipelines(VkDevice _device,
                              const VkAllocationCallbacks *pAllocator,
                              VkPipeline *pPipelines)
 {
+   MESA_TRACE_FUNC();
    V3DV_FROM_HANDLE(v3dv_device, device, _device);
    VkResult result = VK_SUCCESS;
 
@@ -3167,7 +3140,8 @@ pipeline_compile_compute(struct v3dv_pipeline *pipeline,
    vk_pipeline_robustness_state_fill(&device->vk, &p_stage->robustness,
                                      info->pNext, sinfo->pNext);
 
-   vk_pipeline_hash_shader_stage(&info->stage,
+   vk_pipeline_hash_shader_stage(pipeline->flags,
+                                 &info->stage,
                                  &p_stage->robustness,
                                  p_stage->shader_sha1);
 
@@ -3328,6 +3302,7 @@ v3dv_CreateComputePipelines(VkDevice _device,
                             const VkAllocationCallbacks *pAllocator,
                             VkPipeline *pPipelines)
 {
+   MESA_TRACE_FUNC();
    V3DV_FROM_HANDLE(v3dv_device, device, _device);
    VkResult result = VK_SUCCESS;
 
@@ -3397,15 +3372,6 @@ pipeline_get_qpu(struct v3dv_pipeline *pipeline,
    *qpu_size = variant->qpu_insts_size;
    return variant->qpu_insts;
 }
-
-/* FIXME: we use the same macro in various drivers, maybe move it to
- * the common vk_util.h?
- */
-#define WRITE_STR(field, ...) ({                                \
-   memset(field, 0, sizeof(field));                             \
-   UNUSED int _i = snprintf(field, sizeof(field), __VA_ARGS__); \
-   assert(_i > 0 && _i < sizeof(field));                        \
-})
 
 static bool
 write_ir_text(VkPipelineExecutableInternalRepresentationKHR* ir,
@@ -3521,8 +3487,8 @@ v3dv_GetPipelineExecutableInternalRepresentationsKHR(
    if (exe->nir_str) {
       vk_outarray_append_typed(VkPipelineExecutableInternalRepresentationKHR,
                                &out, ir) {
-         WRITE_STR(ir->name, "NIR (%s)", broadcom_shader_stage_name(exe->stage));
-         WRITE_STR(ir->description, "Final NIR form");
+         VK_PRINT_STR(ir->name, "NIR (%s)", broadcom_shader_stage_name(exe->stage));
+         VK_COPY_STR(ir->description, "Final NIR form");
          if (!write_ir_text(ir, exe->nir_str))
             incomplete = true;
       }
@@ -3531,8 +3497,8 @@ v3dv_GetPipelineExecutableInternalRepresentationsKHR(
    if (exe->qpu_str) {
       vk_outarray_append_typed(VkPipelineExecutableInternalRepresentationKHR,
                                &out, ir) {
-         WRITE_STR(ir->name, "QPU (%s)", broadcom_shader_stage_name(exe->stage));
-         WRITE_STR(ir->description, "Final QPU assembly");
+         VK_PRINT_STR(ir->name, "QPU (%s)", broadcom_shader_stage_name(exe->stage));
+         VK_COPY_STR(ir->description, "Final QPU assembly");
          if (!write_ir_text(ir, exe->qpu_str))
             incomplete = true;
       }
@@ -3561,12 +3527,12 @@ v3dv_GetPipelineExecutablePropertiesKHR(
          gl_shader_stage mesa_stage = broadcom_shader_stage_to_gl(exe->stage);
          props->stages = mesa_to_vk_shader_stage(mesa_stage);
 
-         WRITE_STR(props->name, "%s (%s)",
+         VK_PRINT_STR(props->name, "%s (%s)",
                    _mesa_shader_stage_to_abbrev(mesa_stage),
                    broadcom_shader_stage_is_binning(exe->stage) ?
                      "Binning" : "Render");
 
-         WRITE_STR(props->description, "%s",
+         VK_COPY_STR(props->description,
                    _mesa_shader_stage_to_string(mesa_stage));
 
          props->subgroupSize = V3D_CHANNELS;
@@ -3602,52 +3568,52 @@ v3dv_GetPipelineExecutableStatisticsKHR(
 
    if (qpu_inst_count > 0) {
       vk_outarray_append_typed(VkPipelineExecutableStatisticKHR, &out, stat) {
-         WRITE_STR(stat->name, "Compile Strategy");
-         WRITE_STR(stat->description, "Chosen compile strategy index");
+         VK_COPY_STR(stat->name, "Compile Strategy");
+         VK_COPY_STR(stat->description, "Chosen compile strategy index");
          stat->format = VK_PIPELINE_EXECUTABLE_STATISTIC_FORMAT_UINT64_KHR;
          stat->value.u64 = prog_data->compile_strategy_idx;
       }
 
       vk_outarray_append_typed(VkPipelineExecutableStatisticKHR, &out, stat) {
-         WRITE_STR(stat->name, "Instruction Count");
-         WRITE_STR(stat->description, "Number of QPU instructions");
+         VK_COPY_STR(stat->name, "Instruction Count");
+         VK_COPY_STR(stat->description, "Number of QPU instructions");
          stat->format = VK_PIPELINE_EXECUTABLE_STATISTIC_FORMAT_UINT64_KHR;
          stat->value.u64 = qpu_inst_count;
       }
 
       vk_outarray_append_typed(VkPipelineExecutableStatisticKHR, &out, stat) {
-         WRITE_STR(stat->name, "Thread Count");
-         WRITE_STR(stat->description, "Number of QPU threads dispatched");
+         VK_COPY_STR(stat->name, "Thread Count");
+         VK_COPY_STR(stat->description, "Number of QPU threads dispatched");
          stat->format = VK_PIPELINE_EXECUTABLE_STATISTIC_FORMAT_UINT64_KHR;
          stat->value.u64 = prog_data->threads;
       }
 
       vk_outarray_append_typed(VkPipelineExecutableStatisticKHR, &out, stat) {
-         WRITE_STR(stat->name, "Spill Size");
-         WRITE_STR(stat->description, "Size of the spill buffer in bytes");
+         VK_COPY_STR(stat->name, "Spill Size");
+         VK_COPY_STR(stat->description, "Size of the spill buffer in bytes");
          stat->format = VK_PIPELINE_EXECUTABLE_STATISTIC_FORMAT_UINT64_KHR;
          stat->value.u64 = prog_data->spill_size;
       }
 
       vk_outarray_append_typed(VkPipelineExecutableStatisticKHR, &out, stat) {
-         WRITE_STR(stat->name, "TMU Spills");
-         WRITE_STR(stat->description, "Number of times a register was spilled "
+         VK_COPY_STR(stat->name, "TMU Spills");
+         VK_COPY_STR(stat->description, "Number of times a register was spilled "
                                       "to memory");
          stat->format = VK_PIPELINE_EXECUTABLE_STATISTIC_FORMAT_UINT64_KHR;
          stat->value.u64 = prog_data->spill_size;
       }
 
       vk_outarray_append_typed(VkPipelineExecutableStatisticKHR, &out, stat) {
-         WRITE_STR(stat->name, "TMU Fills");
-         WRITE_STR(stat->description, "Number of times a register was filled "
+         VK_COPY_STR(stat->name, "TMU Fills");
+         VK_COPY_STR(stat->description, "Number of times a register was filled "
                                       "from memory");
          stat->format = VK_PIPELINE_EXECUTABLE_STATISTIC_FORMAT_UINT64_KHR;
          stat->value.u64 = prog_data->spill_size;
       }
 
       vk_outarray_append_typed(VkPipelineExecutableStatisticKHR, &out, stat) {
-         WRITE_STR(stat->name, "QPU Read Stalls");
-         WRITE_STR(stat->description, "Number of cycles the QPU stalls for a "
+         VK_COPY_STR(stat->name, "QPU Read Stalls");
+         VK_COPY_STR(stat->description, "Number of cycles the QPU stalls for a "
                                       "register read dependency");
          stat->format = VK_PIPELINE_EXECUTABLE_STATISTIC_FORMAT_UINT64_KHR;
          stat->value.u64 = prog_data->qpu_read_stalls;

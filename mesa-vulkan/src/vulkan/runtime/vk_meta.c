@@ -24,10 +24,13 @@
 #include "vk_meta_object_list.h"
 #include "vk_meta_private.h"
 
+#include "vk_buffer.h"
 #include "vk_command_buffer.h"
 #include "vk_device.h"
 #include "vk_pipeline.h"
 #include "vk_util.h"
+
+#include "nir.h"
 
 #include "util/hash_table.h"
 
@@ -364,9 +367,13 @@ create_rect_list_pipeline(struct vk_device *device,
 
    info_local.pDynamicState = &dyn_info;
 
-   VkResult result = disp->CreateGraphicsPipelines(_device, VK_NULL_HANDLE,
+   VkResult result = disp->CreateGraphicsPipelines(_device, meta->pipeline_cache,
                                                    1, &info_local, NULL,
                                                    pipeline_out);
+
+   ralloc_free(vs_nir_info.nir);
+   if (use_gs)
+      ralloc_free(gs_nir_info.nir);
 
    STACK_ARRAY_FINISH(dyn_state);
    STACK_ARRAY_FINISH(stages);
@@ -440,10 +447,7 @@ vk_meta_create_graphics_pipeline(struct vk_device *device,
       for (uint32_t i = 0; i < render->color_attachment_count; i++) {
          cb_att[i] = (VkPipelineColorBlendAttachmentState) {
             .blendEnable = false,
-            .colorWriteMask = VK_COLOR_COMPONENT_R_BIT |
-                              VK_COLOR_COMPONENT_G_BIT |
-                              VK_COLOR_COMPONENT_B_BIT |
-                              VK_COLOR_COMPONENT_A_BIT,
+            .colorWriteMask = render->color_attachment_write_masks[i],
          };
       }
       cb_info = (VkPipelineColorBlendStateCreateInfo) {
@@ -455,13 +459,13 @@ vk_meta_create_graphics_pipeline(struct vk_device *device,
    }
 
    VkPipeline pipeline;
-   if (info_local.pInputAssemblyState->topology ==
-       VK_PRIMITIVE_TOPOLOGY_META_RECT_LIST_MESA) {
+   if (meta->use_rect_list_pipeline &&
+       info_local.pInputAssemblyState->topology == VK_PRIMITIVE_TOPOLOGY_META_RECT_LIST_MESA) {
       result = create_rect_list_pipeline(device, meta,
                                          &info_local,
                                          &pipeline);
    } else {
-      result = disp->CreateGraphicsPipelines(_device, VK_NULL_HANDLE,
+      result = disp->CreateGraphicsPipelines(_device, meta->pipeline_cache,
                                              1, &info_local,
                                              NULL, &pipeline);
    }
@@ -486,7 +490,7 @@ vk_meta_create_compute_pipeline(struct vk_device *device,
    VkDevice _device = vk_device_to_handle(device);
 
    VkPipeline pipeline;
-   VkResult result = disp->CreateComputePipelines(_device, VK_NULL_HANDLE,
+   VkResult result = disp->CreateComputePipelines(_device, meta->pipeline_cache,
                                                   1, info, NULL, &pipeline);
    if (result != VK_SUCCESS)
       return result;
@@ -556,4 +560,23 @@ vk_meta_create_buffer_view(struct vk_command_buffer *cmd,
                                   VK_OBJECT_TYPE_BUFFER_VIEW,
                                   (uint64_t)*buffer_view_out);
    return VK_SUCCESS;
+}
+
+VkDeviceAddress
+vk_meta_buffer_address(struct vk_device *device, VkBuffer buffer,
+                       uint64_t offset, uint64_t range)
+{
+   const VkBufferDeviceAddressInfo info = {
+      .sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO,
+      .buffer = buffer,
+   };
+   VkDeviceAddress base = device->dispatch_table.GetBufferDeviceAddress(
+      vk_device_to_handle(device), &info);
+
+   /* Only called for the assert()s in vk_buffer_range(), we don't care about
+    * the result.
+    */
+   vk_buffer_range(vk_buffer_from_handle(buffer), offset, range);
+
+   return base + offset;
 }

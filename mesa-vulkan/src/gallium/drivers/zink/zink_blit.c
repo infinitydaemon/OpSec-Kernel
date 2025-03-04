@@ -19,9 +19,9 @@ apply_dst_clears(struct zink_context *ctx, const struct pipe_blit_info *info, bo
    if (info->scissor_enable) {
       struct u_rect rect = { info->scissor.minx, info->scissor.maxx,
                              info->scissor.miny, info->scissor.maxy };
-      zink_fb_clears_apply_or_discard(ctx, info->dst.resource, rect, discard_only);
+      zink_fb_clears_apply_or_discard(ctx, info->dst.resource, rect, info->dst.box.z, info->dst.box.depth, discard_only);
    } else
-      zink_fb_clears_apply_or_discard(ctx, info->dst.resource, zink_rect_from_box(&info->dst.box), discard_only);
+      zink_fb_clears_apply_or_discard(ctx, info->dst.resource, zink_rect_from_box(&info->dst.box), info->dst.box.z, info->dst.box.depth, discard_only);
 }
 
 static bool
@@ -31,6 +31,7 @@ blit_resolve(struct zink_context *ctx, const struct pipe_blit_info *info, bool *
        util_format_get_mask(info->src.format) != info->mask ||
        util_format_is_depth_or_stencil(info->dst.format) ||
        info->scissor_enable ||
+       info->swizzle_enable ||
        info->alpha_blend)
       return false;
 
@@ -65,7 +66,7 @@ blit_resolve(struct zink_context *ctx, const struct pipe_blit_info *info, bool *
 
 
    apply_dst_clears(ctx, info, false);
-   zink_fb_clears_apply_region(ctx, info->src.resource, zink_rect_from_box(&info->src.box));
+   zink_fb_clears_apply_region(ctx, info->src.resource, zink_rect_from_box(&info->src.box), info->src.box.z, info->src.box.depth);
 
    if (src->obj->dt)
       *needs_present_readback = zink_kopper_acquire_readback(ctx, src, &use_src);
@@ -145,6 +146,7 @@ blit_native(struct zink_context *ctx, const struct pipe_blit_info *info, bool *n
    if (util_format_get_mask(info->dst.format) != info->mask ||
        util_format_get_mask(info->src.format) != info->mask ||
        info->scissor_enable ||
+       info->swizzle_enable ||
        info->alpha_blend)
       return false;
 
@@ -269,7 +271,7 @@ blit_native(struct zink_context *ctx, const struct pipe_blit_info *info, bool *n
    assert(region.dstOffsets[0].z != region.dstOffsets[1].z);
 
    apply_dst_clears(ctx, info, false);
-   zink_fb_clears_apply_region(ctx, info->src.resource, zink_rect_from_box(&info->src.box));
+   zink_fb_clears_apply_region(ctx, info->src.resource, zink_rect_from_box(&info->src.box), info->src.box.z, info->src.box.depth);
 
    if (src->obj->dt)
       *needs_present_readback = zink_kopper_acquire_readback(ctx, src, &use_src);
@@ -380,7 +382,7 @@ zink_blit(struct pipe_context *pctx,
    }
 
    if (src->obj->dt) {
-      zink_fb_clears_apply_region(ctx, info->src.resource, zink_rect_from_box(&info->src.box));
+      zink_fb_clears_apply_region(ctx, info->src.resource, zink_rect_from_box(&info->src.box), info->src.box.z, info->src.box.depth);
       needs_present_readback = zink_kopper_acquire_readback(ctx, src, &use_src);
    }
 
@@ -388,7 +390,7 @@ zink_blit(struct pipe_context *pctx,
     * flush all pending clears anyway
     */
    apply_dst_clears(ctx, info, true);
-   zink_fb_clears_apply_region(ctx, info->src.resource, zink_rect_from_box(&info->src.box));
+   zink_fb_clears_apply_region(ctx, info->src.resource, zink_rect_from_box(&info->src.box), info->src.box.z, info->src.box.depth);
    unsigned rp_clears_enabled = ctx->rp_clears_enabled;
    unsigned clears_enabled = ctx->clears_enabled;
    if (!dst->fb_bind_count) {
@@ -509,7 +511,7 @@ zink_blit_begin(struct zink_context *ctx, enum zink_blit_flags flags)
    util_blitter_save_tesseval_shader(ctx->blitter, ctx->gfx_stages[MESA_SHADER_TESS_EVAL]);
    util_blitter_save_geometry_shader(ctx->blitter, ctx->gfx_stages[MESA_SHADER_GEOMETRY]);
    util_blitter_save_rasterizer(ctx->blitter, ctx->rast_state);
-   util_blitter_save_so_targets(ctx->blitter, ctx->num_so_targets, ctx->so_targets);
+   util_blitter_save_so_targets(ctx->blitter, ctx->num_so_targets, ctx->so_targets, MESA_PRIM_UNKNOWN);
 
    if (flags & ZINK_BLIT_SAVE_FS_CONST_BUF)
       util_blitter_save_fragment_constant_buffer_slot(ctx->blitter, ctx->ubos[MESA_SHADER_FRAGMENT]);

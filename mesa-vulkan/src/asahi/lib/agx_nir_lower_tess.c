@@ -3,11 +3,11 @@
  * SPDX-License-Identifier: MIT
  */
 
-#include "shaders/geometry.h"
+#include "libagx/geometry.h"
+#include "libagx/libagx.h"
 #include "util/bitscan.h"
 #include "util/macros.h"
 #include "agx_nir_lower_gs.h"
-#include "libagx_shaders.h"
 #include "nir.h"
 #include "nir_builder.h"
 #include "nir_builder_opcodes.h"
@@ -117,7 +117,10 @@ lower_tcs_impl(nir_builder *b, nir_intrinsic_instr *intr)
       return tcs_instance_id(b);
 
    case nir_intrinsic_load_invocation_id:
-      return nir_channel(b, nir_load_local_invocation_id(b), 0);
+      if (b->shader->info.tess.tcs_vertices_out == 1)
+         return nir_imm_int(b, 0);
+      else
+         return nir_channel(b, nir_load_local_invocation_id(b), 0);
 
    case nir_intrinsic_load_per_vertex_input:
       return tcs_load_input(b, intr);
@@ -146,6 +149,11 @@ lower_tcs_impl(nir_builder *b, nir_intrinsic_instr *intr)
    }
 
    case nir_intrinsic_store_output: {
+      /* Only vec2, make sure we can't overwrite */
+      assert(intr->src[0].ssa->num_components <= 2 ||
+             nir_intrinsic_io_semantics(intr).location !=
+                VARYING_SLOT_TESS_LEVEL_INNER);
+
       nir_store_global(b, tcs_out_addr(b, intr, nir_undef(b, 1, 32)), 4,
                        intr->src[0].ssa, nir_intrinsic_write_mask(intr));
       return NIR_LOWER_INSTR_PROGRESS_REPLACE;
@@ -178,31 +186,11 @@ lower_tcs(nir_builder *b, nir_intrinsic_instr *intr, void *data)
    return true;
 }
 
-static void
-link_libagx(nir_shader *nir, const nir_shader *libagx)
-{
-   nir_link_shader_functions(nir, libagx);
-   NIR_PASS(_, nir, nir_inline_functions);
-   nir_remove_non_entrypoints(nir);
-   NIR_PASS(_, nir, nir_lower_indirect_derefs, nir_var_function_temp, 64);
-   NIR_PASS(_, nir, nir_opt_dce);
-   NIR_PASS(_, nir, nir_lower_vars_to_explicit_types, nir_var_function_temp,
-            glsl_get_cl_type_size_align);
-   NIR_PASS(_, nir, nir_opt_deref);
-   NIR_PASS(_, nir, nir_lower_vars_to_ssa);
-   NIR_PASS(_, nir, nir_lower_explicit_io,
-            nir_var_shader_temp | nir_var_function_temp | nir_var_mem_shared |
-               nir_var_mem_global,
-            nir_address_format_62bit_generic);
-}
-
 bool
-agx_nir_lower_tcs(nir_shader *tcs, const struct nir_shader *libagx)
+agx_nir_lower_tcs(nir_shader *tcs)
 {
-   nir_shader_intrinsics_pass(tcs, lower_tcs, nir_metadata_control_flow, NULL);
-
-   link_libagx(tcs, libagx);
-   return true;
+   return nir_shader_intrinsics_pass(tcs, lower_tcs, nir_metadata_control_flow,
+                                     NULL);
 }
 
 static nir_def *
@@ -262,7 +250,7 @@ lower_tes_indexing(nir_builder *b, nir_intrinsic_instr *intr, void *data)
 }
 
 bool
-agx_nir_lower_tes(nir_shader *tes, const nir_shader *libagx, bool to_hw_vs)
+agx_nir_lower_tes(nir_shader *tes, bool to_hw_vs)
 {
    nir_lower_tess_coord_z(
       tes, tes->info.tess._primitive_mode == TESS_PRIMITIVE_TRIANGLES);
@@ -300,8 +288,6 @@ agx_nir_lower_tes(nir_shader *tes, const nir_shader *libagx, bool to_hw_vs)
                                  nir_metadata_control_flow, NULL);
    }
 
-   link_libagx(tes, libagx);
    nir_lower_idiv(tes, &(nir_lower_idiv_options){.allow_fp16 = true});
-   nir_metadata_preserve(nir_shader_get_entrypoint(tes), nir_metadata_none);
-   return true;
+   return nir_progress(true, nir_shader_get_entrypoint(tes), nir_metadata_none);
 }

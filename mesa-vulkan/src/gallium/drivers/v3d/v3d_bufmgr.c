@@ -28,6 +28,7 @@
 #include <xf86drm.h>
 #include <xf86drmMode.h>
 
+#include "util/perf/cpu_trace.h"
 #include "util/u_hash_table.h"
 #include "util/u_memory.h"
 #include "util/ralloc.h"
@@ -149,29 +150,26 @@ v3d_bo_alloc(struct v3d_screen *screen, uint32_t size, const char *name)
         bo->name = name;
         bo->private = true;
 
- retry:
-        ;
-
-        bool cleared_and_retried = false;
         struct drm_v3d_create_bo create = {
                 .size = size
         };
 
+ retry:
         ret = v3d_ioctl(screen->fd, DRM_IOCTL_V3D_CREATE_BO, &create);
-        bo->handle = create.handle;
-        bo->offset = create.offset;
 
         if (ret != 0) {
-                if (!list_is_empty(&screen->bo_cache.time_list) &&
-                    !cleared_and_retried) {
-                        cleared_and_retried = true;
+                if (!list_is_empty(&screen->bo_cache.time_list)) {
                         v3d_bo_cache_free_all(&screen->bo_cache);
                         goto retry;
                 }
 
+                mesa_loge("Failed to allocate device memory for BO\n");
                 free(bo);
                 return NULL;
         }
+
+        bo->handle = create.handle;
+        bo->offset = create.offset;
 
         screen->bo_count++;
         screen->bo_size += bo->size;
@@ -201,10 +199,13 @@ v3d_bo_free(struct v3d_bo *bo)
         struct v3d_screen *screen = bo->screen;
 
         if (bo->map) {
-                if (USE_V3D_SIMULATOR && bo->name &&
+#if USE_V3D_SIMULATOR
+                if (bo->name &&
                     strcmp(bo->name, "winsys") == 0) {
                         free(bo->map);
-                } else {
+                } else
+#endif
+                {
                         munmap(bo->map, bo->size);
                         VG(VALGRIND_FREELIKE_BLOCK(bo->map, 0));
                 }
@@ -480,6 +481,8 @@ bool
 v3d_bo_wait(struct v3d_bo *bo, uint64_t timeout_ns, const char *reason)
 {
         struct v3d_screen *screen = bo->screen;
+
+        MESA_TRACE_FUNC();
 
         if (V3D_DBG(PERF) && timeout_ns && reason) {
                 if (v3d_wait_bo_ioctl(screen->fd, bo->handle, 0) == -ETIME) {

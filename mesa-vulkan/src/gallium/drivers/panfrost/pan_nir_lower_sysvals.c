@@ -25,6 +25,7 @@
 #include "pan_context.h"
 
 struct ctx {
+   unsigned arch;
    struct panfrost_sysvals *sysvals;
    struct hash_table_u64 *sysval_to_id;
    unsigned sysval_ubo;
@@ -54,10 +55,14 @@ lookup_sysval(struct hash_table_u64 *sysval_to_id,
 }
 
 static unsigned
-sysval_for_intrinsic(nir_intrinsic_instr *intr, unsigned *offset)
+sysval_for_intrinsic(unsigned arch, nir_intrinsic_instr *intr, unsigned *offset)
 {
    switch (intr->intrinsic) {
    case nir_intrinsic_load_ssbo_address:
+      if (arch >= 9)
+         return ~0;
+
+      assert(nir_src_as_uint(intr->src[1]) == 0);
       return PAN_SYSVAL(SSBO, nir_src_as_uint(intr->src[0]));
    case nir_intrinsic_get_ssbo_size:
       *offset = 8;
@@ -81,7 +86,7 @@ sysval_for_intrinsic(nir_intrinsic_instr *intr, unsigned *offset)
    case nir_intrinsic_load_num_vertices:
       return PAN_SYSVAL_NUM_VERTICES;
 
-   case nir_intrinsic_load_first_vertex:
+   case nir_intrinsic_load_raw_vertex_offset_pan:
       return PAN_SYSVAL_VERTEX_INSTANCE_OFFSETS;
    case nir_intrinsic_load_base_vertex:
       *offset = 4;
@@ -91,6 +96,9 @@ sysval_for_intrinsic(nir_intrinsic_instr *intr, unsigned *offset)
       return PAN_SYSVAL_VERTEX_INSTANCE_OFFSETS;
 
    case nir_intrinsic_load_draw_id:
+      if (arch >= 10)
+         return ~0;
+
       return PAN_SYSVAL_DRAWID;
 
    case nir_intrinsic_load_multisampled_pan:
@@ -107,6 +115,9 @@ sysval_for_intrinsic(nir_intrinsic_instr *intr, unsigned *offset)
 
    case nir_intrinsic_load_workgroup_size:
       return PAN_SYSVAL_LOCAL_GROUP_SIZE;
+
+   case nir_intrinsic_load_printf_buffer_address:
+      return PAN_SYSVAL_PRINTF_BUFFER;
 
    case nir_intrinsic_load_rt_conversion_pan: {
       unsigned size = nir_alu_type_get_type_size(nir_intrinsic_src_type(intr));
@@ -139,7 +150,7 @@ lower(nir_builder *b, nir_instr *instr, void *data)
    if (instr->type == nir_instr_type_intrinsic) {
       nir_intrinsic_instr *intr = nir_instr_as_intrinsic(instr);
       old = &intr->def;
-      sysval = sysval_for_intrinsic(intr, &offset);
+      sysval = sysval_for_intrinsic(ctx->arch, intr, &offset);
 
       if (sysval == ~0)
          return false;
@@ -177,7 +188,8 @@ lower(nir_builder *b, nir_instr *instr, void *data)
 }
 
 bool
-panfrost_nir_lower_sysvals(nir_shader *shader, struct panfrost_sysvals *sysvals)
+panfrost_nir_lower_sysvals(nir_shader *shader, unsigned arch,
+                           struct panfrost_sysvals *sysvals)
 {
    bool progress = false;
 
@@ -191,6 +203,7 @@ panfrost_nir_lower_sysvals(nir_shader *shader, struct panfrost_sysvals *sysvals)
    } while (progress);
 
    struct ctx ctx = {
+      .arch = arch,
       .sysvals = sysvals,
       .sysval_to_id = _mesa_hash_table_u64_create(NULL),
    };

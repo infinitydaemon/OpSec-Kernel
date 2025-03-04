@@ -16,6 +16,9 @@
 struct vn_queue {
    struct vn_queue_base base;
 
+   /* emulated queue shares base queue id and ring_idx with another queue */
+   bool emulated;
+
    /* only used if renderer supports multiple timelines */
    uint32_t ring_idx;
 
@@ -112,6 +115,7 @@ struct vn_semaphore {
        */
       struct list_head pending_cmds;
       struct list_head free_cmds;
+      uint32_t free_cmd_count;
 
       /* Lock for accessing free/pending sfb cmds */
       simple_mtx_t cmd_mtx;

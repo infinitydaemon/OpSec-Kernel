@@ -21,8 +21,7 @@
  * IN THE SOFTWARE.
  */
 
-#ifndef BRW_NIR_RT_H
-#define BRW_NIR_RT_H
+#pragma once
 
 #include "brw_nir.h"
 #include "brw_rt.h"
@@ -57,6 +56,7 @@ void brw_nir_lower_shader_returns(nir_shader *shader);
 bool brw_nir_lower_shader_calls(nir_shader *shader, struct brw_bs_prog_key *key);
 
 void brw_nir_lower_rt_intrinsics(nir_shader *shader,
+                                 const struct brw_base_prog_key *key,
                                  const struct intel_device_info *devinfo);
 void brw_nir_lower_intersection_shader(nir_shader *intersection,
                                        const nir_shader *any_hit,
@@ -72,5 +72,3 @@ brw_nir_create_trivial_return_shader(const struct brw_compiler *compiler,
 #ifdef __cplusplus
 }
 #endif
-
-#endif /* BRW_NIR_RT_H */

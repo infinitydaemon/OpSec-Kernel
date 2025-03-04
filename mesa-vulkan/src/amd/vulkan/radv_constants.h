@@ -12,6 +12,9 @@
 #define RADV_CONSTANTS_H
 
 #define ATI_VENDOR_ID 0x1002
+#ifdef HAVE_AMDGPU_VIRTIO
+#define VIRTGPU_PCI_VENDOR_ID 0x1af4
+#endif
 
 #define MAX_VBS                        32
 #define MAX_VERTEX_ATTRIBS             32
@@ -27,7 +30,6 @@
 #define MAX_DYNAMIC_BUFFERS            (MAX_DYNAMIC_UNIFORM_BUFFERS + MAX_DYNAMIC_STORAGE_BUFFERS)
 #define MAX_SAMPLES_LOG2               4
 #define NUM_META_FS_KEYS               12
-#define RADV_MAX_DRM_DEVICES           8
 #define MAX_VIEWS                      8
 #define MAX_SO_STREAMS                 4
 #define MAX_SO_BUFFERS                 4
@@ -148,6 +150,11 @@
 #define RADV_SHADER_QUERY_MS_INVOCATION_OFFSET    56
 #define RADV_SHADER_QUERY_MS_PRIM_GEN_OFFSET      60
 #define RADV_SHADER_QUERY_TS_INVOCATION_OFFSET    64
+
+/* Size of the shader query buffer for generated/written primitive queries
+ * using SSBO atomics on GFX12.
+ */
+#define RADV_SHADER_QUERY_BUF_SIZE (RADV_SHADER_QUERY_PRIM_XFB_OFFSET(3) - RADV_SHADER_QUERY_PRIM_GEN_OFFSET(0) + 4)
 
 /* Number of samples for line smooth lowering (hw requirement). */
 #define RADV_NUM_SMOOTH_AA_SAMPLES 4

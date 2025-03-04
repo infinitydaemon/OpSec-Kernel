@@ -28,6 +28,7 @@ import argparse
 
 import license
 import gl_XML, glX_XML
+import static_data
 
 class PrintGenericStubs(gl_XML.gl_print_base):
     def __init__(self):
@@ -84,17 +85,17 @@ class PrintGenericStubs(gl_XML.gl_print_base):
         print('\tcall\t__glapi_sparc_get_pc')
         print('\tadd\t%g2, %lo(_GLOBAL_OFFSET_TABLE_+4), %g2')
         print('\tmov\t%g1, %o7')
-        print('\tsethi\t%tie_hi22(_glapi_tls_Dispatch), %g1')
-        print('\tadd\t%g1, %tie_lo10(_glapi_tls_Dispatch), %g1')
-        print('\tGL_LL\t[%g2 + %g1], %g2, GL_TIE_LD(_glapi_tls_Dispatch)')
+        print('\tsethi\t%tie_hi22(_mesa_glapi_tls_Dispatch), %g1')
+        print('\tadd\t%g1, %tie_lo10(_mesa_glapi_tls_Dispatch), %g1')
+        print('\tGL_LL\t[%g2 + %g1], %g2, GL_TIE_LD(_mesa_glapi_tls_Dispatch)')
         print('\tretl')
         print('\t mov\t%g2, %o0')
         print('')
         print('\t.data')
         print('\t.align\t32')
         print('')
-        print('\t/* --> sethi %hi(_glapi_tls_Dispatch), %g1 */')
-        print('\t/* --> or %g1, %lo(_glapi_tls_Dispatch), %g1 */')
+        print('\t/* --> sethi %hi(_mesa_glapi_tls_Dispatch), %g1 */')
+        print('\t/* --> or %g1, %lo(_mesa_glapi_tls_Dispatch), %g1 */')
         print('\tGLOBL_FN(__glapi_sparc_tls_stub)')
         print('\tHIDDEN(__glapi_sparc_tls_stub)')
         print('__glapi_sparc_tls_stub: /* Call offset in %g3 */')
@@ -104,9 +105,9 @@ class PrintGenericStubs(gl_XML.gl_print_base):
         print('\tadd\t%g2, %lo(_GLOBAL_OFFSET_TABLE_+4), %g2')
         print('\tmov\t%g1, %o7')
         print('\tsrl\t%g3, 10, %g3')
-        print('\tsethi\t%tie_hi22(_glapi_tls_Dispatch), %g1')
-        print('\tadd\t%g1, %tie_lo10(_glapi_tls_Dispatch), %g1')
-        print('\tGL_LL\t[%g2 + %g1], %g2, GL_TIE_LD(_glapi_tls_Dispatch)')
+        print('\tsethi\t%tie_hi22(_mesa_glapi_tls_Dispatch), %g1')
+        print('\tadd\t%g1, %tie_lo10(_mesa_glapi_tls_Dispatch), %g1')
+        print('\tGL_LL\t[%g2 + %g1], %g2, GL_TIE_LD(_mesa_glapi_tls_Dispatch)')
         print('\tGL_LL\t[%g7+%g2], %g1')
         print('\tGL_LL\t[%g1 + %g3], %g1')
         print('\tjmp\t%g1')
@@ -145,13 +146,13 @@ class PrintGenericStubs(gl_XML.gl_print_base):
 
             print('\tGL_STUB(gl%s, %d)' % (name, f.offset))
 
-            if not f.is_static_entry_point(f.name):
+            if f.name not in static_data.libgl_public_functions:
                 print('\tHIDDEN(gl%s)' % (name))
 
         for f in api.functionIterateByOffset():
             name = f.dispatch_name()
 
-            if f.is_static_entry_point(f.name):
+            if f.name in static_data.libgl_public_functions:
                 for n in f.entry_points:
                     if n != f.name:
                         text = '\tGL_STUB_ALIAS(gl%s, gl%s)' % (n, f.name)

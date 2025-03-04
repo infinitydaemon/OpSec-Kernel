@@ -58,7 +58,8 @@ void si_streamout_buffers_dirty(struct si_context *sctx)
 
 static void si_set_streamout_targets(struct pipe_context *ctx, unsigned num_targets,
                                      struct pipe_stream_output_target **targets,
-                                     const unsigned *offsets)
+                                     const unsigned *offsets,
+                                     enum mesa_prim output_prim)
 {
    struct si_context *sctx = (struct si_context *)ctx;
    unsigned old_num_targets = sctx->streamout.num_targets;
@@ -75,18 +76,18 @@ static void si_set_streamout_targets(struct pipe_context *ctx, unsigned num_targ
       /* Stop streamout. */
       si_emit_streamout_end(sctx);
 
-      /* Since streamout uses vector writes which go through TC L2
-       * and most other clients can use TC L2 as well, we don't need
+      /* Since streamout uses vector writes which go through L2
+       * and most other clients can use L2 as well, we don't need
        * to flush it.
        *
        * The only cases which requires flushing it is VGT DMA index
        * fetching (on <= GFX7) and indirect draw data, which are rare
-       * cases. Thus, flag the TC L2 dirtiness in the resource and
+       * cases. Thus, flag the L2 dirtiness in the resource and
        * handle it at draw call time.
        */
       for (i = 0; i < old_num_targets; i++)
          if (sctx->streamout.targets[i])
-            si_resource(sctx->streamout.targets[i]->b.buffer)->TC_L2_dirty = true;
+            si_resource(sctx->streamout.targets[i]->b.buffer)->L2_cache_dirty = true;
 
       /* Invalidate the scalar cache in case a streamout buffer is
        * going to be used as a constant buffer.
@@ -98,14 +99,14 @@ static void si_set_streamout_targets(struct pipe_context *ctx, unsigned num_targ
        * VS_PARTIAL_FLUSH is required if the buffers are going to be
        * used as an input immediately.
        */
-      sctx->flags |= SI_CONTEXT_INV_SCACHE | SI_CONTEXT_INV_VCACHE |
-                     SI_CONTEXT_VS_PARTIAL_FLUSH | SI_CONTEXT_PFP_SYNC_ME;
+      sctx->barrier_flags |= SI_BARRIER_INV_SMEM | SI_BARRIER_INV_VMEM |
+                             SI_BARRIER_SYNC_VS | SI_BARRIER_PFP_SYNC_ME;
 
       /* Make the streamout state buffer available to the CP for resuming and DrawTF. */
       if (sctx->screen->info.cp_sdma_ge_use_system_memory_scope)
-         sctx->flags |= SI_CONTEXT_WB_L2;
+         sctx->barrier_flags |= SI_BARRIER_WB_L2;
 
-      si_mark_atom_dirty(sctx, &sctx->atoms.s.cache_flush);
+      si_mark_atom_dirty(sctx, &sctx->atoms.s.barrier);
    }
 
    /* TODO: This is a hack that fixes these failures. It shouldn't be necessary.
@@ -141,41 +142,52 @@ static void si_set_streamout_targets(struct pipe_context *ctx, unsigned num_targ
       if (sctx->gfx_level >= GFX12) {
          bool first_target = util_bitcount(enabled_mask) == 1;
 
-         /* The first enabled streamout target will contain the ordered ID/offset buffer for all
-          * targets.
+         /* The first enabled streamout target allocates the ordered ID/offset buffer for all
+          * targets. The other targets only hold the reference to the buffer because they need
+          * it for glDrawTransformFeedbackStream if stream != 0.
           */
-         if (first_target && !append_bitmask) {
-            /* The layout is:
-             *    struct {
-             *       struct {
-             *          uint32_t ordered_id; // equal for all buffers
-             *          uint32_t dwords_written;
-             *       } buffer[4];
-             *    };
-             *
-             * The buffer must be initialized to 0 and the address must be aligned to 64
-             * because it's faster when the atomic doesn't straddle a 64B block boundary.
-             */
-            unsigned alloc_size = 32;
-            unsigned alignment = 64;
-
-            si_resource_reference(&t->buf_filled_size, NULL);
-            u_suballocator_alloc(&sctx->allocator_zeroed_memory, alloc_size, alignment,
-                                 &t->buf_filled_size_offset,
-                                 (struct pipe_resource **)&t->buf_filled_size);
-
-            /* Offset to dwords_written of the first enabled streamout buffer. */
-            t->buf_filled_size_draw_count_offset = t->buf_filled_size_offset + i * 8 + 4;
-         }
-
          if (first_target) {
+            /* If not appending, we need to reset the buffer. */
+            if (!append_bitmask) {
+               /* The layout is:
+                *    struct {
+                *       struct {
+                *          uint32_t ordered_id; // equal for all buffers
+                *          uint32_t dwords_written; // it's actually in bytes
+                *       } buffer[4];
+                *    };
+                *
+                * The buffer must be initialized to 0 and the address must be aligned to 64
+                * because it's faster when the atomic doesn't straddle a 64B block boundary.
+                */
+               unsigned alloc_size = 32;
+               unsigned alignment = 64;
+
+               si_resource_reference(&t->buf_filled_size, NULL);
+               u_suballocator_alloc(&sctx->allocator_zeroed_memory, alloc_size, alignment,
+                                    &t->buf_filled_size_offset,
+                                    (struct pipe_resource **)&t->buf_filled_size);
+            }
+
+            /* Bind the buffer to the shader for global_atomic_ordered_add_b64. */
             struct pipe_shader_buffer sbuf;
             sbuf.buffer = &t->buf_filled_size->b.b;
             sbuf.buffer_offset = t->buf_filled_size_offset;
             sbuf.buffer_size = 32; /* unused, the shader only uses the low 32 bits of the address */
 
             si_set_internal_shader_buffer(sctx, SI_STREAMOUT_STATE_BUF, &sbuf);
+         } else {
+            /* All other streamout targets use the same buffer as the first one. */
+            struct si_streamout_target *first = sctx->streamout.targets[ffs(enabled_mask) - 1];
+
+            assert(first != t);
+            assert(first->buf_filled_size);
+            si_resource_reference(&t->buf_filled_size, first->buf_filled_size);
+            t->buf_filled_size_offset = first->buf_filled_size_offset;
          }
+
+         /* Offset to dwords_written of the streamout buffer. */
+         t->buf_filled_size_draw_count_offset = t->buf_filled_size_offset + i * 8 + 4;
       } else {
          /* GFX6-11 */
          if (!t->buf_filled_size) {
@@ -216,6 +228,9 @@ static void si_set_streamout_targets(struct pipe_context *ctx, unsigned num_targ
    if (!!sctx->streamout.enabled_mask != !!enabled_mask)
       sctx->do_update_shaders = true; /* to keep/remove streamout shader code as an optimization */
 
+   sctx->streamout.output_prim = output_prim;
+   sctx->streamout.num_verts_per_prim = output_prim == MESA_PRIM_UNKNOWN ?
+                                           0 : mesa_vertices_per_prim(output_prim);
    sctx->streamout.num_targets = num_targets;
    sctx->streamout.enabled_mask = enabled_mask;
    sctx->streamout.append_bitmask = append_bitmask;
@@ -227,9 +242,9 @@ static void si_set_streamout_targets(struct pipe_context *ctx, unsigned num_targ
       /* All readers of the streamout targets need to be finished before we can
        * start writing to them.
        */
-      sctx->flags |= SI_CONTEXT_PS_PARTIAL_FLUSH | SI_CONTEXT_CS_PARTIAL_FLUSH |
-                     SI_CONTEXT_PFP_SYNC_ME;
-      si_mark_atom_dirty(sctx, &sctx->atoms.s.cache_flush);
+      sctx->barrier_flags |= SI_BARRIER_SYNC_PS | SI_BARRIER_SYNC_CS |
+                             SI_BARRIER_PFP_SYNC_ME;
+      si_mark_atom_dirty(sctx, &sctx->atoms.s.barrier);
    } else {
       si_set_atom_dirty(sctx, &sctx->atoms.s.streamout_begin, false);
       si_set_streamout_enable(sctx, false);
@@ -259,8 +274,7 @@ static void si_flush_vgt_streamout(struct si_context *sctx)
       radeon_set_config_reg(reg_strmout_cntl, 0);
    }
 
-   radeon_emit(PKT3(PKT3_EVENT_WRITE, 0, 0));
-   radeon_emit(EVENT_TYPE(V_028A90_SO_VGTSTREAMOUT_FLUSH) | EVENT_INDEX(0));
+   radeon_event_write(V_028A90_SO_VGTSTREAMOUT_FLUSH);
 
    radeon_emit(PKT3(PKT3_WAIT_REG_MEM, 5, 0));
    radeon_emit(WAIT_REG_MEM_EQUAL); /* wait until the register is equal to the reference value */
@@ -285,7 +299,7 @@ static void si_emit_streamout_begin(struct si_context *sctx, unsigned index)
       if (!t[i])
          continue;
 
-      t[i]->stride_in_dw = sctx->streamout.stride_in_dw[i];
+      t[i]->stride = sctx->streamout.stride_in_dw[i] * 4;
 
       if (sctx->gfx_level >= GFX12) {
          /* Only the first streamout target holds information. */
@@ -331,19 +345,19 @@ static void si_emit_streamout_begin(struct si_context *sctx, unsigned index)
 
             /* Append. */
             radeon_emit(PKT3(PKT3_STRMOUT_BUFFER_UPDATE, 4, 0));
-            radeon_emit(STRMOUT_SELECT_BUFFER(i) |
-                        STRMOUT_OFFSET_SOURCE(STRMOUT_OFFSET_FROM_MEM)); /* control */
-            radeon_emit(0);                                              /* unused */
-            radeon_emit(0);                                              /* unused */
-            radeon_emit(va);                                             /* src address lo */
-            radeon_emit(va >> 32);                                       /* src address hi */
+            radeon_emit(STRMOUT_SELECT_BUFFER(i) | STRMOUT_DATA_TYPE(1) | /* offset in bytes */
+                        STRMOUT_OFFSET_SOURCE(STRMOUT_OFFSET_FROM_MEM));  /* control */
+            radeon_emit(0);                                               /* unused */
+            radeon_emit(0);                                               /* unused */
+            radeon_emit(va);                                              /* src address lo */
+            radeon_emit(va >> 32);                                        /* src address hi */
 
             radeon_add_to_buffer_list(sctx, &sctx->gfx_cs, t[i]->buf_filled_size,
                                       RADEON_USAGE_READ | RADEON_PRIO_SO_FILLED_SIZE);
          } else {
             /* Start from the beginning. */
             radeon_emit(PKT3(PKT3_STRMOUT_BUFFER_UPDATE, 4, 0));
-            radeon_emit(STRMOUT_SELECT_BUFFER(i) |
+            radeon_emit(STRMOUT_SELECT_BUFFER(i) | STRMOUT_DATA_TYPE(1) |   /* offset in bytes */
                         STRMOUT_OFFSET_SOURCE(STRMOUT_OFFSET_FROM_PACKET)); /* control */
             radeon_emit(0);                                                 /* unused */
             radeon_emit(0);                                                 /* unused */
@@ -372,8 +386,8 @@ void si_emit_streamout_end(struct si_context *sctx)
 
    if (sctx->gfx_level >= GFX11) {
       /* Wait for streamout to finish before reading GDS_STRMOUT registers. */
-      sctx->flags |= SI_CONTEXT_VS_PARTIAL_FLUSH;
-      si_emit_cache_flush_direct(sctx);
+      sctx->barrier_flags |= SI_BARRIER_SYNC_VS;
+      si_emit_barrier_direct(sctx);
    } else {
       si_flush_vgt_streamout(sctx);
    }
@@ -387,15 +401,16 @@ void si_emit_streamout_end(struct si_context *sctx)
                          t[i]->buf_filled_size, t[i]->buf_filled_size_offset,
                          COPY_DATA_REG, NULL,
                          (R_031088_GDS_STRMOUT_DWORDS_WRITTEN_0 >> 2) + i);
-         sctx->flags |= SI_CONTEXT_PFP_SYNC_ME;
-         si_mark_atom_dirty(sctx, &sctx->atoms.s.cache_flush);
+         /* For DrawTF reading buf_filled_size: */
+         sctx->barrier_flags |= SI_BARRIER_PFP_SYNC_ME;
+         si_mark_atom_dirty(sctx, &sctx->atoms.s.barrier);
       } else {
          uint64_t va = t[i]->buf_filled_size->gpu_address + t[i]->buf_filled_size_offset;
 
          radeon_begin(cs);
          radeon_emit(PKT3(PKT3_STRMOUT_BUFFER_UPDATE, 4, 0));
          radeon_emit(STRMOUT_SELECT_BUFFER(i) | STRMOUT_OFFSET_SOURCE(STRMOUT_OFFSET_NONE) |
-                     STRMOUT_STORE_BUFFER_FILLED_SIZE); /* control */
+                     STRMOUT_DATA_TYPE(1) | STRMOUT_STORE_BUFFER_FILLED_SIZE); /* control */
          radeon_emit(va);                                  /* dst address lo */
          radeon_emit(va >> 32);                            /* dst address hi */
          radeon_emit(0);                                   /* unused */

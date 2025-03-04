@@ -19,6 +19,7 @@
 #include "tgsi/tgsi_ureg.h"
 #include "tgsi/tgsi_dump.h"
 #include "nir/tgsi_to_nir.h"
+#include "nir.h"
 
 #define DBG_CHANNEL DBG_SHADER
 
@@ -3590,10 +3591,8 @@ sm1_parse_instruction(struct shader_translator *tx)
     TOKEN_JUMP(tx);
 }
 
-#define GET_CAP(n) screen->get_param( \
-      screen, PIPE_CAP_##n)
-#define GET_SHADER_CAP(n) screen->get_shader_param( \
-      screen, info->type, PIPE_SHADER_CAP_##n)
+#define GET_CAP(n) screen->caps.n
+#define GET_SHADER_CAP(n) screen->shader_caps[info->type].n
 
 static HRESULT
 tx_ctor(struct shader_translator *tx, struct pipe_screen *screen, struct nine_shader_info *info)
@@ -3661,16 +3660,16 @@ tx_ctor(struct shader_translator *tx, struct pipe_screen *screen, struct nine_sh
         return E_OUTOFMEMORY;
     }
 
-    tx->native_integers = GET_SHADER_CAP(INTEGERS);
-    tx->inline_subroutines = !GET_SHADER_CAP(SUBROUTINES);
-    tx->want_texcoord = GET_CAP(TGSI_TEXCOORD);
-    tx->shift_wpos = !GET_CAP(FS_COORD_PIXEL_CENTER_INTEGER);
+    tx->native_integers = GET_SHADER_CAP(integers);
+    tx->inline_subroutines = !GET_SHADER_CAP(subroutines);
+    tx->want_texcoord = GET_CAP(tgsi_texcoord);
+    tx->shift_wpos = !GET_CAP(fs_coord_pixel_center_integer);
     tx->texcoord_sn = tx->want_texcoord ?
         TGSI_SEMANTIC_TEXCOORD : TGSI_SEMANTIC_GENERIC;
-    tx->wpos_is_sysval = GET_CAP(FS_POSITION_IS_SYSVAL);
-    tx->face_is_sysval_integer = GET_CAP(FS_FACE_IS_INTEGER_SYSVAL);
-    tx->no_vs_window_space = !GET_CAP(VS_WINDOW_SPACE_POSITION);
-    tx->mul_zero_wins = GET_CAP(LEGACY_MATH_RULES);
+    tx->wpos_is_sysval = GET_CAP(fs_position_is_sysval);
+    tx->face_is_sysval_integer = GET_CAP(fs_face_is_integer_sysval);
+    tx->no_vs_window_space = !GET_CAP(vs_window_space_position);
+    tx->mul_zero_wins = GET_CAP(legacy_math_rules);
 
     if (info->emulate_features) {
         tx->shift_wpos = true;
@@ -4020,6 +4019,8 @@ nine_ureg_create_shader(struct ureg_program                  *ureg,
 
     if (so)
         state.stream_output = *so;
+
+    state.report_compile_error = false;
 
     switch (shader_type) {
     case PIPE_SHADER_VERTEX:

@@ -25,16 +25,13 @@
  *
  */
 
-#ifndef BRW_CFG_H
-#define BRW_CFG_H
+#pragma once
 
 struct bblock_t;
 
 #ifdef __cplusplus
 
-#include "brw_ir.h"
-#include "brw_ir_analysis.h"
-#include "brw_ir_fs.h"
+#include "brw_inst.h"
 
 struct bblock_t;
 
@@ -74,7 +71,7 @@ struct bblock_link {
    enum bblock_link_kind kind;
 };
 
-struct fs_visitor;
+struct brw_shader;
 struct cfg_t;
 
 struct bblock_t {
@@ -92,10 +89,10 @@ struct bblock_t {
    void combine_with(bblock_t *that);
    void dump(FILE *file = stderr) const;
 
-   fs_inst *start();
-   const fs_inst *start() const;
-   fs_inst *end();
-   const fs_inst *end() const;
+   brw_inst *start();
+   const brw_inst *start() const;
+   brw_inst *end();
+   const brw_inst *end() const;
 
    bblock_t *next();
    const bblock_t *next() const;
@@ -105,8 +102,8 @@ struct bblock_t {
    bool starts_with_control_flow() const;
    bool ends_with_control_flow() const;
 
-   fs_inst *first_non_control_flow_inst();
-   fs_inst *last_non_control_flow_inst();
+   brw_inst *first_non_control_flow_inst();
+   brw_inst *last_non_control_flow_inst();
 
 private:
    /**
@@ -142,28 +139,28 @@ public:
    int num;
 };
 
-static inline fs_inst *
+static inline brw_inst *
 bblock_start(struct bblock_t *block)
 {
-   return (fs_inst *)exec_list_get_head(&block->instructions);
+   return (brw_inst *)exec_list_get_head(&block->instructions);
 }
 
-static inline const fs_inst *
+static inline const brw_inst *
 bblock_start_const(const struct bblock_t *block)
 {
-   return (const fs_inst *)exec_list_get_head_const(&block->instructions);
+   return (const brw_inst *)exec_list_get_head_const(&block->instructions);
 }
 
-static inline fs_inst *
+static inline brw_inst *
 bblock_end(struct bblock_t *block)
 {
-   return (fs_inst *)exec_list_get_tail(&block->instructions);
+   return (brw_inst *)exec_list_get_tail(&block->instructions);
 }
 
-static inline const fs_inst *
+static inline const brw_inst *
 bblock_end_const(const struct bblock_t *block)
 {
-   return (const fs_inst *)exec_list_get_tail_const(&block->instructions);
+   return (const brw_inst *)exec_list_get_tail_const(&block->instructions);
 }
 
 static inline struct bblock_t *
@@ -217,54 +214,55 @@ bblock_ends_with_control_flow(const struct bblock_t *block)
           op == BRW_OPCODE_ELSE ||
           op == BRW_OPCODE_WHILE ||
           op == BRW_OPCODE_BREAK ||
-          op == BRW_OPCODE_CONTINUE;
+          op == BRW_OPCODE_CONTINUE ||
+          op == SHADER_OPCODE_FLOW;
 }
 
-static inline fs_inst *
+static inline brw_inst *
 bblock_first_non_control_flow_inst(struct bblock_t *block)
 {
-   fs_inst *inst = bblock_start(block);
+   brw_inst *inst = bblock_start(block);
    if (bblock_starts_with_control_flow(block))
 #ifdef __cplusplus
-      inst = (fs_inst *)inst->next;
+      inst = (brw_inst *)inst->next;
 #else
-      inst = (fs_inst *)inst->link.next;
+      inst = (brw_inst *)inst->link.next;
 #endif
    return inst;
 }
 
-static inline fs_inst *
+static inline brw_inst *
 bblock_last_non_control_flow_inst(struct bblock_t *block)
 {
-   fs_inst *inst = bblock_end(block);
+   brw_inst *inst = bblock_end(block);
    if (bblock_ends_with_control_flow(block))
 #ifdef __cplusplus
-      inst = (fs_inst *)inst->prev;
+      inst = (brw_inst *)inst->prev;
 #else
-      inst = (fs_inst *)inst->link.prev;
+      inst = (brw_inst *)inst->link.prev;
 #endif
    return inst;
 }
 
-inline fs_inst *
+inline brw_inst *
 bblock_t::start()
 {
    return bblock_start(this);
 }
 
-inline const fs_inst *
+inline const brw_inst *
 bblock_t::start() const
 {
    return bblock_start_const(this);
 }
 
-inline fs_inst *
+inline brw_inst *
 bblock_t::end()
 {
    return bblock_end(this);
 }
 
-inline const fs_inst *
+inline const brw_inst *
 bblock_t::end() const
 {
    return bblock_end_const(this);
@@ -306,13 +304,13 @@ bblock_t::ends_with_control_flow() const
    return bblock_ends_with_control_flow(this);
 }
 
-inline fs_inst *
+inline brw_inst *
 bblock_t::first_non_control_flow_inst()
 {
    return bblock_first_non_control_flow_inst(this);
 }
 
-inline fs_inst *
+inline brw_inst *
 bblock_t::last_non_control_flow_inst()
 {
    return bblock_last_non_control_flow_inst(this);
@@ -321,7 +319,7 @@ bblock_t::last_non_control_flow_inst()
 struct cfg_t {
    DECLARE_RALLOC_CXX_OPERATORS(cfg_t)
 
-   cfg_t(const fs_visitor *s, exec_list *instructions);
+   cfg_t(const brw_shader *s, exec_list *instructions);
    ~cfg_t();
 
    void remove_block(bblock_t *block);
@@ -349,7 +347,7 @@ struct cfg_t {
     */
    inline void adjust_block_ips();
 
-   const struct fs_visitor *s;
+   const struct brw_shader *s;
    void *mem_ctx;
 
    /** Ordered list (by ip) of basic blocks */
@@ -473,68 +471,4 @@ cfg_t::adjust_block_ips()
    }
 }
 
-namespace brw {
-   /**
-    * Immediate dominator tree analysis of a shader.
-    */
-   struct idom_tree {
-      idom_tree(const fs_visitor *s);
-      ~idom_tree();
-
-      bool
-      validate(const fs_visitor *) const
-      {
-         /* FINISHME */
-         return true;
-      }
-
-      analysis_dependency_class
-      dependency_class() const
-      {
-         return DEPENDENCY_BLOCKS;
-      }
-
-      const bblock_t *
-      parent(const bblock_t *b) const
-      {
-         assert(unsigned(b->num) < num_parents);
-         return parents[b->num];
-      }
-
-      bblock_t *
-      parent(bblock_t *b) const
-      {
-         assert(unsigned(b->num) < num_parents);
-         return parents[b->num];
-      }
-
-      bblock_t *
-      intersect(bblock_t *b1, bblock_t *b2) const;
-
-      /**
-       * Returns true if block `a` dominates block `b`.
-       */
-      bool
-      dominates(const bblock_t *a, const bblock_t *b) const
-      {
-         while (a != b) {
-            if (b->num == 0)
-               return false;
-
-            b = parent(b);
-         }
-         return true;
-      }
-
-      void
-      dump() const;
-
-   private:
-      unsigned num_parents;
-      bblock_t **parents;
-   };
-}
-
 #endif
-
-#endif /* BRW_CFG_H */

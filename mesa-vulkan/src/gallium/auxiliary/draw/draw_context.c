@@ -163,8 +163,8 @@ draw_init(struct draw_context *draw)
    if (!draw_gs_init(draw))
       return false;
 
-   draw->quads_always_flatshade_last = !draw->pipe->screen->get_param(
-      draw->pipe->screen, PIPE_CAP_QUADS_FOLLOW_PROVOKING_VERTEX_CONVENTION);
+   draw->quads_always_flatshade_last =
+      !draw->pipe->screen->caps.quads_follow_provoking_vertex_convention;
 
    draw->floating_point_depth = false;
 
@@ -370,6 +370,12 @@ draw_set_clip_state(struct draw_context *draw,
    draw_do_flush(draw, DRAW_FLUSH_PARAMETER_CHANGE);
 
    memcpy(&draw->plane[6], clip->ucp, sizeof(clip->ucp));
+}
+
+void
+draw_set_viewmask(struct draw_context *draw, uint8_t viewmask)
+{
+   draw->viewmask = viewmask;
 }
 
 
@@ -1156,49 +1162,21 @@ draw_set_mapped_image(struct draw_context *draw,
 #endif
 }
 
-
 /**
- * XXX: Results for PIPE_SHADER_CAP_MAX_TEXTURE_SAMPLERS because there are two
- * different ways of setting textures, and drivers typically only support one.
- */
-int
-draw_get_shader_param_no_llvm(enum pipe_shader_type shader,
-                              enum pipe_shader_cap param)
-{
-   switch(shader) {
-   case PIPE_SHADER_VERTEX:
-   case PIPE_SHADER_GEOMETRY:
-      return tgsi_exec_get_shader_param(param);
-   default:
-      return 0;
-   }
-}
-
-
-/**
- * XXX: Results for PIPE_SHADER_CAP_MAX_TEXTURE_SAMPLERS because there are two
+ * XXX: Results for pipe_shader_caps.max_texture_samplers because there are two
  * different ways of setting textures, and drivers typically only support one.
  * Drivers requesting a draw context explicitly without llvm must call
- * draw_get_shader_param_no_llvm instead.
+ * tgsi_exec_init_shader_caps instead.
  */
-int
-draw_get_shader_param(enum pipe_shader_type shader, enum pipe_shader_cap param)
+void
+draw_init_shader_caps(struct pipe_shader_caps *caps)
 {
 #if DRAW_LLVM_AVAILABLE
-   if (draw_get_option_use_llvm()) {
-      switch(shader) {
-      case PIPE_SHADER_VERTEX:
-      case PIPE_SHADER_GEOMETRY:
-      case PIPE_SHADER_TESS_CTRL:
-      case PIPE_SHADER_TESS_EVAL:
-         return gallivm_get_shader_param(param);
-      default:
-         return 0;
-      }
-   }
+   if (draw_get_option_use_llvm())
+      gallivm_init_shader_caps(caps);
+   else
 #endif
-
-   return draw_get_shader_param_no_llvm(shader, param);
+      tgsi_exec_init_shader_caps(caps);
 }
 
 
@@ -1265,7 +1243,10 @@ draw_stats_clipper_primitives(struct draw_context *draw,
 bool
 draw_will_inject_frontface(const struct draw_context *draw)
 {
-   unsigned reduced_prim = u_reduced_prim(draw->pt.prim);
+   /* The geometry shader can change the primitive type. */
+   enum mesa_prim prim = draw->gs.geometry_shader ?
+      draw->gs.geometry_shader->output_primitive : draw->pt.prim;
+   enum mesa_prim reduced_prim = u_reduced_prim(prim);
    const struct pipe_rasterizer_state *rast = draw->rasterizer;
 
    if (reduced_prim != MESA_PRIM_TRIANGLES) {

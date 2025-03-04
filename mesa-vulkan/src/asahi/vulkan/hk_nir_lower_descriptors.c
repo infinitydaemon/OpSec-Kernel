@@ -6,8 +6,7 @@
  */
 #include "pipe/p_defines.h"
 #include "vulkan/vulkan_core.h"
-#include "agx_nir_passes.h"
-#include "agx_pack.h"
+#include "agx_nir_texture.h"
 #include "hk_cmd_buffer.h"
 #include "hk_descriptor_set.h"
 #include "hk_descriptor_set_layout.h"
@@ -16,7 +15,6 @@
 #include "nir.h"
 #include "nir_builder.h"
 #include "nir_builder_opcodes.h"
-#include "nir_deref.h"
 #include "nir_intrinsics.h"
 #include "nir_intrinsics_indices.h"
 #include "shader_enums.h"
@@ -339,6 +337,7 @@ lower_image_intrin(nir_builder *b, nir_intrinsic_instr *intr,
    /* Reads and queries use the texture descriptor; writes and atomics PBE. */
    unsigned offs;
    if (intr->intrinsic != nir_intrinsic_image_deref_load &&
+       intr->intrinsic != nir_intrinsic_image_deref_sparse_load &&
        intr->intrinsic != nir_intrinsic_image_deref_size &&
        intr->intrinsic != nir_intrinsic_image_deref_samples) {
 
@@ -494,6 +493,21 @@ lower_uvs_index(nir_builder *b, nir_intrinsic_instr *intrin, void *data)
        * TODO: Optimize case where we *know* the query is present?
        */
       nir_def *present = nir_ine_imm(b, nir_iand_imm(b, flags, bit), 0);
+
+      /* Sometimes we insert a GS internally, it should not contribute to GS
+       * statistics. This is not strictly needed for Vulkan but vkd3d-proton
+       * tests it and we should avoid the surprising behaviour.
+       */
+      if (query == PIPE_STAT_QUERY_GS_INVOCATIONS ||
+          query == PIPE_STAT_QUERY_GS_PRIMITIVES) {
+
+         unsigned api_gs_offset = hk_root_descriptor_offset(draw.api_gs);
+         nir_def *api_gs =
+            load_root(b, 1, 16, nir_imm_int(b, api_gs_offset), 4);
+
+         present = nir_iand(b, present, nir_ine_imm(b, api_gs, 0));
+      }
+
       addr = nir_bcsel(b, present, addr, nir_imm_int64(b, 0));
 
       nir_def_rewrite_uses(&intrin->def, addr);
@@ -542,6 +556,7 @@ try_lower_intrin(nir_builder *b, nir_intrinsic_instr *intrin,
    case nir_intrinsic_image_deref_atomic_swap:
    case nir_intrinsic_image_deref_size:
    case nir_intrinsic_image_deref_samples:
+   case nir_intrinsic_image_deref_store_block_agx:
       return lower_image_intrin(b, intrin, ctx);
 
    case nir_intrinsic_load_num_workgroups: {
@@ -595,14 +610,32 @@ lower_tex(nir_builder *b, nir_tex_instr *tex,
       return true;
    }
 
+   if (tex->op == nir_texop_image_min_lod_agx) {
+      assert(tex->dest_type == nir_type_float16 ||
+             tex->dest_type == nir_type_uint16);
+
+      unsigned offs =
+         tex->dest_type == nir_type_float16
+            ? offsetof(struct hk_sampled_image_descriptor, min_lod_fp16)
+            : offsetof(struct hk_sampled_image_descriptor, min_lod_uint16);
+
+      nir_def *min = load_resource_deref_desc(
+         b, 1, 16, nir_src_as_deref(nir_src_for_ssa(texture)),
+         plane_offset_B + offs, ctx);
+
+      nir_def_replace(&tex->def, min);
+      return true;
+   }
+
    if (tex->op == nir_texop_has_custom_border_color_agx) {
-      unsigned offs = offsetof(struct hk_sampled_image_descriptor, has_border);
+      unsigned offs = offsetof(struct hk_sampled_image_descriptor,
+                               clamp_0_sampler_index_or_negative);
 
       nir_def *res = load_resource_deref_desc(
          b, 1, 16, nir_src_as_deref(nir_src_for_ssa(sampler)),
          plane_offset_B + offs, ctx);
 
-      nir_def_replace(&tex->def, nir_ine_imm(b, res, 0));
+      nir_def_replace(&tex->def, nir_ige_imm(b, res, 0));
       return true;
    }
 
@@ -637,8 +670,8 @@ lower_tex(nir_builder *b, nir_tex_instr *tex,
          offsetof(struct hk_sampled_image_descriptor, sampler_index);
 
       if (tex->backend_flags & AGX_TEXTURE_FLAG_CLAMP_TO_0) {
-         offs =
-            offsetof(struct hk_sampled_image_descriptor, clamp_0_sampler_index);
+         offs = offsetof(struct hk_sampled_image_descriptor,
+                         clamp_0_sampler_index_or_negative);
       }
 
       nir_def *index = load_resource_deref_desc(

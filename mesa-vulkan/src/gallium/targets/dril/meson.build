@@ -59,7 +59,7 @@ dril_dri = shared_library(
   # Will be deleted during installation, see install_megadrivers.py
   install : true,
   install_dir : dri_drivers_path,
-  name_suffix : 'so',
+  name_suffix : libname_suffix,
 )
 
 foreach d : [[with_gallium_kmsro, [
@@ -117,10 +117,12 @@ foreach d : [[with_gallium_kmsro, [
              [with_gallium_r600, 'r600_dri.so'],
              [with_gallium_svga, 'vmwgfx_dri.so'],
              [with_gallium_virgl or
-               (with_gallium_freedreno and freedreno_kmds.contains('virtio')),
+               (with_gallium_freedreno and freedreno_kmds.contains('virtio')) or
+               (with_gallium_radeonsi and with_amdgpu_virtio),
                'virtio_gpu_dri.so'],
              [with_gallium_lima, 'lima_dri.so'],
              [with_gallium_d3d12, 'd3d12_dri.so'],
+             [with_gallium_zink, 'zink_dri.so'],
              [with_gallium_asahi, 'asahi_dri.so']]
   if d[0]
     dril_drivers += d[1]
@@ -142,7 +144,7 @@ endif
 
 if dril_drivers.length() > 0
   meson.add_install_script(
-    install_megadrivers_py.full_path(),
+    install_megadrivers,
     dril_dri.full_path(),
     dri_drivers_path,
     dril_drivers,

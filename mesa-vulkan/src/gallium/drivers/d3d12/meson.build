@@ -2,6 +2,30 @@
 # SPDX-License-Identifier: MIT
 
 libd3d12_compiler_args = []
+
+libd3d12_compiler_args += cc.get_supported_arguments([
+    '/we4267',
+    '/we4996',
+    '/we4146',
+    '/we4244',
+    '/we4389',
+    '/we4838',
+    '/we4302',
+    '/we4018',
+    '/we4056',
+    '/we4305',
+    '/we4351',
+    '/we4756',
+    '/we4800',
+    '/we4291',
+    '/we4624',
+    '/we4309',
+    '/we5105',
+    '/we4020',
+    '/we4024',
+    '/we4189',
+  ])
+
 _with_gallium_d3d12_graphics = get_option('gallium-d3d12-graphics')
 with_gallium_d3d12_graphics = false
 if not _with_gallium_d3d12_graphics.disabled()

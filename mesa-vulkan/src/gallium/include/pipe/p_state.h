@@ -56,6 +56,8 @@
 extern "C" {
 #endif
 
+struct nir_shader;
+
 /**
  * Implementation limits
  */
@@ -143,7 +145,7 @@ struct pipe_rasterizer_state
    unsigned rasterizer_discard:1;
 
    /**
-    * Exposed by PIPE_CAP_TILE_RASTER_ORDER.  When true,
+    * Exposed by pipe_caps.tile_raster_order.  When true,
     * tile_raster_order_increasing_* indicate the order that the rasterizer
     * should render tiles, to meet the requirements of
     * GL_MESA_tile_raster_order.
@@ -155,9 +157,9 @@ struct pipe_rasterizer_state
    /**
     * When false, depth clipping is disabled and the depth value will be
     * clamped later at the per-pixel level before depth testing.
-    * This depends on PIPE_CAP_DEPTH_CLIP_DISABLE.
+    * This depends on pipe_caps.depth_clip_disable.
     *
-    * If PIPE_CAP_DEPTH_CLIP_DISABLE_SEPARATE is unsupported, depth_clip_near
+    * If pipe_caps.depth_clip_disable_separate is unsupported, depth_clip_near
     * is equal to depth_clip_far.
     */
    unsigned depth_clip_near:1;
@@ -165,7 +167,7 @@ struct pipe_rasterizer_state
 
    /**
     * When true, depth clamp is enabled.
-    * If PIPE_CAP_DEPTH_CLAMP_ENABLE is unsupported, this is always the inverse
+    * If pipe_caps.depth_clamp_enable is unsupported, this is always the inverse
     * of depth_clip_far.
     */
    unsigned depth_clamp:1;
@@ -181,7 +183,7 @@ struct pipe_rasterizer_state
    /**
     * When true do not scale offset_units and use same rules for unorm and
     * float depth buffers (D3D9). When false use GL/D3D1X behaviour.
-    * This depends on PIPE_CAP_POLYGON_OFFSET_UNITS_UNSCALED.
+    * This depends on pipe_caps.polygon_offset_units_unscaled.
     */
    unsigned offset_units_unscaled:1;
 
@@ -301,9 +303,17 @@ struct pipe_shader_state
    const struct tgsi_token *tokens;
    union {
       void *native;
-      void *nir;
+      struct nir_shader *nir;
    } ir;
    struct pipe_stream_output_info stream_output;
+
+   /* If the caller sets report_compile_error=true, the driver can fail
+    * compilation and should allocate a string with the error message and
+    * store it in the pointer below. The caller is responsible for reading
+    * and freeing the error message.
+    */
+   bool report_compile_error;
+   char *error_message;
 };
 
 static inline void
@@ -403,6 +413,8 @@ struct pipe_framebuffer_state
 
    /** multiple color buffers for multiple render targets */
    uint8_t nr_cbufs;
+   /** used for multiview */
+   uint8_t viewmask;
    struct pipe_surface *cbufs[PIPE_MAX_COLOR_BUFS];
 
    struct pipe_surface *zsbuf;      /**< Z/stencil buffer */
@@ -474,6 +486,12 @@ struct pipe_surface
    union pipe_surface_desc u;
 };
 
+struct pipe_tex2d_from_buf {
+   unsigned offset;  /**< offset in pixels */
+   uint16_t row_stride; /**< size of the image row_stride in pixels */
+   uint16_t width;      /**< width of image provided by application */
+   uint16_t height;     /**< height of image provided by application */
+};
 
 /**
  * A view into a texture that can be bound to a shader stage.
@@ -483,7 +501,8 @@ struct pipe_sampler_view
    /* Put the refcount on its own cache line to prevent "False sharing". */
    EXCLUSIVE_CACHELINE(struct pipe_reference reference);
 
-   enum pipe_format format:14;      /**< typed PIPE_FORMAT_x */
+   enum pipe_format format:12;      /**< typed PIPE_FORMAT_x */
+   unsigned astc_decode_format:2;   /**< intermediate format used for ASTC textures */
    bool is_tex2d_from_buf:1;       /**< true if union is tex2d_from_buf */
    enum pipe_texture_target target:5; /**< PIPE_TEXTURE_x */
    unsigned swizzle_r:3;         /**< PIPE_SWIZZLE_x for red component */
@@ -503,12 +522,7 @@ struct pipe_sampler_view
          unsigned offset;   /**< offset in bytes */
          unsigned size;     /**< size of the readable sub-range in bytes */
       } buf;
-      struct {
-         unsigned offset;  /**< offset in pixels */
-         uint16_t row_stride; /**< size of the image row_stride in pixels */
-         uint16_t width;      /**< width of image provided by application */
-         uint16_t height;     /**< height of image provided by application */
-      } tex2d_from_buf;      /**< used in cl extension cl_khr_image2d_from_buffer */
+      struct pipe_tex2d_from_buf tex2d_from_buf; /**< used in cl extension cl_khr_image2d_from_buffer */
    } u;
 };
 
@@ -533,17 +547,13 @@ struct pipe_image_view
          unsigned last_layer:16;      /**< last layer to use for array textures */
          unsigned level:8;            /**< mipmap level to use */
          bool single_layer_view;      /**< single layer view of array */
+         bool is_2d_view_of_3d;
       } tex;
       struct {
          unsigned offset;   /**< offset in bytes */
          unsigned size;     /**< size of the accessible sub-range in bytes */
       } buf;
-      struct {
-         unsigned offset;   /**< offset in pixels */
-         uint16_t row_stride;     /**< size of the image row_stride in pixels */
-         uint16_t width;     /**< width of image provided by application */
-         uint16_t height;     /**< height of image provided by application */
-      } tex2d_from_buf;      /**< used in cl extension cl_khr_image2d_from_buffer */
+      struct pipe_tex2d_from_buf tex2d_from_buf; /**< used in cl extension cl_khr_image2d_from_buffer */
    } u;
 };
 
@@ -590,7 +600,10 @@ struct pipe_resource
     * next plane.
     */
    struct pipe_resource *next;
-   /* The screen pointer should be last for optimal structure packing. */
+   /* The screen pointer should be last for optimal structure packing.
+    * This pointer cannot be casted directly to a driver's screen. Use
+    * screen::get_driver_pipe_screen instead if it's non-NULL.
+    */
    struct pipe_screen *screen; /**< screen that this texture belongs to */
 };
 
@@ -847,8 +860,7 @@ struct pipe_draw_info
    /* sizeof(mode) == 1 is required by draw merging in u_threaded_context. */
    uint8_t mode;              /**< the mode of the primitive */
 #endif
-   uint8_t index_size;        /**< if 0, the draw is not indexed. */
-   uint8_t view_mask;         /**< mask of multiviews for this draw */
+   uint16_t index_size;        /**< if 0, the draw is not indexed. */
    bool primitive_restart:1;
    bool has_user_indices:1;   /**< if true, use index.user_buffer */
    bool index_bounds_valid:1; /**< whether min_index and max_index are valid;
@@ -910,6 +922,14 @@ struct pipe_blit_info
    bool scissor_enable;
    struct pipe_scissor_state scissor;
 
+   /* Swizzling during a blit typically forces a slower
+      path, so it should be used only when necessary. It's
+      there mainly to support blitting between different formats
+      when one of them has been emulated (e.g. GL_ALPHA emulated
+      by GL_RGBA) */
+   bool swizzle_enable; /**< swizzle is only applied if this is set */
+   uint8_t swizzle[4];  /**< map to be applied while blitting */
+
    /* Window rectangles can either be inclusive or exclusive. */
    bool window_rectangle_include;
    unsigned num_window_rectangles;
@@ -926,7 +946,7 @@ struct pipe_blit_info
 struct pipe_grid_info
 {
    /**
-    * For drivers that use PIPE_SHADER_IR_NATIVE as their prefered IR, this
+    * For drivers that use PIPE_SHADER_IR_NATIVE as their preferred IR, this
     * value will be the index of the kernel in the opencl.kernels metadata
     * list.
     */
@@ -1043,6 +1063,10 @@ enum pipe_ml_operation_type {
    PIPE_ML_OPERATION_TYPE_ADD,
    PIPE_ML_OPERATION_TYPE_CONVOLUTION,
    PIPE_ML_OPERATION_TYPE_POOLING,
+   PIPE_ML_OPERATION_TYPE_CONCATENATION,
+   PIPE_ML_OPERATION_TYPE_SPLIT,
+   PIPE_ML_OPERATION_TYPE_PAD,
+   PIPE_ML_OPERATION_TYPE_FULLY_CONNECTED,
 };
 
 /**
@@ -1058,12 +1082,14 @@ struct pipe_ml_operation
    /**
     * Tensor used as input.
     */
-   struct pipe_tensor *input_tensor;
+   struct pipe_tensor **input_tensors;
+   unsigned input_count;
 
    /**
     * Tensor used as output.
     */
-   struct pipe_tensor *output_tensor;
+   struct pipe_tensor **output_tensors;
+   unsigned output_count;
 
    union {
       struct {
@@ -1071,6 +1097,7 @@ struct pipe_ml_operation
           * For convolutions, tensor containing the weights.
           */
          struct pipe_tensor *weight_tensor;
+
          /**
           * For convolutions, tensor containing the biases.
           */
@@ -1100,6 +1127,11 @@ struct pipe_ml_operation
           * Whether this is a depthwise convolution.
           */
          bool depthwise;
+
+         /**
+          * Whether this convolution has fused ReLU activation.
+          */
+         bool relu;
       } conv;
       struct {
          /**
@@ -1129,10 +1161,40 @@ struct pipe_ml_operation
       } pooling;
       struct {
          /**
-          * Additional input tensor, to be added to the other one.
+          * Left padding.
           */
-         struct pipe_tensor *input_tensor;
-      } add;
+         unsigned before_x;
+
+         /**
+          * Right padding.
+          */
+         unsigned after_x;
+
+         /**
+          * Top padding.
+          */
+         unsigned before_y;
+         /**
+          * Bottom padding.
+          */
+         unsigned after_y;
+      } pad;
+
+      struct {
+         /**
+          * Tensor containing the weights.
+          */
+         struct pipe_tensor *weight_tensor;
+         /**
+          * Tensor containing the biases.
+          */
+         struct pipe_tensor *bias_tensor;
+
+         /**
+          * Whether a ReLU activation should be applied to the output.
+          */
+         bool relu;
+      } fcon;
    };
 };
 

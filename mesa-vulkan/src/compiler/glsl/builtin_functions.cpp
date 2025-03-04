@@ -690,7 +690,19 @@ shader_atomic_counter_ops_or_v460_desktop(const _mesa_glsl_parse_state *state)
 static bool
 shader_ballot(const _mesa_glsl_parse_state *state)
 {
+   return state->ARB_shader_ballot_enable || state->KHR_shader_subgroup_ballot_enable;
+}
+
+static bool
+ballot_arb(const _mesa_glsl_parse_state *state)
+{
    return state->ARB_shader_ballot_enable;
+}
+
+static bool
+ballot_khr(const _mesa_glsl_parse_state *state)
+{
+   return state->KHR_shader_subgroup_ballot_enable;
 }
 
 static bool
@@ -814,6 +826,18 @@ int64_fp64(const _mesa_glsl_parse_state *state)
 }
 
 static bool
+shader_ballot_and_fp64(const _mesa_glsl_parse_state *state)
+{
+   return shader_ballot(state) && fp64(state);
+}
+
+static bool
+ballot_khr_and_fp64(const _mesa_glsl_parse_state *state)
+{
+   return ballot_khr(state) && fp64(state);
+}
+
+static bool
 compute_shader(const _mesa_glsl_parse_state *state)
 {
    return state->stage == MESA_SHADER_COMPUTE;
@@ -858,9 +882,30 @@ vote_ext(const _mesa_glsl_parse_state *state)
 }
 
 static bool
+vote_khr(const _mesa_glsl_parse_state *state)
+{
+   return state->KHR_shader_subgroup_vote_enable;
+}
+
+static bool
+vote_khr_and_fp64(const _mesa_glsl_parse_state *state)
+{
+   return vote_khr(state) && fp64(state);
+}
+
+static bool
 vote_or_v460_desktop(const _mesa_glsl_parse_state *state)
 {
-   return state->EXT_shader_group_vote_enable || state->ARB_shader_group_vote_enable || v460_desktop(state);
+   return state->KHR_shader_subgroup_vote_enable ||
+          state->EXT_shader_group_vote_enable ||
+          state->ARB_shader_group_vote_enable ||
+          v460_desktop(state);
+}
+
+static bool
+vote_or_v460_desktop_and_fp64(const _mesa_glsl_parse_state *state)
+{
+   return vote_or_v460_desktop(state) && fp64(state);
 }
 
 static bool
@@ -1000,6 +1045,78 @@ derivatives_texture_cube_map_array_and_clamp(const _mesa_glsl_parse_state *state
    return derivatives_texture_cube_map_array(state) && state->ARB_sparse_texture_clamp_enable;
 }
 
+static bool
+subgroup_basic(const _mesa_glsl_parse_state *state)
+{
+   return state->KHR_shader_subgroup_basic_enable;
+}
+
+static bool
+compute_shader_and_subgroup_basic(const _mesa_glsl_parse_state *state)
+{
+   return state->stage == MESA_SHADER_COMPUTE && state->KHR_shader_subgroup_basic_enable;
+}
+
+static bool
+subgroup_shuffle(const _mesa_glsl_parse_state *state)
+{
+   return state->KHR_shader_subgroup_shuffle_enable;
+}
+
+static bool
+subgroup_shuffle_and_fp64(const _mesa_glsl_parse_state *state)
+{
+   return subgroup_shuffle(state) && fp64(state);
+}
+
+static bool
+subgroup_shuffle_relative(const _mesa_glsl_parse_state *state)
+{
+   return state->KHR_shader_subgroup_shuffle_relative_enable;
+}
+
+static bool
+subgroup_shuffle_relative_and_fp64(const _mesa_glsl_parse_state *state)
+{
+   return subgroup_shuffle_relative(state) && fp64(state);
+}
+
+static bool
+subgroup_arithmetic(const _mesa_glsl_parse_state *state)
+{
+   return state->KHR_shader_subgroup_arithmetic_enable;
+}
+
+static bool
+subgroup_arithmetic_and_fp64(const _mesa_glsl_parse_state *state)
+{
+   return subgroup_arithmetic(state) && fp64(state);
+}
+
+static bool
+subgroup_clustered(const _mesa_glsl_parse_state *state)
+{
+   return state->KHR_shader_subgroup_clustered_enable;
+}
+
+static bool
+subgroup_clustered_and_fp64(const _mesa_glsl_parse_state *state)
+{
+   return subgroup_clustered(state) && fp64(state);
+}
+
+static bool
+subgroup_quad(const _mesa_glsl_parse_state *state)
+{
+   return state->KHR_shader_subgroup_quad_enable;
+}
+
+static bool
+subgroup_quad_and_fp64(const _mesa_glsl_parse_state *state)
+{
+   return subgroup_quad(state) && fp64(state);
+}
+
 /** @} */
 
 /******************************************************************************/
@@ -1016,7 +1133,9 @@ namespace {
 class builtin_builder {
 public:
    builtin_builder();
+   builtin_builder(const builtin_builder &) = delete;
    ~builtin_builder();
+   builtin_builder & operator=(const builtin_builder &) = delete;
 
    void initialize();
    void release();
@@ -1024,13 +1143,14 @@ public:
                                const char *name, exec_list *actual_parameters);
 
    /**
-    * A shader to hold all the built-in signatures; created by this module.
+    * A symbol table to hold all the built-in signatures; created by this
+    * module.
     *
     * This includes signatures for every built-in, regardless of version or
     * enabled extensions.  The availability predicate associated with each
     * signature allows matching_signature() to filter out the irrelevant ones.
     */
-   gl_shader *shader;
+   struct glsl_symbol_table *symbols;
 
 private:
    void *mem_ctx;
@@ -1365,12 +1485,25 @@ private:
    ir_function_signature *_memory_barrier(const char *intrinsic_name,
                                           builtin_available_predicate avail);
 
-   ir_function_signature *_ballot_intrinsic();
-   ir_function_signature *_ballot();
+   ir_function_signature *_ballot_intrinsic(const glsl_type *type);
+   ir_function_signature *_ballot(const glsl_type *type, builtin_available_predicate avail);
+
+   ir_function_signature *_inverse_ballot_intrinsic();
+   ir_function_signature *_inverse_ballot();
+
+   ir_function_signature *_ballot_bit_extract_intrinsic();
+   ir_function_signature *_ballot_bit_extract();
+
+   ir_function_signature *_ballot_bit_intrinsic(enum ir_intrinsic_id id);
+   ir_function_signature *_ballot_bit(const char *intrinsic_name);
+
    ir_function_signature *_read_first_invocation_intrinsic(const glsl_type *type);
-   ir_function_signature *_read_first_invocation(const glsl_type *type);
+   ir_function_signature *_read_first_invocation(const glsl_type *type,
+                                                 builtin_available_predicate avail);
+
    ir_function_signature *_read_invocation_intrinsic(const glsl_type *type);
-   ir_function_signature *_read_invocation(const glsl_type *type);
+   ir_function_signature *_read_invocation(const glsl_type *type,
+                                           builtin_available_predicate avail);
 
 
    ir_function_signature *_invocation_interlock_intrinsic(
@@ -1385,13 +1518,51 @@ private:
    ir_function_signature *_shader_clock(builtin_available_predicate avail,
                                         const glsl_type *type);
 
-   ir_function_signature *_vote_intrinsic(builtin_available_predicate avail,
+   ir_function_signature *_vote_intrinsic(const glsl_type *type,
+                                          builtin_available_predicate avail,
                                           enum ir_intrinsic_id id);
-   ir_function_signature *_vote(const char *intrinsic_name,
-                                builtin_available_predicate avail);
+   ir_function_signature *_vote(const glsl_type *type,
+                                builtin_available_predicate avail,
+                                const char *intrinsic_name);
 
    ir_function_signature *_helper_invocation_intrinsic();
    ir_function_signature *_helper_invocation();
+
+   ir_function_signature *_subgroup_barrier_intrinsic(enum ir_intrinsic_id id,
+                                                      builtin_available_predicate avail);
+   ir_function_signature *_subgroup_barrier(const char *intrinsic_name,
+                                            builtin_available_predicate avail);
+
+   ir_function_signature *_elect_intrinsic();
+   ir_function_signature *_elect();
+
+   ir_function_signature *_shuffle_intrinsic(const glsl_type *type);
+   ir_function_signature *_shuffle(const glsl_type *type);
+
+   ir_function_signature *_shuffle_xor_intrinsic(const glsl_type *type);
+   ir_function_signature *_shuffle_xor(const glsl_type *type);
+
+   ir_function_signature *_shuffle_up_intrinsic(const glsl_type *type);
+   ir_function_signature *_shuffle_up(const glsl_type *type);
+
+   ir_function_signature *_shuffle_down_intrinsic(const glsl_type *type);
+   ir_function_signature *_shuffle_down(const glsl_type *type);
+
+   ir_function_signature *_subgroup_arithmetic_intrinsic(const glsl_type *type,
+                                                         enum ir_intrinsic_id id);
+   ir_function_signature *_subgroup_arithmetic(const glsl_type *type,
+                                               const char *intrinsic_name);
+
+   ir_function_signature *_subgroup_clustered_intrinsic(const glsl_type *type,
+                                                        enum ir_intrinsic_id id);
+   ir_function_signature *_subgroup_clustered(const glsl_type *type,
+                                              const char *intrinsic_name);
+
+   ir_function_signature *_quad_broadcast_intrinsic(const glsl_type *type);
+   ir_function_signature *_quad_broadcast(const glsl_type *type);
+
+   ir_function_signature *_quad_swap_intrinsic(const glsl_type *type, enum ir_intrinsic_id id);
+   ir_function_signature *_quad_swap(const glsl_type *type, const char *intrinsic_name);
 
 #undef B0
 #undef B1
@@ -1425,7 +1596,7 @@ enum image_function_flags {
  *  @{
  */
 builtin_builder::builtin_builder()
-   : shader(NULL)
+   : symbols(NULL)
 {
    mem_ctx = NULL;
 }
@@ -1436,9 +1607,7 @@ builtin_builder::~builtin_builder()
 
    ralloc_free(mem_ctx);
    mem_ctx = NULL;
-
-   ralloc_free(shader);
-   shader = NULL;
+   symbols = NULL;
 
    simple_mtx_unlock(&builtins_lock);
 }
@@ -1456,12 +1625,15 @@ builtin_builder::find(_mesa_glsl_parse_state *state,
     */
    state->uses_builtin_functions = true;
 
-   ir_function *f = shader->symbols->get_function(name);
+   ir_function *f = symbols->get_function(name);
    if (f == NULL)
       return NULL;
 
    ir_function_signature *sig =
-      f->matching_signature(state, actual_parameters, true);
+      f->matching_signature(state, actual_parameters,
+                            state->has_implicit_conversions(),
+                            state->has_implicit_int_to_uint_conversion(),
+                            true);
    if (sig == NULL)
       return NULL;
 
@@ -1488,9 +1660,7 @@ builtin_builder::release()
 {
    ralloc_free(mem_ctx);
    mem_ctx = NULL;
-
-   ralloc_free(shader);
-   shader = NULL;
+   symbols = NULL;
 
    glsl_type_singleton_decref();
 }
@@ -1498,15 +1668,66 @@ builtin_builder::release()
 void
 builtin_builder::create_shader()
 {
-   /* The target doesn't actually matter.  There's no target for generic
-    * GLSL utility code that could be linked against any stage, so just
-    * arbitrarily pick GL_VERTEX_SHADER.
-    */
-   shader = _mesa_new_shader(0, MESA_SHADER_VERTEX);
-   shader->symbols = new(mem_ctx) glsl_symbol_table;
+   symbols = new(mem_ctx) glsl_symbol_table;
 }
 
 /** @} */
+
+#define FIU(func, ...) \
+   func(&glsl_type_builtin_float, ##__VA_ARGS__), \
+   func(&glsl_type_builtin_vec2, ##__VA_ARGS__), \
+   func(&glsl_type_builtin_vec3, ##__VA_ARGS__), \
+   func(&glsl_type_builtin_vec4, ##__VA_ARGS__), \
+   func(&glsl_type_builtin_int, ##__VA_ARGS__), \
+   func(&glsl_type_builtin_ivec2, ##__VA_ARGS__), \
+   func(&glsl_type_builtin_ivec3, ##__VA_ARGS__), \
+   func(&glsl_type_builtin_ivec4, ##__VA_ARGS__), \
+   func(&glsl_type_builtin_uint, ##__VA_ARGS__), \
+   func(&glsl_type_builtin_uvec2, ##__VA_ARGS__), \
+   func(&glsl_type_builtin_uvec3, ##__VA_ARGS__), \
+   func(&glsl_type_builtin_uvec4, ##__VA_ARGS__)
+
+#define FIUB(func, ...) \
+   FIU(func, ##__VA_ARGS__), \
+   func(&glsl_type_builtin_bool, ##__VA_ARGS__), \
+   func(&glsl_type_builtin_bvec2, ##__VA_ARGS__), \
+   func(&glsl_type_builtin_bvec3, ##__VA_ARGS__), \
+   func(&glsl_type_builtin_bvec4, ##__VA_ARGS__)
+
+#define FIUD(func, ...) \
+   FIU(func, ##__VA_ARGS__), \
+   func(&glsl_type_builtin_double, ##__VA_ARGS__), \
+   func(&glsl_type_builtin_dvec2, ##__VA_ARGS__), \
+   func(&glsl_type_builtin_dvec3, ##__VA_ARGS__), \
+   func(&glsl_type_builtin_dvec4, ##__VA_ARGS__)
+
+#define FIUBD(func, ...) \
+   FIUB(func, ##__VA_ARGS__), \
+   func(&glsl_type_builtin_double, ##__VA_ARGS__), \
+   func(&glsl_type_builtin_dvec2, ##__VA_ARGS__), \
+   func(&glsl_type_builtin_dvec3, ##__VA_ARGS__), \
+   func(&glsl_type_builtin_dvec4, ##__VA_ARGS__)
+
+#define FIUBD_AVAIL(func, avail, ...) \
+   FIUB(func, avail, ##__VA_ARGS__), \
+   func(&glsl_type_builtin_double, avail##_and_fp64, ##__VA_ARGS__), \
+   func(&glsl_type_builtin_dvec2, avail##_and_fp64, ##__VA_ARGS__), \
+   func(&glsl_type_builtin_dvec3, avail##_and_fp64, ##__VA_ARGS__), \
+   func(&glsl_type_builtin_dvec4, avail##_and_fp64, ##__VA_ARGS__)
+
+#define IUB(func, ...) \
+   func(&glsl_type_builtin_int, ##__VA_ARGS__), \
+   func(&glsl_type_builtin_ivec2, ##__VA_ARGS__), \
+   func(&glsl_type_builtin_ivec3, ##__VA_ARGS__), \
+   func(&glsl_type_builtin_ivec4, ##__VA_ARGS__), \
+   func(&glsl_type_builtin_uint, ##__VA_ARGS__), \
+   func(&glsl_type_builtin_uvec2, ##__VA_ARGS__), \
+   func(&glsl_type_builtin_uvec3, ##__VA_ARGS__), \
+   func(&glsl_type_builtin_uvec4, ##__VA_ARGS__), \
+   func(&glsl_type_builtin_bool, ##__VA_ARGS__), \
+   func(&glsl_type_builtin_bvec2, ##__VA_ARGS__), \
+   func(&glsl_type_builtin_bvec3, ##__VA_ARGS__), \
+   func(&glsl_type_builtin_bvec4, ##__VA_ARGS__)
 
 /**
  * Create ir_function and ir_function_signature objects for each
@@ -1706,56 +1927,111 @@ builtin_builder::create_intrinsics()
                 NULL);
 
    add_function("__intrinsic_vote_all",
-                _vote_intrinsic(vote_or_v460_desktop, ir_intrinsic_vote_all),
+                _vote_intrinsic(&glsl_type_builtin_bool, vote_or_v460_desktop,
+                                ir_intrinsic_vote_all),
                 NULL);
    add_function("__intrinsic_vote_any",
-                _vote_intrinsic(vote_or_v460_desktop, ir_intrinsic_vote_any),
+                _vote_intrinsic(&glsl_type_builtin_bool, vote_or_v460_desktop,
+                                ir_intrinsic_vote_any),
                 NULL);
    add_function("__intrinsic_vote_eq",
-                _vote_intrinsic(vote_or_v460_desktop, ir_intrinsic_vote_eq),
+                FIUBD_AVAIL(_vote_intrinsic, vote_or_v460_desktop, ir_intrinsic_vote_eq),
                 NULL);
 
-   add_function("__intrinsic_ballot", _ballot_intrinsic(), NULL);
-
-   add_function("__intrinsic_read_invocation",
-                _read_invocation_intrinsic(&glsl_type_builtin_float),
-                _read_invocation_intrinsic(&glsl_type_builtin_vec2),
-                _read_invocation_intrinsic(&glsl_type_builtin_vec3),
-                _read_invocation_intrinsic(&glsl_type_builtin_vec4),
-
-                _read_invocation_intrinsic(&glsl_type_builtin_int),
-                _read_invocation_intrinsic(&glsl_type_builtin_ivec2),
-                _read_invocation_intrinsic(&glsl_type_builtin_ivec3),
-                _read_invocation_intrinsic(&glsl_type_builtin_ivec4),
-
-                _read_invocation_intrinsic(&glsl_type_builtin_uint),
-                _read_invocation_intrinsic(&glsl_type_builtin_uvec2),
-                _read_invocation_intrinsic(&glsl_type_builtin_uvec3),
-                _read_invocation_intrinsic(&glsl_type_builtin_uvec4),
+   add_function("__intrinsic_ballot_uint64",
+                _ballot_intrinsic(&glsl_type_builtin_uint64_t),
                 NULL);
+
+   add_function("__intrinsic_ballot_uvec4",
+                _ballot_intrinsic(&glsl_type_builtin_uvec4),
+                NULL);
+
+   add_function("__intrinsic_inverse_ballot", _inverse_ballot_intrinsic(), NULL);
+
+   add_function("__intrinsic_ballot_bit_extract", _ballot_bit_extract_intrinsic(), NULL);
+
+   add_function("__intrinsic_ballot_bit_count",
+                _ballot_bit_intrinsic(ir_intrinsic_ballot_bit_count), NULL);
+   add_function("__intrinsic_ballot_inclusive_bit_count",
+                _ballot_bit_intrinsic(ir_intrinsic_ballot_inclusive_bit_count), NULL);
+   add_function("__intrinsic_ballot_exclusive_bit_count",
+                _ballot_bit_intrinsic(ir_intrinsic_ballot_exclusive_bit_count), NULL);
+   add_function("__intrinsic_ballot_find_lsb",
+                _ballot_bit_intrinsic(ir_intrinsic_ballot_find_lsb), NULL);
+   add_function("__intrinsic_ballot_find_msb",
+                _ballot_bit_intrinsic(ir_intrinsic_ballot_find_msb), NULL);
+
+   add_function("__intrinsic_read_invocation", FIUBD(_read_invocation_intrinsic), NULL);
 
    add_function("__intrinsic_read_first_invocation",
-                _read_first_invocation_intrinsic(&glsl_type_builtin_float),
-                _read_first_invocation_intrinsic(&glsl_type_builtin_vec2),
-                _read_first_invocation_intrinsic(&glsl_type_builtin_vec3),
-                _read_first_invocation_intrinsic(&glsl_type_builtin_vec4),
-
-                _read_first_invocation_intrinsic(&glsl_type_builtin_int),
-                _read_first_invocation_intrinsic(&glsl_type_builtin_ivec2),
-                _read_first_invocation_intrinsic(&glsl_type_builtin_ivec3),
-                _read_first_invocation_intrinsic(&glsl_type_builtin_ivec4),
-
-                _read_first_invocation_intrinsic(&glsl_type_builtin_uint),
-                _read_first_invocation_intrinsic(&glsl_type_builtin_uvec2),
-                _read_first_invocation_intrinsic(&glsl_type_builtin_uvec3),
-                _read_first_invocation_intrinsic(&glsl_type_builtin_uvec4),
-                NULL);
+                FIUBD(_read_first_invocation_intrinsic), NULL);
 
    add_function("__intrinsic_helper_invocation",
                 _helper_invocation_intrinsic(), NULL);
 
    add_function("__intrinsic_is_sparse_texels_resident",
                 _is_sparse_texels_resident_intrinsic(), NULL);
+
+   add_function("__intrinsic_subgroup_barrier",
+                _subgroup_barrier_intrinsic(ir_intrinsic_subgroup_barrier, subgroup_basic),
+                NULL);
+   add_function("__intrinsic_subgroup_memory_barrier",
+                _subgroup_barrier_intrinsic(ir_intrinsic_subgroup_memory_barrier,
+                                            subgroup_basic),
+                NULL);
+   add_function("__intrinsic_subgroup_memory_barrier_buffer",
+                _subgroup_barrier_intrinsic(ir_intrinsic_subgroup_memory_barrier_buffer,
+                                            subgroup_basic),
+                NULL);
+   add_function("__intrinsic_subgroup_memory_barrier_shared",
+                _subgroup_barrier_intrinsic(ir_intrinsic_subgroup_memory_barrier_shared,
+                                            compute_shader_and_subgroup_basic),
+                NULL);
+   add_function("__intrinsic_subgroup_memory_barrier_image",
+                _subgroup_barrier_intrinsic(ir_intrinsic_subgroup_memory_barrier_image,
+                                            subgroup_basic),
+                NULL);
+
+   add_function("__intrinsic_elect", _elect_intrinsic(), NULL);
+
+   add_function("__intrinsic_shuffle", FIUBD(_shuffle_intrinsic), NULL);
+
+   add_function("__intrinsic_shuffle_xor", FIUBD(_shuffle_xor_intrinsic), NULL);
+
+   add_function("__intrinsic_shuffle_up", FIUBD(_shuffle_up_intrinsic), NULL);
+
+   add_function("__intrinsic_shuffle_down", FIUBD(_shuffle_down_intrinsic), NULL);
+
+#define SUBGROUP_ARITH_INTRINSICS(ext, group) \
+   add_function("__intrinsic_" #group "_add", \
+                FIUD(_subgroup_##ext##_intrinsic, ir_intrinsic_##group##_add), NULL); \
+   add_function("__intrinsic_" #group "_mul", \
+                FIUD(_subgroup_##ext##_intrinsic, ir_intrinsic_##group##_mul), NULL); \
+   add_function("__intrinsic_" #group "_min", \
+                FIUD(_subgroup_##ext##_intrinsic, ir_intrinsic_##group##_min), NULL); \
+   add_function("__intrinsic_" #group "_max", \
+                FIUD(_subgroup_##ext##_intrinsic, ir_intrinsic_##group##_max), NULL); \
+   add_function("__intrinsic_" #group "_and", \
+                IUB(_subgroup_##ext##_intrinsic, ir_intrinsic_##group##_and), NULL); \
+   add_function("__intrinsic_" #group "_or", \
+                IUB(_subgroup_##ext##_intrinsic, ir_intrinsic_##group##_or), NULL); \
+   add_function("__intrinsic_" #group "_xor", \
+                IUB(_subgroup_##ext##_intrinsic, ir_intrinsic_##group##_xor), NULL)
+
+   SUBGROUP_ARITH_INTRINSICS(arithmetic, reduce);
+   SUBGROUP_ARITH_INTRINSICS(arithmetic, inclusive);
+   SUBGROUP_ARITH_INTRINSICS(arithmetic, exclusive);
+
+   SUBGROUP_ARITH_INTRINSICS(clustered, clustered);
+
+   add_function("__intrinsic_quad_broadcast", FIUBD(_quad_broadcast_intrinsic), NULL);
+
+   add_function("__intrinsic_quad_swap_horizontal",
+                FIUBD(_quad_swap_intrinsic, ir_intrinsic_quad_swap_horizontal), NULL);
+   add_function("__intrinsic_quad_swap_vertical",
+                FIUBD(_quad_swap_intrinsic, ir_intrinsic_quad_swap_vertical), NULL);
+   add_function("__intrinsic_quad_swap_diagonal",
+                FIUBD(_quad_swap_intrinsic, ir_intrinsic_quad_swap_diagonal), NULL);
 }
 
 /**
@@ -1822,18 +2098,6 @@ builtin_builder::create_builtins()
                 _##NAME(gpu_shader_half_float, &glsl_type_builtin_f16vec4),  \
                 NULL);
 
-#define FD(NAME)                                 \
-   add_function(#NAME,                          \
-                _##NAME(always_available, &glsl_type_builtin_float), \
-                _##NAME(always_available, &glsl_type_builtin_vec2),  \
-                _##NAME(always_available, &glsl_type_builtin_vec3),  \
-                _##NAME(always_available, &glsl_type_builtin_vec4),  \
-                _##NAME(fp64, &glsl_type_builtin_double),  \
-                _##NAME(fp64, &glsl_type_builtin_dvec2),    \
-                _##NAME(fp64, &glsl_type_builtin_dvec3),     \
-                _##NAME(fp64, &glsl_type_builtin_dvec4),      \
-                NULL);
-
 #define FDHF(NAME)                                 \
    add_function(#NAME,                          \
                 _##NAME(always_available, &glsl_type_builtin_float), \
@@ -1848,18 +2112,6 @@ builtin_builder::create_builtins()
                 _##NAME(gpu_shader_half_float, &glsl_type_builtin_f16vec2),  \
                 _##NAME(gpu_shader_half_float, &glsl_type_builtin_f16vec3),  \
                 _##NAME(gpu_shader_half_float, &glsl_type_builtin_f16vec4),  \
-                NULL);
-
-#define FD130(NAME)                                 \
-   add_function(#NAME,                          \
-                _##NAME(v130, &glsl_type_builtin_float), \
-                _##NAME(v130, &glsl_type_builtin_vec2),  \
-                _##NAME(v130, &glsl_type_builtin_vec3),                  \
-                _##NAME(v130, &glsl_type_builtin_vec4),  \
-                _##NAME(fp64, &glsl_type_builtin_double),  \
-                _##NAME(fp64, &glsl_type_builtin_dvec2),    \
-                _##NAME(fp64, &glsl_type_builtin_dvec3),     \
-                _##NAME(fp64, &glsl_type_builtin_dvec4),      \
                 NULL);
 
 #define FDHF130(NAME)                                                      \
@@ -1894,30 +2146,6 @@ builtin_builder::create_builtins()
                 _##NAME(gpu_shader_half_float, &glsl_type_builtin_f16vec4),   \
                 NULL);
 
-#define FD130GS4(NAME)                          \
-   add_function(#NAME,                          \
-                _##NAME(v130_or_gpu_shader4, &glsl_type_builtin_float), \
-                _##NAME(v130_or_gpu_shader4, &glsl_type_builtin_vec2),  \
-                _##NAME(v130_or_gpu_shader4, &glsl_type_builtin_vec3),  \
-                _##NAME(v130_or_gpu_shader4, &glsl_type_builtin_vec4),  \
-                _##NAME(fp64, &glsl_type_builtin_double),  \
-                _##NAME(fp64, &glsl_type_builtin_dvec2),    \
-                _##NAME(fp64, &glsl_type_builtin_dvec3),     \
-                _##NAME(fp64, &glsl_type_builtin_dvec4),      \
-                NULL);
-
-#define FDGS5(NAME)                                 \
-   add_function(#NAME,                          \
-                _##NAME(gpu_shader5_es, &glsl_type_builtin_float), \
-                _##NAME(gpu_shader5_es, &glsl_type_builtin_vec2),  \
-                _##NAME(gpu_shader5_es, &glsl_type_builtin_vec3),                  \
-                _##NAME(gpu_shader5_es, &glsl_type_builtin_vec4),  \
-                _##NAME(fp64, &glsl_type_builtin_double),  \
-                _##NAME(fp64, &glsl_type_builtin_dvec2),    \
-                _##NAME(fp64, &glsl_type_builtin_dvec3),     \
-                _##NAME(fp64, &glsl_type_builtin_dvec4),      \
-                NULL);
-
 #define FDHFGS5(NAME)                                                      \
    add_function(#NAME,                                                     \
                 _##NAME(gpu_shader5_es, &glsl_type_builtin_float),            \
@@ -1932,38 +2160,6 @@ builtin_builder::create_builtins()
                 _##NAME(gpu_shader_half_float, &glsl_type_builtin_f16vec2),   \
                 _##NAME(gpu_shader_half_float, &glsl_type_builtin_f16vec3),   \
                 _##NAME(gpu_shader_half_float, &glsl_type_builtin_f16vec4),   \
-                NULL);
-
-#define FI(NAME)                                \
-   add_function(#NAME,                          \
-                _##NAME(&glsl_type_builtin_float), \
-                _##NAME(&glsl_type_builtin_vec2),  \
-                _##NAME(&glsl_type_builtin_vec3),  \
-                _##NAME(&glsl_type_builtin_vec4),  \
-                _##NAME(&glsl_type_builtin_int),   \
-                _##NAME(&glsl_type_builtin_ivec2), \
-                _##NAME(&glsl_type_builtin_ivec3), \
-                _##NAME(&glsl_type_builtin_ivec4), \
-                NULL);
-
-#define FI64(NAME)                                \
-   add_function(#NAME,                          \
-                _##NAME(always_available, &glsl_type_builtin_float), \
-                _##NAME(always_available, &glsl_type_builtin_vec2),  \
-                _##NAME(always_available, &glsl_type_builtin_vec3),  \
-                _##NAME(always_available, &glsl_type_builtin_vec4),  \
-                _##NAME(always_available, &glsl_type_builtin_int),   \
-                _##NAME(always_available, &glsl_type_builtin_ivec2), \
-                _##NAME(always_available, &glsl_type_builtin_ivec3), \
-                _##NAME(always_available, &glsl_type_builtin_ivec4), \
-                _##NAME(fp64, &glsl_type_builtin_double), \
-                _##NAME(fp64, &glsl_type_builtin_dvec2),  \
-                _##NAME(fp64, &glsl_type_builtin_dvec3),  \
-                _##NAME(fp64, &glsl_type_builtin_dvec4),  \
-                _##NAME(int64_avail, &glsl_type_builtin_int64_t), \
-                _##NAME(int64_avail, &glsl_type_builtin_i64vec2),  \
-                _##NAME(int64_avail, &glsl_type_builtin_i64vec3),  \
-                _##NAME(int64_avail, &glsl_type_builtin_i64vec4),  \
                 NULL);
 
 #define FI64HF(NAME)                                \
@@ -2064,59 +2260,6 @@ builtin_builder::create_builtins()
                 _##NAME(gpu_shader_half_float, &glsl_type_builtin_f16vec2),  \
                 _##NAME(gpu_shader_half_float, &glsl_type_builtin_f16vec3),  \
                 _##NAME(gpu_shader_half_float, &glsl_type_builtin_f16vec4),  \
-                NULL);
-
-#define FIUD2_MIXED(NAME)                                                                 \
-   add_function(#NAME,                                                                   \
-                _##NAME(always_available, &glsl_type_builtin_float, &glsl_type_builtin_float), \
-                _##NAME(always_available, &glsl_type_builtin_vec2,  &glsl_type_builtin_float), \
-                _##NAME(always_available, &glsl_type_builtin_vec3,  &glsl_type_builtin_float), \
-                _##NAME(always_available, &glsl_type_builtin_vec4,  &glsl_type_builtin_float), \
-                                                                                         \
-                _##NAME(always_available, &glsl_type_builtin_vec2,  &glsl_type_builtin_vec2),  \
-                _##NAME(always_available, &glsl_type_builtin_vec3,  &glsl_type_builtin_vec3),  \
-                _##NAME(always_available, &glsl_type_builtin_vec4,  &glsl_type_builtin_vec4),  \
-                                                                                         \
-                _##NAME(always_available, &glsl_type_builtin_int,   &glsl_type_builtin_int),   \
-                _##NAME(always_available, &glsl_type_builtin_ivec2, &glsl_type_builtin_int),   \
-                _##NAME(always_available, &glsl_type_builtin_ivec3, &glsl_type_builtin_int),   \
-                _##NAME(always_available, &glsl_type_builtin_ivec4, &glsl_type_builtin_int),   \
-                                                                                         \
-                _##NAME(always_available, &glsl_type_builtin_ivec2, &glsl_type_builtin_ivec2), \
-                _##NAME(always_available, &glsl_type_builtin_ivec3, &glsl_type_builtin_ivec3), \
-                _##NAME(always_available, &glsl_type_builtin_ivec4, &glsl_type_builtin_ivec4), \
-                                                                                         \
-                _##NAME(v130_or_gpu_shader4, &glsl_type_builtin_uint,  &glsl_type_builtin_uint),  \
-                _##NAME(v130_or_gpu_shader4, &glsl_type_builtin_uvec2, &glsl_type_builtin_uint),  \
-                _##NAME(v130_or_gpu_shader4, &glsl_type_builtin_uvec3, &glsl_type_builtin_uint),  \
-                _##NAME(v130_or_gpu_shader4, &glsl_type_builtin_uvec4, &glsl_type_builtin_uint),  \
-                                                                                         \
-                _##NAME(v130_or_gpu_shader4, &glsl_type_builtin_uvec2, &glsl_type_builtin_uvec2), \
-                _##NAME(v130_or_gpu_shader4, &glsl_type_builtin_uvec3, &glsl_type_builtin_uvec3), \
-                _##NAME(v130_or_gpu_shader4, &glsl_type_builtin_uvec4, &glsl_type_builtin_uvec4), \
-                                                                                         \
-                _##NAME(fp64, &glsl_type_builtin_double, &glsl_type_builtin_double),           \
-                _##NAME(fp64, &glsl_type_builtin_dvec2, &glsl_type_builtin_double),           \
-                _##NAME(fp64, &glsl_type_builtin_dvec3, &glsl_type_builtin_double),           \
-                _##NAME(fp64, &glsl_type_builtin_dvec4, &glsl_type_builtin_double),           \
-                _##NAME(fp64, &glsl_type_builtin_dvec2, &glsl_type_builtin_dvec2),           \
-                _##NAME(fp64, &glsl_type_builtin_dvec3, &glsl_type_builtin_dvec3),           \
-                _##NAME(fp64, &glsl_type_builtin_dvec4, &glsl_type_builtin_dvec4),           \
-                                                                        \
-                _##NAME(int64_avail, &glsl_type_builtin_int64_t, &glsl_type_builtin_int64_t),     \
-                _##NAME(int64_avail, &glsl_type_builtin_i64vec2, &glsl_type_builtin_int64_t),     \
-                _##NAME(int64_avail, &glsl_type_builtin_i64vec3, &glsl_type_builtin_int64_t),     \
-                _##NAME(int64_avail, &glsl_type_builtin_i64vec4, &glsl_type_builtin_int64_t),     \
-                _##NAME(int64_avail, &glsl_type_builtin_i64vec2, &glsl_type_builtin_i64vec2),     \
-                _##NAME(int64_avail, &glsl_type_builtin_i64vec3, &glsl_type_builtin_i64vec3),     \
-                _##NAME(int64_avail, &glsl_type_builtin_i64vec4, &glsl_type_builtin_i64vec4),     \
-                _##NAME(int64_avail, &glsl_type_builtin_uint64_t, &glsl_type_builtin_uint64_t),   \
-                _##NAME(int64_avail, &glsl_type_builtin_u64vec2, &glsl_type_builtin_uint64_t),    \
-                _##NAME(int64_avail, &glsl_type_builtin_u64vec3, &glsl_type_builtin_uint64_t),    \
-                _##NAME(int64_avail, &glsl_type_builtin_u64vec4, &glsl_type_builtin_uint64_t),    \
-                _##NAME(int64_avail, &glsl_type_builtin_u64vec2, &glsl_type_builtin_u64vec2),     \
-                _##NAME(int64_avail, &glsl_type_builtin_u64vec3, &glsl_type_builtin_u64vec3),     \
-                _##NAME(int64_avail, &glsl_type_builtin_u64vec4, &glsl_type_builtin_u64vec4),     \
                 NULL);
 
 #define FIUDHF2_MIXED(NAME)                                                                           \
@@ -5451,40 +5594,14 @@ builtin_builder::create_builtins()
                                 compute_shader),
                 NULL);
 
-   add_function("ballotARB", _ballot(), NULL);
+   add_function("ballotARB", _ballot(&glsl_type_builtin_uint64_t, ballot_arb), NULL);
 
    add_function("readInvocationARB",
-                _read_invocation(&glsl_type_builtin_float),
-                _read_invocation(&glsl_type_builtin_vec2),
-                _read_invocation(&glsl_type_builtin_vec3),
-                _read_invocation(&glsl_type_builtin_vec4),
-
-                _read_invocation(&glsl_type_builtin_int),
-                _read_invocation(&glsl_type_builtin_ivec2),
-                _read_invocation(&glsl_type_builtin_ivec3),
-                _read_invocation(&glsl_type_builtin_ivec4),
-
-                _read_invocation(&glsl_type_builtin_uint),
-                _read_invocation(&glsl_type_builtin_uvec2),
-                _read_invocation(&glsl_type_builtin_uvec3),
-                _read_invocation(&glsl_type_builtin_uvec4),
+                FIU(_read_invocation, ballot_arb),
                 NULL);
 
    add_function("readFirstInvocationARB",
-                _read_first_invocation(&glsl_type_builtin_float),
-                _read_first_invocation(&glsl_type_builtin_vec2),
-                _read_first_invocation(&glsl_type_builtin_vec3),
-                _read_first_invocation(&glsl_type_builtin_vec4),
-
-                _read_first_invocation(&glsl_type_builtin_int),
-                _read_first_invocation(&glsl_type_builtin_ivec2),
-                _read_first_invocation(&glsl_type_builtin_ivec3),
-                _read_first_invocation(&glsl_type_builtin_ivec4),
-
-                _read_first_invocation(&glsl_type_builtin_uint),
-                _read_first_invocation(&glsl_type_builtin_uvec2),
-                _read_first_invocation(&glsl_type_builtin_uvec3),
-                _read_first_invocation(&glsl_type_builtin_uvec4),
+                FIU(_read_first_invocation, ballot_arb),
                 NULL);
 
    add_function("clock2x32ARB",
@@ -5522,39 +5639,39 @@ builtin_builder::create_builtins()
                 NULL);
 
    add_function("anyInvocationARB",
-                _vote("__intrinsic_vote_any", vote),
+                _vote(&glsl_type_builtin_bool, vote, "__intrinsic_vote_any"),
                 NULL);
 
    add_function("allInvocationsARB",
-                _vote("__intrinsic_vote_all", vote),
+                _vote(&glsl_type_builtin_bool, vote, "__intrinsic_vote_all"),
                 NULL);
 
    add_function("allInvocationsEqualARB",
-                _vote("__intrinsic_vote_eq", vote),
+                _vote(&glsl_type_builtin_bool, vote, "__intrinsic_vote_eq"),
                 NULL);
 
    add_function("anyInvocationEXT",
-                _vote("__intrinsic_vote_any", vote_ext),
+                _vote(&glsl_type_builtin_bool, vote_ext, "__intrinsic_vote_any"),
                 NULL);
 
    add_function("allInvocationsEXT",
-                _vote("__intrinsic_vote_all", vote_ext),
+                _vote(&glsl_type_builtin_bool, vote_ext, "__intrinsic_vote_all"),
                 NULL);
 
    add_function("allInvocationsEqualEXT",
-                _vote("__intrinsic_vote_eq", vote_ext),
+                _vote(&glsl_type_builtin_bool, vote_ext, "__intrinsic_vote_eq"),
                 NULL);
 
    add_function("anyInvocation",
-                _vote("__intrinsic_vote_any", v460_desktop),
+                _vote(&glsl_type_builtin_bool, v460_desktop, "__intrinsic_vote_any"),
                 NULL);
 
    add_function("allInvocations",
-                _vote("__intrinsic_vote_all", v460_desktop),
+                _vote(&glsl_type_builtin_bool, v460_desktop, "__intrinsic_vote_all"),
                 NULL);
 
    add_function("allInvocationsEqual",
-                _vote("__intrinsic_vote_eq", v460_desktop),
+                _vote(&glsl_type_builtin_bool, v460_desktop, "__intrinsic_vote_eq"),
                 NULL);
 
    add_function("helperInvocationEXT", _helper_invocation(), NULL);
@@ -5780,6 +5897,89 @@ builtin_builder::create_builtins()
                                &glsl_type_builtin_uvec4),
                 NULL);
 
+   add_function("subgroupBarrier",
+                _subgroup_barrier("__intrinsic_subgroup_barrier", subgroup_basic), NULL);
+   add_function("subgroupMemoryBarrier",
+                _subgroup_barrier("__intrinsic_subgroup_memory_barrier", subgroup_basic), NULL);
+   add_function("subgroupMemoryBarrierBuffer",
+                _subgroup_barrier("__intrinsic_subgroup_memory_barrier_buffer", subgroup_basic),
+                NULL);
+   add_function("subgroupMemoryBarrierShared",
+                _subgroup_barrier("__intrinsic_subgroup_memory_barrier_shared",
+                                  compute_shader_and_subgroup_basic),
+                NULL);
+   add_function("subgroupMemoryBarrierImage",
+                _subgroup_barrier("__intrinsic_subgroup_memory_barrier_image", subgroup_basic),
+                NULL);
+
+   add_function("subgroupElect", _elect(), NULL);
+
+   add_function("subgroupAll",
+                _vote(&glsl_type_builtin_bool, vote_khr, "__intrinsic_vote_all"), NULL);
+   add_function("subgroupAny",
+                _vote(&glsl_type_builtin_bool, vote_khr, "__intrinsic_vote_any"), NULL);
+   add_function("subgroupAllEqual",
+                FIUBD_AVAIL(_vote, vote_khr, "__intrinsic_vote_eq"), NULL);
+
+   add_function("subgroupBroadcast", FIUBD_AVAIL(_read_invocation, ballot_khr), NULL);
+
+   add_function("subgroupBroadcastFirst", FIUBD_AVAIL(_read_first_invocation, ballot_khr), NULL);
+
+   add_function("subgroupBallot", _ballot(&glsl_type_builtin_uvec4, ballot_khr), NULL);
+
+   add_function("subgroupInverseBallot", _inverse_ballot(), NULL);
+
+   add_function("subgroupBallotBitExtract", _ballot_bit_extract(), NULL);
+
+   add_function("subgroupBallotBitCount", _ballot_bit("__intrinsic_ballot_bit_count"), NULL);
+
+   add_function("subgroupBallotInclusiveBitCount",
+                _ballot_bit("__intrinsic_ballot_inclusive_bit_count"), NULL);
+   add_function("subgroupBallotExclusiveBitCount",
+                _ballot_bit("__intrinsic_ballot_exclusive_bit_count"), NULL);
+
+   add_function("subgroupBallotFindLSB", _ballot_bit("__intrinsic_ballot_find_lsb"), NULL);
+   add_function("subgroupBallotFindMSB", _ballot_bit("__intrinsic_ballot_find_msb"), NULL);
+
+   add_function("subgroupShuffle", FIUBD(_shuffle), NULL);
+
+   add_function("subgroupShuffleXor", FIUBD(_shuffle_xor), NULL);
+
+   add_function("subgroupShuffleUp", FIUBD(_shuffle_up), NULL);
+
+   add_function("subgroupShuffleDown", FIUBD(_shuffle_down), NULL);
+
+#define SUBGROUP_ARITH(ext, group1, group2) \
+   add_function("subgroup" #group1 "Add", \
+                FIUD(_subgroup_##ext, "__intrinsic_" #group2 "_add"), NULL); \
+   add_function("subgroup" #group1 "Mul", \
+                FIUD(_subgroup_##ext, "__intrinsic_" #group2 "_mul"), NULL); \
+   add_function("subgroup" #group1 "Min", \
+                FIUD(_subgroup_##ext, "__intrinsic_" #group2 "_min"), NULL); \
+   add_function("subgroup" #group1 "Max", \
+                FIUD(_subgroup_##ext, "__intrinsic_" #group2 "_max"), NULL); \
+   add_function("subgroup" #group1 "And", \
+                IUB(_subgroup_##ext, "__intrinsic_" #group2 "_and"), NULL); \
+   add_function("subgroup" #group1 "Or", \
+                IUB(_subgroup_##ext, "__intrinsic_" #group2 "_or"), NULL); \
+   add_function("subgroup" #group1 "Xor", \
+                IUB(_subgroup_##ext, "__intrinsic_" #group2 "_xor"), NULL)
+
+   SUBGROUP_ARITH(arithmetic, /* empty */, reduce);
+   SUBGROUP_ARITH(arithmetic, Inclusive, inclusive);
+   SUBGROUP_ARITH(arithmetic, Exclusive, exclusive);
+
+   SUBGROUP_ARITH(clustered, Clustered, clustered);
+
+   add_function("subgroupQuadBroadcast", FIUBD(_quad_broadcast), NULL);
+
+   add_function("subgroupQuadSwapHorizontal",
+                FIUBD(_quad_swap, "__intrinsic_quad_swap_horizontal"), NULL);
+   add_function("subgroupQuadSwapVertical",
+                FIUBD(_quad_swap, "__intrinsic_quad_swap_vertical"), NULL);
+   add_function("subgroupQuadSwapDiagonal",
+                FIUBD(_quad_swap, "__intrinsic_quad_swap_diagonal"), NULL);
+
 #undef F
 #undef FI
 #undef FIUDHF_VEC
@@ -5810,7 +6010,7 @@ builtin_builder::add_function(const char *name, ...)
    }
    va_end(ap);
 
-   shader->symbols->add_function(f);
+   symbols->add_function(f);
 }
 
 void
@@ -5881,7 +6081,7 @@ builtin_builder::add_image_function(const char *name,
       f->add_signature(_image(prototype, types[i], intrinsic_name,
                               num_arguments, flags, intrinsic_id));
    }
-   shader->symbols->add_function(f);
+   symbols->add_function(f);
 }
 
 void
@@ -7574,7 +7774,7 @@ builtin_builder::_is_sparse_texels_resident(void)
 
    ir_variable *retval = body.make_temp(&glsl_type_builtin_bool, "retval");
    ir_function *f =
-      shader->symbols->get_function("__intrinsic_is_sparse_texels_resident");
+      symbols->get_function("__intrinsic_is_sparse_texels_resident");
 
    body.emit(call(f, retval, sig->parameters));
    body.emit(ret(retval));
@@ -8425,7 +8625,7 @@ builtin_builder::_atomic_counter_op(const char *intrinsic,
    MAKE_SIG(&glsl_type_builtin_uint, avail, 1, counter);
 
    ir_variable *retval = body.make_temp(&glsl_type_builtin_uint, "atomic_retval");
-   body.emit(call(shader->symbols->get_function(intrinsic), retval,
+   body.emit(call(symbols->get_function(intrinsic), retval,
                   sig->parameters));
    body.emit(ret(retval));
    return sig;
@@ -8456,7 +8656,7 @@ builtin_builder::_atomic_counter_op1(const char *intrinsic,
       parameters.push_tail(new(mem_ctx) ir_dereference_variable(neg_data));
 
       ir_function *const func =
-         shader->symbols->get_function("__intrinsic_atomic_add");
+         symbols->get_function("__intrinsic_atomic_add");
       ir_instruction *const c = call(func, retval, parameters);
 
       assert(c != NULL);
@@ -8464,7 +8664,7 @@ builtin_builder::_atomic_counter_op1(const char *intrinsic,
 
       body.emit(c);
    } else {
-      body.emit(call(shader->symbols->get_function(intrinsic), retval,
+      body.emit(call(symbols->get_function(intrinsic), retval,
                      sig->parameters));
    }
 
@@ -8482,7 +8682,7 @@ builtin_builder::_atomic_counter_op2(const char *intrinsic,
    MAKE_SIG(&glsl_type_builtin_uint, avail, 3, counter, compare, data);
 
    ir_variable *retval = body.make_temp(&glsl_type_builtin_uint, "atomic_retval");
-   body.emit(call(shader->symbols->get_function(intrinsic), retval,
+   body.emit(call(symbols->get_function(intrinsic), retval,
                   sig->parameters));
    body.emit(ret(retval));
    return sig;
@@ -8500,7 +8700,7 @@ builtin_builder::_atomic_op2(const char *intrinsic,
    atomic->data.implicit_conversion_prohibited = true;
 
    ir_variable *retval = body.make_temp(type, "atomic_retval");
-   body.emit(call(shader->symbols->get_function(intrinsic), retval,
+   body.emit(call(symbols->get_function(intrinsic), retval,
                   sig->parameters));
    body.emit(ret(retval));
    return sig;
@@ -8519,7 +8719,7 @@ builtin_builder::_atomic_op3(const char *intrinsic,
    atomic->data.implicit_conversion_prohibited = true;
 
    ir_variable *retval = body.make_temp(type, "atomic_retval");
-   body.emit(call(shader->symbols->get_function(intrinsic), retval,
+   body.emit(call(symbols->get_function(intrinsic), retval,
                   sig->parameters));
    body.emit(ret(retval));
    return sig;
@@ -8737,7 +8937,7 @@ builtin_builder::_image(image_prototype_ctr prototype,
 
    if (flags & IMAGE_FUNCTION_EMIT_STUB) {
       ir_factory body(&sig->body, mem_ctx);
-      ir_function *f = shader->symbols->get_function(intrinsic_name);
+      ir_function *f = symbols->get_function(intrinsic_name);
 
       if (flags & IMAGE_FUNCTION_RETURNS_VOID) {
          body.emit(call(f, NULL, sig->parameters));
@@ -8794,30 +8994,104 @@ builtin_builder::_memory_barrier(const char *intrinsic_name,
                                  builtin_available_predicate avail)
 {
    MAKE_SIG(&glsl_type_builtin_void, avail, 0);
-   body.emit(call(shader->symbols->get_function(intrinsic_name),
+   body.emit(call(symbols->get_function(intrinsic_name),
                   NULL, sig->parameters));
    return sig;
 }
 
 ir_function_signature *
-builtin_builder::_ballot_intrinsic()
+builtin_builder::_ballot_intrinsic(const glsl_type *type)
 {
    ir_variable *value = in_var(&glsl_type_builtin_bool, "value");
-   MAKE_INTRINSIC(&glsl_type_builtin_uint64_t, ir_intrinsic_ballot, shader_ballot,
-                  1, value);
+   MAKE_INTRINSIC(type, ir_intrinsic_ballot, shader_ballot, 1, value);
    return sig;
 }
 
 ir_function_signature *
-builtin_builder::_ballot()
+builtin_builder::_ballot(const glsl_type *type, builtin_available_predicate avail)
 {
    ir_variable *value = in_var(&glsl_type_builtin_bool, "value");
 
-   MAKE_SIG(&glsl_type_builtin_uint64_t, shader_ballot, 1, value);
-   ir_variable *retval = body.make_temp(&glsl_type_builtin_uint64_t, "retval");
+   MAKE_SIG(type, avail, 1, value);
+   ir_variable *retval = body.make_temp(type, "retval");
 
-   body.emit(call(shader->symbols->get_function("__intrinsic_ballot"),
+   if (type == &glsl_type_builtin_uint64_t) {
+      body.emit(call(symbols->get_function("__intrinsic_ballot_uint64"),
+                     retval, sig->parameters));
+   } else {
+      assert(type == &glsl_type_builtin_uvec4);
+      body.emit(call(symbols->get_function("__intrinsic_ballot_uvec4"),
+                     retval, sig->parameters));
+   }
+   body.emit(ret(retval));
+   return sig;
+}
+
+ir_function_signature *
+builtin_builder::_inverse_ballot_intrinsic()
+{
+   ir_variable *value = in_var(&glsl_type_builtin_uvec4, "value");
+   MAKE_INTRINSIC(&glsl_type_builtin_bool, ir_intrinsic_inverse_ballot, ballot_khr, 1, value);
+   return sig;
+}
+
+ir_function_signature *
+builtin_builder::_inverse_ballot()
+{
+   ir_variable *value = in_var(&glsl_type_builtin_uvec4, "value");
+
+   MAKE_SIG(&glsl_type_builtin_bool, ballot_khr, 1, value);
+   ir_variable *retval = body.make_temp(&glsl_type_builtin_bool, "retval");
+
+   body.emit(call(symbols->get_function("__intrinsic_inverse_ballot"),
                   retval, sig->parameters));
+   body.emit(ret(retval));
+   return sig;
+}
+
+ir_function_signature *
+builtin_builder::_ballot_bit_extract_intrinsic()
+{
+   ir_variable *value = in_var(&glsl_type_builtin_uvec4, "value");
+   ir_variable *index = in_var(&glsl_type_builtin_uint, "index");
+
+   MAKE_INTRINSIC(&glsl_type_builtin_bool, ir_intrinsic_ballot_bit_extract, ballot_khr,
+                  2, value, index);
+   return sig;
+}
+
+ir_function_signature *
+builtin_builder::_ballot_bit_extract()
+{
+   ir_variable *value = in_var(&glsl_type_builtin_uvec4, "value");
+   ir_variable *index = in_var(&glsl_type_builtin_uint, "index");
+
+   MAKE_SIG(&glsl_type_builtin_bool, ballot_khr, 2, value, index);
+   ir_variable *retval = body.make_temp(&glsl_type_builtin_bool, "retval");
+
+   body.emit(call(symbols->get_function("__intrinsic_ballot_bit_extract"),
+                  retval, sig->parameters));
+   body.emit(ret(retval));
+   return sig;
+}
+
+ir_function_signature *
+builtin_builder::_ballot_bit_intrinsic(enum ir_intrinsic_id id)
+{
+   ir_variable *value = in_var(&glsl_type_builtin_uvec4, "value");
+   MAKE_INTRINSIC(&glsl_type_builtin_uint, id, ballot_khr, 1, value);
+   return sig;
+}
+
+ir_function_signature *
+builtin_builder::_ballot_bit(const char *intrinsic_name)
+{
+   ir_variable *value = in_var(&glsl_type_builtin_uvec4, "value");
+
+   MAKE_SIG(&glsl_type_builtin_uint, ballot_khr, 1, value);
+   ir_variable *retval = body.make_temp(&glsl_type_builtin_uint, "retval");
+
+   body.emit(call(symbols->get_function(intrinsic_name), retval, sig->parameters));
    body.emit(ret(retval));
    return sig;
 }
@@ -8826,20 +9100,21 @@ ir_function_signature *
 builtin_builder::_read_first_invocation_intrinsic(const glsl_type *type)
 {
    ir_variable *value = in_var(type, "value");
-   MAKE_INTRINSIC(type, ir_intrinsic_read_first_invocation, shader_ballot,
+   MAKE_INTRINSIC(type, ir_intrinsic_read_first_invocation,
+                  glsl_type_is_double(type) ? shader_ballot_and_fp64 : shader_ballot,
                   1, value);
    return sig;
 }
 
 ir_function_signature *
-builtin_builder::_read_first_invocation(const glsl_type *type)
+builtin_builder::_read_first_invocation(const glsl_type *type, builtin_available_predicate avail)
 {
    ir_variable *value = in_var(type, "value");
 
-   MAKE_SIG(type, shader_ballot, 1, value);
+   MAKE_SIG(type, avail, 1, value);
    ir_variable *retval = body.make_temp(type, "retval");
 
-   body.emit(call(shader->symbols->get_function("__intrinsic_read_first_invocation"),
+   body.emit(call(symbols->get_function("__intrinsic_read_first_invocation"),
                   retval, sig->parameters));
    body.emit(ret(retval));
    return sig;
@@ -8850,21 +9125,22 @@ builtin_builder::_read_invocation_intrinsic(const glsl_type *type)
 {
    ir_variable *value = in_var(type, "value");
    ir_variable *invocation = in_var(&glsl_type_builtin_uint, "invocation");
-   MAKE_INTRINSIC(type, ir_intrinsic_read_invocation, shader_ballot,
+   MAKE_INTRINSIC(type, ir_intrinsic_read_invocation,
+                  glsl_type_is_double(type) ? shader_ballot_and_fp64 : shader_ballot,
                   2, value, invocation);
    return sig;
 }
 
 ir_function_signature *
-builtin_builder::_read_invocation(const glsl_type *type)
+builtin_builder::_read_invocation(const glsl_type *type, builtin_available_predicate avail)
 {
    ir_variable *value = in_var(type, "value");
    ir_variable *invocation = in_var(&glsl_type_builtin_uint, "invocation");
 
-   MAKE_SIG(type, shader_ballot, 2, value, invocation);
+   MAKE_SIG(type, avail, 2, value, invocation);
    ir_variable *retval = body.make_temp(type, "retval");
 
-   body.emit(call(shader->symbols->get_function("__intrinsic_read_invocation"),
+   body.emit(call(symbols->get_function("__intrinsic_read_invocation"),
                   retval, sig->parameters));
    body.emit(ret(retval));
    return sig;
@@ -8883,7 +9159,7 @@ builtin_builder::_invocation_interlock(const char *intrinsic_name,
                                        builtin_available_predicate avail)
 {
    MAKE_SIG(&glsl_type_builtin_void, avail, 0);
-   body.emit(call(shader->symbols->get_function(intrinsic_name),
+   body.emit(call(symbols->get_function(intrinsic_name),
                   NULL, sig->parameters));
    return sig;
 }
@@ -8904,7 +9180,7 @@ builtin_builder::_shader_clock(builtin_available_predicate avail,
 
    ir_variable *retval = body.make_temp(&glsl_type_builtin_uvec2, "clock_retval");
 
-   body.emit(call(shader->symbols->get_function("__intrinsic_shader_clock"),
+   body.emit(call(symbols->get_function("__intrinsic_shader_clock"),
                   retval, sig->parameters));
 
    if (type == &glsl_type_builtin_uint64_t) {
@@ -8917,25 +9193,27 @@ builtin_builder::_shader_clock(builtin_available_predicate avail,
 }
 
 ir_function_signature *
-builtin_builder::_vote_intrinsic(builtin_available_predicate avail,
+builtin_builder::_vote_intrinsic(const glsl_type *type,
+                                 builtin_available_predicate avail,
                                  enum ir_intrinsic_id id)
 {
-   ir_variable *value = in_var(&glsl_type_builtin_bool, "value");
+   ir_variable *value = in_var(type, "value");
    MAKE_INTRINSIC(&glsl_type_builtin_bool, id, avail, 1, value);
    return sig;
 }
 
 ir_function_signature *
-builtin_builder::_vote(const char *intrinsic_name,
-                       builtin_available_predicate avail)
+builtin_builder::_vote(const glsl_type *type,
+                       builtin_available_predicate avail,
+                       const char *intrinsic_name)
 {
-   ir_variable *value = in_var(&glsl_type_builtin_bool, "value");
+   ir_variable *value = in_var(type, "value");
 
    MAKE_SIG(&glsl_type_builtin_bool, avail, 1, value);
 
    ir_variable *retval = body.make_temp(&glsl_type_builtin_bool, "retval");
 
-   body.emit(call(shader->symbols->get_function(intrinsic_name),
+   body.emit(call(symbols->get_function(intrinsic_name),
                   retval, sig->parameters));
    body.emit(ret(retval));
    return sig;
@@ -8956,10 +9234,258 @@ builtin_builder::_helper_invocation()
 
    ir_variable *retval = body.make_temp(&glsl_type_builtin_bool, "retval");
 
-   body.emit(call(shader->symbols->get_function("__intrinsic_helper_invocation"),
+   body.emit(call(symbols->get_function("__intrinsic_helper_invocation"),
                   retval, sig->parameters));
    body.emit(ret(retval));
 
+   return sig;
+}
+
+ir_function_signature *
+builtin_builder::_subgroup_barrier_intrinsic(enum ir_intrinsic_id id,
+                                             builtin_available_predicate avail)
+{
+   MAKE_INTRINSIC(&glsl_type_builtin_void, id, avail, 0);
+   return sig;
+}
+
+ir_function_signature *
+builtin_builder::_subgroup_barrier(const char *intrinsic_name,
+                                   builtin_available_predicate avail)
+{
+   MAKE_SIG(&glsl_type_builtin_void, avail, 0);
+   body.emit(call(symbols->get_function(intrinsic_name), NULL, sig->parameters));
+   return sig;
+}
+
+ir_function_signature *
+builtin_builder::_elect_intrinsic()
+{
+   MAKE_INTRINSIC(&glsl_type_builtin_bool, ir_intrinsic_elect, subgroup_basic, 0);
+   return sig;
+}
+
+ir_function_signature *
+builtin_builder::_elect()
+{
+   MAKE_SIG(&glsl_type_builtin_bool, subgroup_basic, 0);
+
+   ir_variable *retval = body.make_temp(&glsl_type_builtin_bool, "retval");
+
+   body.emit(call(symbols->get_function("__intrinsic_elect"), retval, sig->parameters));
+   body.emit(ret(retval));
+
+   return sig;
+}
+
+ir_function_signature *
+builtin_builder::_shuffle_intrinsic(const glsl_type *type)
+{
+   ir_variable *value = in_var(type, "value");
+   ir_variable *id = in_var(&glsl_type_builtin_uint, "id");
+   MAKE_INTRINSIC(type, ir_intrinsic_shuffle,
+                  glsl_type_is_double(type) ? subgroup_shuffle_and_fp64 : subgroup_shuffle,
+                  2, value, id);
+   return sig;
+}
+
+ir_function_signature *
+builtin_builder::_shuffle(const glsl_type *type)
+{
+   ir_variable *value = in_var(type, "value");
+   ir_variable *id = in_var(&glsl_type_builtin_uint, "id");
+
+   MAKE_SIG(type, glsl_type_is_double(type) ? subgroup_shuffle_and_fp64 : subgroup_shuffle,
+            2, value, id);
+
+   ir_variable *retval = body.make_temp(type, "retval");
+
+   body.emit(call(symbols->get_function("__intrinsic_shuffle"), retval, sig->parameters));
+   body.emit(ret(retval));
+   return sig;
+}
+
+ir_function_signature *
+builtin_builder::_shuffle_xor_intrinsic(const glsl_type *type)
+{
+   ir_variable *value = in_var(type, "value");
+   ir_variable *mask = in_var(&glsl_type_builtin_uint, "mask");
+   MAKE_INTRINSIC(type, ir_intrinsic_shuffle_xor,
+                  glsl_type_is_double(type) ? subgroup_shuffle_and_fp64 : subgroup_shuffle,
+                  2, value, mask);
+   return sig;
+}
+
+ir_function_signature *
+builtin_builder::_shuffle_xor(const glsl_type *type)
+{
+   ir_variable *value = in_var(type, "value");
+   ir_variable *mask = in_var(&glsl_type_builtin_uint, "mask");
+
+   MAKE_SIG(type, glsl_type_is_double(type) ? subgroup_shuffle_and_fp64 : subgroup_shuffle,
+            2, value, mask);
+
+   ir_variable *retval = body.make_temp(type, "retval");
+
+   body.emit(call(symbols->get_function("__intrinsic_shuffle_xor"),
+                  retval, sig->parameters));
+   body.emit(ret(retval));
+   return sig;
+}
+
+ir_function_signature *
+builtin_builder::_shuffle_up_intrinsic(const glsl_type *type)
+{
+   ir_variable *value = in_var(type, "value");
+   ir_variable *delta = in_var(&glsl_type_builtin_uint, "delta");
+   MAKE_INTRINSIC(type, ir_intrinsic_shuffle_up,
+                  glsl_type_is_double(type) ? subgroup_shuffle_relative_and_fp64 : subgroup_shuffle_relative,
+                  2, value, delta);
+   return sig;
+}
+
+ir_function_signature *
+builtin_builder::_shuffle_up(const glsl_type *type)
+{
+   ir_variable *value = in_var(type, "value");
+   ir_variable *delta = in_var(&glsl_type_builtin_uint, "delta");
+
+   MAKE_SIG(type, glsl_type_is_double(type) ? subgroup_shuffle_relative_and_fp64 : subgroup_shuffle_relative,
+            2, value, delta);
+   ir_variable *retval = body.make_temp(type, "retval");
+
+   body.emit(call(symbols->get_function("__intrinsic_shuffle_up"),
+                  retval, sig->parameters));
+   body.emit(ret(retval));
+   return sig;
+}
+
+ir_function_signature *
+builtin_builder::_shuffle_down_intrinsic(const glsl_type *type)
+{
+   ir_variable *value = in_var(type, "value");
+   ir_variable *delta = in_var(&glsl_type_builtin_uint, "delta");
+   MAKE_INTRINSIC(type, ir_intrinsic_shuffle_down,
+                  glsl_type_is_double(type) ? subgroup_shuffle_relative_and_fp64 : subgroup_shuffle_relative,
+                  2, value, delta);
+   return sig;
+}
+
+ir_function_signature *
+builtin_builder::_shuffle_down(const glsl_type *type)
+{
+   ir_variable *value = in_var(type, "value");
+   ir_variable *delta = in_var(&glsl_type_builtin_uint, "delta");
+
+   MAKE_SIG(type, glsl_type_is_double(type) ? subgroup_shuffle_relative_and_fp64 : subgroup_shuffle_relative,
+            2, value, delta);
+   ir_variable *retval = body.make_temp(type, "retval");
+
+   body.emit(call(symbols->get_function("__intrinsic_shuffle_down"),
+                  retval, sig->parameters));
+   body.emit(ret(retval));
+   return sig;
+}
+
+ir_function_signature *
+builtin_builder::_subgroup_arithmetic_intrinsic(const glsl_type *type, enum ir_intrinsic_id id)
+{
+   ir_variable *value = in_var(type, "value");
+   MAKE_INTRINSIC(type, id,
+                  glsl_type_is_double(type) ? subgroup_arithmetic_and_fp64 : subgroup_arithmetic,
+                  1, value);
+   return sig;
+}
+
+ir_function_signature *
+builtin_builder::_subgroup_arithmetic(const glsl_type *type, const char *intrinsic_name)
+{
+   ir_variable *value = in_var(type, "value");
+   MAKE_SIG(type, glsl_type_is_double(type) ? subgroup_arithmetic_and_fp64 : subgroup_arithmetic,
+            1, value);
+
+   ir_variable *retval = body.make_temp(type, "retval");
+   body.emit(call(symbols->get_function(intrinsic_name), retval, sig->parameters));
+   body.emit(ret(retval));
+   return sig;
+}
+
+ir_function_signature *
+builtin_builder::_subgroup_clustered_intrinsic(const glsl_type *type, enum ir_intrinsic_id id)
+{
+   ir_variable *value = in_var(type, "value");
+   ir_variable *size =
+      new(mem_ctx) ir_variable(&glsl_type_builtin_uint, "clusterSize", ir_var_const_in);
+
+   MAKE_INTRINSIC(type, id,
+                  glsl_type_is_double(type) ? subgroup_clustered_and_fp64 : subgroup_clustered,
+                  2, value, size);
+   return sig;
+}
+
+ir_function_signature *
+builtin_builder::_subgroup_clustered(const glsl_type *type, const char *intrinsic_name)
+{
+   ir_variable *value = in_var(type, "value");
+   ir_variable *size =
+      new(mem_ctx) ir_variable(&glsl_type_builtin_uint, "clusterSize", ir_var_const_in);
+
+   MAKE_SIG(type, glsl_type_is_double(type) ? subgroup_clustered_and_fp64 : subgroup_clustered,
+            2, value, size);
+
+   ir_variable *retval = body.make_temp(type, "retval");
+   body.emit(call(symbols->get_function(intrinsic_name), retval, sig->parameters));
+   body.emit(ret(retval));
+   return sig;
+}
+
+ir_function_signature *
+builtin_builder::_quad_broadcast_intrinsic(const glsl_type *type)
+{
+   ir_variable *value = in_var(type, "value");
+   ir_variable *id = in_var(&glsl_type_builtin_uint, "id");
+   MAKE_INTRINSIC(type, ir_intrinsic_quad_broadcast,
+                  glsl_type_is_double(type) ? subgroup_quad_and_fp64 : subgroup_quad,
+                  2, value, id);
+   return sig;
+}
+
+ir_function_signature *
+builtin_builder::_quad_broadcast(const glsl_type *type)
+{
+   ir_variable *value = in_var(type, "value");
+   ir_variable *id = in_var(&glsl_type_builtin_uint, "id");
+
+   MAKE_SIG(type, glsl_type_is_double(type) ? subgroup_quad_and_fp64 : subgroup_quad,
+            2, value, id);
+   ir_variable *retval = body.make_temp(type, "retval");
+
+   body.emit(call(symbols->get_function("__intrinsic_quad_broadcast"),
+                  retval, sig->parameters));
+   body.emit(ret(retval));
+   return sig;
+}
+
+ir_function_signature *
+builtin_builder::_quad_swap_intrinsic(const glsl_type *type, enum ir_intrinsic_id id)
+{
+   ir_variable *value = in_var(type, "value");
+   MAKE_INTRINSIC(type, id,
+                  glsl_type_is_double(type) ? subgroup_quad_and_fp64 : subgroup_quad,
+                  1, value);
+   return sig;
+}
+
+ir_function_signature *
+builtin_builder::_quad_swap(const glsl_type *type, const char *intrinsic_name)
+{
+   ir_variable *value = in_var(type, "value");
+   MAKE_SIG(type, glsl_type_is_double(type) ? subgroup_quad_and_fp64 : subgroup_quad,
+            1, value);
+
+   ir_variable *retval = body.make_temp(type, "retval");
+   body.emit(call(symbols->get_function(intrinsic_name), retval, sig->parameters));
+   body.emit(ret(retval));
    return sig;
 }
 
@@ -9012,7 +9538,7 @@ _mesa_glsl_has_builtin_function(_mesa_glsl_parse_state *state, const char *name)
    ir_function *f;
    bool ret = false;
    simple_mtx_lock(&builtins_lock);
-   f = builtins.shader->symbols->get_function(name);
+   f = builtins.symbols->get_function(name);
    if (f != NULL) {
       foreach_in_list(ir_function_signature, sig, &f->signatures) {
          if (sig->is_builtin_available(state)) {
@@ -9026,10 +9552,10 @@ _mesa_glsl_has_builtin_function(_mesa_glsl_parse_state *state, const char *name)
    return ret;
 }
 
-gl_shader *
-_mesa_glsl_get_builtin_function_shader()
+struct glsl_symbol_table *
+_mesa_glsl_get_builtin_function_symbols()
 {
-   return builtins.shader;
+   return builtins.symbols;
 }
 
 
@@ -9037,9 +9563,9 @@ _mesa_glsl_get_builtin_function_shader()
  * Get the function signature for main from a shader
  */
 ir_function_signature *
-_mesa_get_main_function_signature(glsl_symbol_table *symbols)
+_mesa_get_main_function_signature(glsl_symbol_table *symbol_table)
 {
-   ir_function *const f = symbols->get_function("main");
+   ir_function *const f = symbol_table->get_function("main");
    if (f != NULL) {
       exec_list void_parameters;
 
@@ -9051,7 +9577,7 @@ _mesa_get_main_function_signature(glsl_symbol_table *symbols)
        * shaders) because that would have already been caught above.
        */
       ir_function_signature *sig =
-         f->matching_signature(NULL, &void_parameters, false);
+         f->matching_signature(NULL, &void_parameters, false, false, false);
       if ((sig != NULL) && sig->is_defined) {
          return sig;
       }

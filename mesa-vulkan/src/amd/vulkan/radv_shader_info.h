@@ -14,11 +14,14 @@
 #include <inttypes.h>
 #include <stdbool.h>
 
+#include "nir_tcs_info.h"
 #include "radv_constants.h"
 #include "radv_shader_args.h"
+#include "util/set.h"
 
 struct radv_device;
 struct nir_shader;
+typedef struct nir_shader nir_shader;
 struct radv_shader_layout;
 struct radv_shader_stage_key;
 enum radv_pipeline_type;
@@ -45,6 +48,7 @@ struct radv_vs_output_info {
    bool writes_primitive_shading_rate;
    bool writes_primitive_shading_rate_per_primitive;
    bool export_prim_id;
+   bool export_prim_id_per_primitive;
    unsigned pos_exports;
 };
 
@@ -106,9 +110,9 @@ struct radv_shader_info {
    uint32_t user_data_0;
    bool inputs_linked;
    bool outputs_linked;
-   bool has_epilog;                        /* Only for TCS or PS */
    bool merged_shader_compiled_separately; /* GFX9+ */
    bool force_indirect_desc_sets;
+   uint64_t gs_inputs_read; /* Mask of GS inputs read (only used by linked ES) */
 
    struct {
       uint8_t output_usage_mask[VARYING_SLOT_VAR31 + 1];
@@ -117,7 +121,8 @@ struct radv_shader_info {
       bool as_es;
       bool as_ls;
       bool tcs_in_out_eq;
-      uint64_t tcs_temp_only_input_mask;
+      uint64_t tcs_inputs_via_temp;
+      uint64_t tcs_inputs_via_lds;
       uint8_t num_linked_outputs;
       bool needs_base_instance;
       bool use_per_attribute_vb_descs;
@@ -170,7 +175,6 @@ struct radv_shader_info {
       bool exports_mrtz_via_epilog;
       bool has_pcoord;
       bool prim_id_input;
-      bool layer_input;
       bool viewport_index_input;
       uint8_t input_clips_culls_mask;
       uint32_t input_mask;
@@ -180,8 +184,7 @@ struct radv_shader_info {
       uint32_t explicit_strict_shaded_mask;
       uint32_t float16_shaded_mask;
       uint32_t float16_hi_shaded_mask;
-      uint32_t num_interp;
-      uint32_t num_prim_interp;
+      uint32_t num_inputs;
       bool can_discard;
       bool early_fragment_test;
       bool post_depth_coverage;
@@ -197,6 +200,8 @@ struct radv_shader_info {
       bool reads_linear_center;
       bool reads_linear_centroid;
       bool reads_fully_covered;
+      bool reads_pixel_coord;
+      bool reads_layer;
       uint8_t reads_frag_coord_mask;
       uint8_t reads_sample_pos_mask;
       uint8_t depth_layout;
@@ -204,15 +209,17 @@ struct radv_shader_info {
       bool pops; /* Uses Primitive Ordered Pixel Shading (fragment shader interlock) */
       bool pops_is_per_sample;
       bool mrt0_is_dual_src;
-      unsigned spi_ps_input_ena;
-      unsigned spi_ps_input_addr;
-      unsigned colors_written;
-      unsigned spi_shader_col_format;
-      unsigned cb_shader_mask;
+      uint32_t spi_ps_input_ena;
+      uint32_t spi_ps_input_addr;
+      uint32_t colors_written; /* Mask of outputs written */
+      uint32_t spi_shader_col_format;
+      uint32_t cb_shader_mask;
       uint8_t color0_written;
       bool load_provoking_vtx;
       bool load_rasterization_prim;
       bool force_sample_iter_shading_rate;
+      bool uses_fbfetch_output;
+      bool has_epilog;
    } ps;
    struct {
       bool uses_grid_size;
@@ -227,18 +234,23 @@ struct radv_shader_info {
       bool has_query; /* Task shader only */
 
       bool regalloc_hang_bug;
+
+      unsigned derivative_group : 2;
    } cs;
    struct {
       uint64_t tes_inputs_read;
       uint64_t tes_patch_inputs_read;
+      uint64_t tcs_outputs_read;
+      uint64_t tcs_outputs_written;
+      uint32_t tcs_patch_outputs_read;
+      uint32_t tcs_patch_outputs_written;
       unsigned tcs_vertices_out;
       uint32_t num_lds_blocks;
       uint8_t num_linked_inputs;          /* Number of reserved per-vertex input slots in LDS. */
       uint8_t num_linked_outputs;         /* Number of reserved per-vertex output slots in VRAM. */
       uint8_t num_linked_patch_outputs;   /* Number of reserved per-patch output slots in VRAM. */
-      uint8_t num_lds_per_vertex_outputs; /* Number of reserved per-vertex output slots in LDS. */
-      uint8_t num_lds_per_patch_outputs;  /* Number of reserved per-patch output slots in LDS. */
       bool tes_reads_tess_factors : 1;
+      nir_tcs_info info;
    } tcs;
    struct {
       enum mesa_prim output_prim;
@@ -254,6 +266,11 @@ struct radv_shader_info {
 
    /* Precomputed register values. */
    struct {
+      uint32_t pgm_lo;
+      uint32_t pgm_rsrc1;
+      uint32_t pgm_rsrc2;
+      uint32_t pgm_rsrc3;
+
       struct {
          uint32_t spi_shader_late_alloc_vs;
          uint32_t spi_shader_pgm_rsrc3_vs;
@@ -280,6 +297,7 @@ struct radv_shader_info {
       struct {
          uint32_t spi_shader_gs_meshlet_dim;
          uint32_t spi_shader_gs_meshlet_exp_alloc;
+         uint32_t spi_shader_gs_meshlet_ctrl; /* GFX12+ */
       } ms;
 
       struct {

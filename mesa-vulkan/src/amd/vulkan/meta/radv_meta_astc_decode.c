@@ -11,47 +11,26 @@
 #include "vk_common_entrypoints.h"
 #include "vk_format.h"
 
-VkResult
-radv_device_init_meta_astc_decode_state(struct radv_device *device, bool on_demand)
-{
-   const struct radv_physical_device *pdev = radv_device_physical(device);
-   struct radv_meta_state *state = &device->meta_state;
-
-   if (!pdev->emulate_astc)
-      return VK_SUCCESS;
-
-   return vk_texcompress_astc_init(&device->vk, &state->alloc, state->cache, &state->astc_decode);
-}
-
-void
-radv_device_finish_meta_astc_decode_state(struct radv_device *device)
-{
-   const struct radv_physical_device *pdev = radv_device_physical(device);
-   struct radv_meta_state *state = &device->meta_state;
-   struct vk_texcompress_astc_state *astc = state->astc_decode;
-
-   if (!pdev->emulate_astc)
-      return;
-
-   vk_texcompress_astc_finish(&device->vk, &state->alloc, astc);
-}
-
 static void
 decode_astc(struct radv_cmd_buffer *cmd_buffer, struct radv_image_view *src_iview, struct radv_image_view *dst_iview,
             VkImageLayout layout, const VkOffset3D *offset, const VkExtent3D *extent)
 {
    struct radv_device *device = radv_cmd_buffer_device(cmd_buffer);
    struct radv_meta_state *state = &device->meta_state;
-   struct vk_texcompress_astc_write_descriptor_set write_desc_set;
+   struct vk_texcompress_astc_write_descriptor_buffer desc_buffer;
    VkFormat format = src_iview->image->vk.format;
    int blk_w = vk_format_get_blockwidth(format);
    int blk_h = vk_format_get_blockheight(format);
 
-   vk_texcompress_astc_fill_write_descriptor_sets(state->astc_decode, &write_desc_set,
-                                                  radv_image_view_to_handle(src_iview), layout,
-                                                  radv_image_view_to_handle(dst_iview), format);
-   radv_meta_push_descriptor_set(cmd_buffer, VK_PIPELINE_BIND_POINT_COMPUTE, state->astc_decode->p_layout, 0,
-                                 VK_TEXCOMPRESS_ASTC_WRITE_DESC_SET_COUNT, write_desc_set.descriptor_set);
+   vk_texcompress_astc_fill_write_descriptor_buffer(&device->vk, state->astc_decode, &desc_buffer,
+                                                    radv_image_view_to_handle(src_iview), layout,
+                                                    radv_image_view_to_handle(dst_iview), format);
+
+   VK_FROM_HANDLE(radv_buffer, luts_buf, state->astc_decode->luts_buf);
+   radv_cs_add_buffer(device->ws, cmd_buffer->cs, luts_buf->bo);
+
+   radv_meta_bind_descriptors(cmd_buffer, VK_PIPELINE_BIND_POINT_COMPUTE, state->astc_decode->p_layout,
+                              VK_TEXCOMPRESS_ASTC_WRITE_DESC_SET_COUNT, desc_buffer.descriptors);
 
    VkPipeline pipeline =
       vk_texcompress_astc_get_decode_pipeline(&device->vk, &state->alloc, state->astc_decode, state->cache, format);
@@ -110,7 +89,7 @@ image_view_init(struct radv_device *device, struct radv_image *image, VkFormat f
          },
    };
 
-   radv_image_view_init(iview, device, &iview_create_info, 0, NULL);
+   radv_image_view_init(iview, device, &iview_create_info, NULL);
 }
 
 void
@@ -123,10 +102,9 @@ radv_meta_decode_astc(struct radv_cmd_buffer *cmd_buffer, struct radv_image *ima
                   RADV_META_SAVE_COMPUTE_PIPELINE | RADV_META_SAVE_CONSTANTS | RADV_META_SAVE_DESCRIPTORS |
                      RADV_META_SUSPEND_PREDICATING);
 
-   uint32_t base_slice = radv_meta_get_iview_layer(image, subresource, &offset);
-   uint32_t slice_count = image->vk.image_type == VK_IMAGE_TYPE_3D
-                             ? extent.depth
-                             : vk_image_subresource_layer_count(&image->vk, subresource);
+   const bool is_3d = image->vk.image_type == VK_IMAGE_TYPE_3D;
+   const uint32_t base_slice = is_3d ? offset.z : subresource->baseArrayLayer;
+   const uint32_t slice_count = is_3d ? extent.depth : vk_image_subresource_layer_count(&image->vk, subresource);
 
    extent = vk_image_sanitize_extent(&image->vk, extent);
    offset = vk_image_sanitize_offset(&image->vk, offset);

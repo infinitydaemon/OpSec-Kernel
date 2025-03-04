@@ -32,12 +32,13 @@
 #include "radv_entrypoints.h"
 #include "radv_image_view.h"
 #include "radv_physical_device.h"
+#include "radv_query.h"
 #include "radv_video.h"
 
 #include "ac_vcn_enc.h"
 
 #define RENCODE_V4_FW_INTERFACE_MAJOR_VERSION 1
-#define RENCODE_V4_FW_INTERFACE_MINOR_VERSION 7
+#define RENCODE_V4_FW_INTERFACE_MINOR_VERSION 11
 
 #define RENCODE_V4_IB_PARAM_ENCODE_STATISTICS 0x0000001a
 
@@ -62,6 +63,7 @@
 #define RENCODE_V2_IB_PARAM_ENCODE_CONTEXT_BUFFER     0x00000011
 #define RENCODE_V2_IB_PARAM_VIDEO_BITSTREAM_BUFFER    0x00000012
 #define RENCODE_V2_IB_PARAM_FEEDBACK_BUFFER           0x00000015
+#define RENCODE_V2_IB_PARAM_ENCODE_LATENCY            0x00000018
 #define RENCODE_V2_IB_PARAM_ENCODE_STATISTICS         0x00000019
 #define RENCODE_V2_IB_PARAM_RATE_CONTROL_PER_PIC_EX   0x0000001d
 
@@ -94,6 +96,7 @@
 #define RENCODE_IB_PARAM_FEEDBACK_BUFFER           0x00000010
 #define RENCODE_IB_PARAM_RATE_CONTROL_PER_PIC_EX   0x0000001d
 #define RENCODE_IB_PARAM_DIRECT_OUTPUT_NALU        0x00000020
+#define RENCODE_IB_PARAM_ENCODE_LATENCY            0x00000022
 #define RENCODE_IB_PARAM_ENCODE_STATISTICS         0x00000024
 
 #define RENCODE_HEVC_IB_PARAM_SLICE_CONTROL     0x00100001
@@ -108,25 +111,50 @@
 #define RENCODE_FW_INTERFACE_MAJOR_VERSION 1
 #define RENCODE_FW_INTERFACE_MINOR_VERSION 15
 
+#define ENC_ALIGNMENT 256
+
 void
 radv_probe_video_encode(struct radv_physical_device *pdev)
 {
    pdev->video_encode_enabled = false;
+
+   /* TODO: Add VCN 5.0+. */
+   if (pdev->info.vcn_ip_version >= VCN_5_0_0)
+      return;
+
    if (pdev->info.vcn_ip_version >= VCN_4_0_0) {
       if (pdev->info.vcn_enc_major_version != RENCODE_V4_FW_INTERFACE_MAJOR_VERSION)
          return;
       if (pdev->info.vcn_enc_minor_version < RENCODE_V4_FW_INTERFACE_MINOR_VERSION)
          return;
+
+      /* VCN 4 FW 1.22 has all the necessary pieces to pass CTS */
+      if (pdev->info.vcn_enc_minor_version >= 22) {
+         pdev->video_encode_enabled = true;
+         return;
+      }
    } else if (pdev->info.vcn_ip_version >= VCN_3_0_0) {
       if (pdev->info.vcn_enc_major_version != RENCODE_V3_FW_INTERFACE_MAJOR_VERSION)
          return;
       if (pdev->info.vcn_enc_minor_version < RENCODE_V3_FW_INTERFACE_MINOR_VERSION)
          return;
+
+      /* VCN 3 FW 1.33 has all the necessary pieces to pass CTS */
+      if (pdev->info.vcn_enc_minor_version >= 33) {
+         pdev->video_encode_enabled = true;
+         return;
+      }
    } else if (pdev->info.vcn_ip_version >= VCN_2_0_0) {
       if (pdev->info.vcn_enc_major_version != RENCODE_V2_FW_INTERFACE_MAJOR_VERSION)
          return;
       if (pdev->info.vcn_enc_minor_version < RENCODE_V2_FW_INTERFACE_MINOR_VERSION)
          return;
+
+      /* VCN 2 FW 1.24 has all the necessary pieces to pass CTS */
+      if (pdev->info.vcn_enc_minor_version >= 24) {
+         pdev->video_encode_enabled = true;
+         return;
+      }
    } else {
       if (pdev->info.vcn_enc_major_version != RENCODE_FW_INTERFACE_MAJOR_VERSION)
          return;
@@ -189,6 +217,7 @@ radv_init_physical_device_encoder(struct radv_physical_device *pdev)
          pdev->vcn_enc_cmds.enc_statistics = RENCODE_V4_IB_PARAM_ENCODE_STATISTICS;
       } else
          pdev->vcn_enc_cmds.enc_statistics = RENCODE_V2_IB_PARAM_ENCODE_STATISTICS;
+      pdev->vcn_enc_cmds.enc_latency = RENCODE_V2_IB_PARAM_ENCODE_LATENCY;
    } else {
       pdev->vcn_enc_cmds.session_info = RENCODE_IB_PARAM_SESSION_INFO;
       pdev->vcn_enc_cmds.task_info = RENCODE_IB_PARAM_TASK_INFO;
@@ -214,6 +243,7 @@ radv_init_physical_device_encoder(struct radv_physical_device *pdev)
       pdev->vcn_enc_cmds.enc_params_h264 = RENCODE_H264_IB_PARAM_ENCODE_PARAMS;
       pdev->vcn_enc_cmds.deblocking_filter_h264 = RENCODE_H264_IB_PARAM_DEBLOCKING_FILTER;
       pdev->vcn_enc_cmds.enc_statistics = RENCODE_IB_PARAM_ENCODE_STATISTICS;
+      pdev->vcn_enc_cmds.enc_latency = RENCODE_IB_PARAM_ENCODE_LATENCY;
    }
 }
 
@@ -375,7 +405,7 @@ radv_enc_flush_headers(struct radv_cmd_buffer *cmd_buffer)
 static void
 radv_enc_code_ue(struct radv_cmd_buffer *cmd_buffer, unsigned int value)
 {
-   int x = -1;
+   unsigned int x = 0;
    unsigned int ue_code = value + 1;
    value += 1;
 
@@ -383,9 +413,9 @@ radv_enc_code_ue(struct radv_cmd_buffer *cmd_buffer, unsigned int value)
       value = (value >> 1);
       x += 1;
    }
-
-   unsigned int ue_length = (x << 1) + 1;
-   radv_enc_code_fixed_bits(cmd_buffer, ue_code, ue_length);
+   if (x > 1)
+     radv_enc_code_fixed_bits(cmd_buffer, 0, x - 1);
+   radv_enc_code_fixed_bits(cmd_buffer, ue_code, x);
 }
 
 static void
@@ -451,15 +481,16 @@ radv_enc_session_init(struct radv_cmd_buffer *cmd_buffer, const struct VkVideoEn
    const struct radv_physical_device *pdev = radv_device_physical(device);
    struct radv_video_session *vid = cmd_buffer->video.vid;
    struct radeon_cmdbuf *cs = cmd_buffer->cs;
-   unsigned alignment = 16;
+   unsigned alignment_w = 16;
+   unsigned alignment_h = 16;
    if (vid->vk.op == VK_VIDEO_CODEC_OPERATION_ENCODE_H265_BIT_KHR) {
-      alignment = 64;
+      alignment_w = 64;
    }
 
    uint32_t w = enc_info->srcPictureResource.codedExtent.width;
    uint32_t h = enc_info->srcPictureResource.codedExtent.height;
-   uint32_t aligned_picture_width = align(w, alignment);
-   uint32_t aligned_picture_height = align(h, alignment);
+   uint32_t aligned_picture_width = align(w, alignment_w);
+   uint32_t aligned_picture_height = align(h, alignment_h);
    uint32_t padding_width = aligned_picture_width - w;
    uint32_t padding_height = aligned_picture_height - h;
 
@@ -476,6 +507,9 @@ radv_enc_session_init(struct radv_cmd_buffer *cmd_buffer, const struct VkVideoEn
       radeon_emit(cs, 0); // slice output enabled.
    }
    radeon_emit(cs, vid->enc_session.display_remote);
+   if (pdev->enc_hw_ver >= RADV_VIDEO_ENC_HW_4) {
+      radeon_emit(cs, 0);
+   }
    ENC_END;
 }
 
@@ -512,8 +546,8 @@ radv_enc_slice_control(struct radv_cmd_buffer *cmd_buffer, const struct VkVideoE
    struct radeon_cmdbuf *cs = cmd_buffer->cs;
 
    uint32_t num_mbs_in_slice;
-   uint32_t width_in_mbs = enc_info->srcPictureResource.codedExtent.width / 16;
-   uint32_t height_in_mbs = enc_info->srcPictureResource.codedExtent.height / 16;
+   uint32_t width_in_mbs = DIV_ROUND_UP(enc_info->srcPictureResource.codedExtent.width, 16);
+   uint32_t height_in_mbs = DIV_ROUND_UP(enc_info->srcPictureResource.codedExtent.height, 16);
    num_mbs_in_slice = width_in_mbs * height_in_mbs;
    ENC_BEGIN;
    radeon_emit(cs, pdev->vcn_enc_cmds.slice_control_h264);
@@ -546,7 +580,11 @@ radv_enc_spec_misc_h264(struct radv_cmd_buffer *cmd_buffer, const struct VkVideo
    radeon_emit(cs, vk_video_get_h264_level(sps->level_idc));
 
    if (pdev->enc_hw_ver >= RADV_VIDEO_ENC_HW_3) {
-      radeon_emit(cs, 0);                        // v3 b_picture_enabled
+      bool b_pic_enabled = false;
+      if (sps->pSequenceParameterSetVui) {
+         b_pic_enabled = !!sps->pSequenceParameterSetVui->max_num_reorder_frames;
+      }
+      radeon_emit(cs, b_pic_enabled);  // v3 b_picture_enabled
       radeon_emit(cs, pps->weighted_bipred_idc); // v3 weighted bipred idc
    }
 
@@ -590,16 +628,11 @@ radv_enc_slice_control_hevc(struct radv_cmd_buffer *cmd_buffer, const struct VkV
    struct radv_device *device = radv_cmd_buffer_device(cmd_buffer);
    const struct radv_physical_device *pdev = radv_device_physical(device);
    struct radeon_cmdbuf *cs = cmd_buffer->cs;
-   const struct VkVideoEncodeH265PictureInfoKHR *h265_picture_info =
-      vk_find_struct_const(enc_info->pNext, VIDEO_ENCODE_H265_PICTURE_INFO_KHR);
-   const StdVideoEncodeH265PictureInfo *pic = h265_picture_info->pStdPictureInfo;
-   const StdVideoH265SequenceParameterSet *sps =
-      vk_video_find_h265_enc_std_sps(&cmd_buffer->video.params->vk, pic->pps_seq_parameter_set_id);
 
    uint32_t width_in_ctb, height_in_ctb, num_ctbs_in_slice;
 
-   width_in_ctb = sps->pic_width_in_luma_samples / 64;
-   height_in_ctb = sps->pic_height_in_luma_samples / 64;
+   width_in_ctb = DIV_ROUND_UP(enc_info->srcPictureResource.codedExtent.width, 64);
+   height_in_ctb = DIV_ROUND_UP(enc_info->srcPictureResource.codedExtent.height, 64);
    num_ctbs_in_slice = width_in_ctb * height_in_ctb;
    ENC_BEGIN;
    radeon_emit(cs, pdev->vcn_enc_cmds.slice_control_hevc);
@@ -704,6 +737,22 @@ radv_enc_quality_params(struct radv_cmd_buffer *cmd_buffer)
    if (pdev->enc_hw_ver >= RADV_VIDEO_ENC_HW_2)
       radeon_emit(cs, 0);
    ENC_END;
+}
+
+static void
+radv_enc_latency(struct radv_cmd_buffer *cmd_buffer, VkVideoEncodeTuningModeKHR tuning_mode)
+{
+   struct radv_device *device = radv_cmd_buffer_device(cmd_buffer);
+   const struct radv_physical_device *pdev = radv_device_physical(device);
+   struct radeon_cmdbuf *cs = cmd_buffer->cs;
+   if (tuning_mode == VK_VIDEO_ENCODE_TUNING_MODE_LOW_LATENCY_KHR
+         || tuning_mode == VK_VIDEO_ENCODE_TUNING_MODE_ULTRA_LOW_LATENCY_KHR)
+   {
+      ENC_BEGIN;
+      radeon_emit(cs, pdev->vcn_enc_cmds.enc_latency);
+      radeon_emit(cs, 1000);
+      ENC_END;
+   }
 }
 
 static void
@@ -940,7 +989,7 @@ radv_enc_slice_header_hevc(struct radv_cmd_buffer *cmd_buffer, const VkVideoEnco
    radv_enc_code_fixed_bits(cmd_buffer, 0x0, 1);
    radv_enc_code_fixed_bits(cmd_buffer, nal_unit_type, 6);
    radv_enc_code_fixed_bits(cmd_buffer, 0x0, 6);
-   radv_enc_code_fixed_bits(cmd_buffer, 0x1, 3);
+   radv_enc_code_fixed_bits(cmd_buffer, pic->TemporalId + 1, 3);
 
    radv_enc_flush_headers(cmd_buffer);
    instruction[inst_index] = RENCODE_HEADER_INSTRUCTION_COPY;
@@ -1124,30 +1173,65 @@ radv_enc_slice_header_hevc(struct radv_cmd_buffer *cmd_buffer, const VkVideoEnco
 }
 
 static void
+dpb_image_sizes(struct radv_image *image,
+                uint32_t *luma_pitch,
+                uint32_t *luma_size,
+                uint32_t *chroma_size,
+                uint32_t *colloc_bytes)
+{
+   uint32_t rec_alignment = 64;
+   uint32_t aligned_width = align(image->vk.extent.width, rec_alignment);
+   uint32_t aligned_height = align(image->vk.extent.height, rec_alignment);
+   uint32_t pitch = align(aligned_width, ENC_ALIGNMENT);
+   uint32_t aligned_dpb_height = MAX2(256, aligned_height);
+
+   *luma_pitch = pitch;
+   *luma_size = align(pitch * aligned_dpb_height, ENC_ALIGNMENT);
+   *chroma_size = align(*luma_size / 2, ENC_ALIGNMENT);
+
+   if (image->vk.format == VK_FORMAT_G10X6_B10X6R10X6_2PLANE_420_UNORM_3PACK16 ||
+       image->vk.format == VK_FORMAT_G12X4_B12X4R12X4_2PLANE_420_UNORM_3PACK16) {
+      *luma_size *= 2;
+      *chroma_size *= 2;
+   }
+   *colloc_bytes = (align((aligned_width / 16), 64) / 2) * (aligned_height / 16);
+}
+
+static void
 radv_enc_ctx(struct radv_cmd_buffer *cmd_buffer, const VkVideoEncodeInfoKHR *info)
 {
    struct radv_device *device = radv_cmd_buffer_device(cmd_buffer);
    const struct radv_physical_device *pdev = radv_device_physical(device);
+   struct radv_video_session *vid = cmd_buffer->video.vid;
    struct radeon_cmdbuf *cs = cmd_buffer->cs;
    struct radv_image_view *dpb_iv = NULL;
    struct radv_image *dpb = NULL;
-   struct radv_image_plane *dpb_luma = NULL;
-   struct radv_image_plane *dpb_chroma = NULL;
    uint64_t va = 0;
    uint32_t luma_pitch = 0;
+   int max_ref_slot_idx = 0;
 
-   if (info->pSetupReferenceSlot)
+   if (info->pSetupReferenceSlot) {
       dpb_iv = radv_image_view_from_handle(info->pSetupReferenceSlot->pPictureResource->imageViewBinding);
-   else if (info->referenceSlotCount > 0)
-      dpb_iv = radv_image_view_from_handle(info->pReferenceSlots[0].pPictureResource->imageViewBinding);
+      if (info->pSetupReferenceSlot->slotIndex > max_ref_slot_idx)
+         max_ref_slot_idx = info->pSetupReferenceSlot->slotIndex;
+   }
 
+   if (info->referenceSlotCount > 0) {
+      dpb_iv = radv_image_view_from_handle(info->pReferenceSlots[0].pPictureResource->imageViewBinding);
+      for (unsigned i = 0; i < info->referenceSlotCount; i++) {
+         if (info->pReferenceSlots[i].slotIndex > max_ref_slot_idx)
+            max_ref_slot_idx = info->pReferenceSlots[i].slotIndex;
+      }
+   }
+
+   uint32_t luma_size = 0, chroma_size = 0, colloc_bytes = 0;
    if (dpb_iv) {
       dpb = dpb_iv->image;
-      dpb_luma = &dpb->planes[0];
-      dpb_chroma = &dpb->planes[1];
+
+      dpb_image_sizes(dpb, &luma_pitch, &luma_size, &chroma_size, &colloc_bytes);
+
       radv_cs_add_buffer(device->ws, cs, dpb->bindings[0].bo);
-      va = radv_buffer_get_va(dpb->bindings[0].bo) + dpb->bindings[0].offset;     // TODO DPB resource
-      luma_pitch = dpb_luma->surface.u.gfx9.surf_pitch * dpb_luma->surface.blk_w; // rec_luma_pitch
+      va = dpb->bindings[0].addr;
    }
 
    uint32_t swizzle_mode = 0;
@@ -1163,15 +1247,22 @@ radv_enc_ctx(struct radv_cmd_buffer *cmd_buffer, const VkVideoEncodeInfoKHR *inf
    radeon_emit(cs, swizzle_mode);
    radeon_emit(cs, luma_pitch);                   // rec_luma_pitch
    radeon_emit(cs, luma_pitch);                   // rec_luma_pitch0); //rec_chromma_pitch
-   radeon_emit(cs, info->referenceSlotCount + 1); // num_reconstructed_pictures
+   radeon_emit(cs, max_ref_slot_idx + 1); // num_reconstructed_pictures
 
    int i;
-   for (i = 0; i < info->referenceSlotCount + 1; i++) {
-      radeon_emit(cs, dpb_luma ? dpb_luma->surface.u.gfx9.surf_offset + i * dpb_luma->surface.u.gfx9.surf_slice_size
-                               : 0); // luma offset
-      radeon_emit(cs, dpb_chroma
-                         ? dpb_chroma->surface.u.gfx9.surf_offset + i * dpb_chroma->surface.u.gfx9.surf_slice_size
-                         : 0); // chroma offset
+   unsigned offset = 0;
+   unsigned colloc_buffer_offset = 0;
+
+   if (vid->vk.op == VK_VIDEO_CODEC_OPERATION_ENCODE_H264_BIT_KHR &&
+       pdev->enc_hw_ver >= RADV_VIDEO_ENC_HW_3)  {
+      colloc_buffer_offset = offset;
+      offset += colloc_bytes;
+   }
+   for (i = 0; i < max_ref_slot_idx + 1; i++) {
+      radeon_emit(cs, offset);
+      offset += luma_size;
+      radeon_emit(cs, offset);
+      offset += chroma_size;
 
       if (pdev->enc_hw_ver >= RADV_VIDEO_ENC_HW_4) {
          radeon_emit(cs, 0); /* unused offset 1 */
@@ -1189,7 +1280,7 @@ radv_enc_ctx(struct radv_cmd_buffer *cmd_buffer, const VkVideoEncodeInfoKHR *inf
    }
 
    if (pdev->enc_hw_ver == RADV_VIDEO_ENC_HW_3) {
-      radeon_emit(cs, 0); // colloc buffer offset
+      radeon_emit(cs, colloc_buffer_offset);
    }
    radeon_emit(cs, 0); // enc pic pre encode luma pitch
    radeon_emit(cs, 0); // enc pic pre encode chroma pitch
@@ -1218,7 +1309,11 @@ radv_enc_ctx(struct radv_cmd_buffer *cmd_buffer, const VkVideoEncodeInfoKHR *inf
       radeon_emit(cs, 0); // green
       radeon_emit(cs, 0); // blue
       radeon_emit(cs, 0); // v3 two pass search center map offset
-      radeon_emit(cs, 0);
+      if (pdev->enc_hw_ver >= RADV_VIDEO_ENC_HW_4) {
+         radeon_emit(cs, colloc_buffer_offset);
+      } else {
+         radeon_emit(cs, 0);
+      }
       if (pdev->enc_hw_ver == RADV_VIDEO_ENC_HW_3) {
          radeon_emit(cs, 0);
       }
@@ -1232,7 +1327,7 @@ radv_enc_bitstream(struct radv_cmd_buffer *cmd_buffer, struct radv_buffer *buffe
    struct radv_device *device = radv_cmd_buffer_device(cmd_buffer);
    const struct radv_physical_device *pdev = radv_device_physical(device);
    struct radeon_cmdbuf *cs = cmd_buffer->cs;
-   uint64_t va = radv_buffer_get_va(buffer->bo) + buffer->offset;
+   uint64_t va = buffer->addr + offset;
    radv_cs_add_buffer(device->ws, cs, buffer->bo);
 
    ENC_BEGIN;
@@ -1241,12 +1336,12 @@ radv_enc_bitstream(struct radv_cmd_buffer *cmd_buffer, struct radv_buffer *buffe
    radeon_emit(cs, va >> 32);
    radeon_emit(cs, va & 0xffffffff);
    radeon_emit(cs, buffer->vk.size);
-   radeon_emit(cs, offset);
+   radeon_emit(cs, 0);
    ENC_END;
 }
 
 static void
-radv_enc_feedback(struct radv_cmd_buffer *cmd_buffer)
+radv_enc_feedback(struct radv_cmd_buffer *cmd_buffer, uint64_t feedback_query_va)
 {
    struct radv_device *device = radv_cmd_buffer_device(cmd_buffer);
    const struct radv_physical_device *pdev = radv_device_physical(device);
@@ -1255,8 +1350,8 @@ radv_enc_feedback(struct radv_cmd_buffer *cmd_buffer)
 
    radeon_emit(cs, pdev->vcn_enc_cmds.feedback);
    radeon_emit(cs, RENCODE_FEEDBACK_BUFFER_MODE_LINEAR);
-   radeon_emit(cs, cmd_buffer->video.feedback_query_va >> 32);
-   radeon_emit(cs, cmd_buffer->video.feedback_query_va & 0xffffffff);
+   radeon_emit(cs, feedback_query_va >> 32);
+   radeon_emit(cs, feedback_query_va & 0xffffffff);
    radeon_emit(cs, 16); // buffer_size
    radeon_emit(cs, 40); // data_size
    ENC_END;
@@ -1342,11 +1437,12 @@ radv_enc_params(struct radv_cmd_buffer *cmd_buffer, const VkVideoEncodeInfoKHR *
    struct radv_device *device = radv_cmd_buffer_device(cmd_buffer);
    const struct radv_physical_device *pdev = radv_device_physical(device);
    struct radeon_cmdbuf *cs = cmd_buffer->cs;
-   uint64_t va = radv_buffer_get_va(src_img->bindings[0].bo) + src_img->bindings[0].offset;
+   uint64_t va = src_img->bindings[0].addr;
    uint64_t luma_va = va + src_img->planes[0].surface.u.gfx9.surf_offset;
    uint64_t chroma_va = va + src_img->planes[1].surface.u.gfx9.surf_offset;
    uint32_t pic_type;
    unsigned int slot_idx = 0xffffffff;
+   unsigned int max_layers = cmd_buffer->video.vid->rc_layer_control.max_num_temporal_layers;
 
    radv_cs_add_buffer(device->ws, cs, src_img->bindings[0].bo);
    if (h264_pic) {
@@ -1365,7 +1461,7 @@ radv_enc_params(struct radv_cmd_buffer *cmd_buffer, const VkVideoEncodeInfoKHR *
          pic_type = RENCODE_PICTURE_TYPE_I;
          break;
       }
-      radv_enc_layer_select(cmd_buffer, h264_pic->temporal_id);
+      radv_enc_layer_select(cmd_buffer, MIN2(h264_pic->temporal_id, max_layers));
    } else if (h265_pic) {
       switch (h265_pic->pic_type) {
       case STD_VIDEO_H265_PICTURE_TYPE_P:
@@ -1382,7 +1478,7 @@ radv_enc_params(struct radv_cmd_buffer *cmd_buffer, const VkVideoEncodeInfoKHR *
          pic_type = RENCODE_PICTURE_TYPE_I;
          break;
       }
-      radv_enc_layer_select(cmd_buffer, h265_pic->TemporalId);
+      radv_enc_layer_select(cmd_buffer, MIN2(h265_pic->TemporalId, max_layers));
    } else {
       assert(0);
       return;
@@ -1409,11 +1505,27 @@ radv_enc_params(struct radv_cmd_buffer *cmd_buffer, const VkVideoEncodeInfoKHR *
 }
 
 static void
-radv_enc_params_h264(struct radv_cmd_buffer *cmd_buffer)
+radv_enc_params_h264(struct radv_cmd_buffer *cmd_buffer,
+                     const VkVideoEncodeInfoKHR *enc_info)
 {
    struct radv_device *device = radv_cmd_buffer_device(cmd_buffer);
    const struct radv_physical_device *pdev = radv_device_physical(device);
    struct radeon_cmdbuf *cs = cmd_buffer->cs;
+   const struct VkVideoEncodeH264PictureInfoKHR *h264_picture_info =
+      vk_find_struct_const(enc_info->pNext, VIDEO_ENCODE_H264_PICTURE_INFO_KHR);
+
+   assert(h264_picture_info);
+
+   const StdVideoEncodeH264PictureInfo *h264_pic = h264_picture_info->pStdPictureInfo;
+   unsigned slot_idx_1 = 0xffffffff;
+
+   switch (h264_pic->primary_pic_type) {
+   case STD_VIDEO_H264_PICTURE_TYPE_B:
+      slot_idx_1 = enc_info->pReferenceSlots[1].slotIndex;
+      break;
+   default:
+      break;
+   }
    ENC_BEGIN;
    radeon_emit(cs, pdev->vcn_enc_cmds.enc_params_h264);
 
@@ -1436,11 +1548,12 @@ radv_enc_params_h264(struct radv_cmd_buffer *cmd_buffer)
       radeon_emit(cs, 0);          // l0 ref pic1 is long term
       radeon_emit(cs, 0);          // l0 ref pic1 picture structure
       radeon_emit(cs, 0);          // l0 ref pic1 pic order cnt
-      radeon_emit(cs, 0xffffffff); // l1 ref pic0 index
+      radeon_emit(cs, slot_idx_1); // l1 ref pic0 index
       radeon_emit(cs, 0);          // l1 ref pic0 pic_type
       radeon_emit(cs, 0);          // l1 ref pic0 is long term
       radeon_emit(cs, 0);          // l1 ref pic0 picture structure
       radeon_emit(cs, 0);          // l1 ref pic0 pic order cnt
+      radeon_emit(cs, h264_pic->flags.is_reference); // is reference
    }
    ENC_END;
 }
@@ -1451,15 +1564,6 @@ radv_enc_op_init(struct radv_cmd_buffer *cmd_buffer)
    struct radeon_cmdbuf *cs = cmd_buffer->cs;
    ENC_BEGIN;
    radeon_emit(cs, RENCODE_IB_OP_INITIALIZE);
-   ENC_END;
-}
-
-static void
-radv_enc_op_close(struct radv_cmd_buffer *cmd_buffer)
-{
-   struct radeon_cmdbuf *cs = cmd_buffer->cs;
-   ENC_BEGIN;
-   radeon_emit(cs, RENCODE_IB_OP_CLOSE_SESSION);
    ENC_END;
 }
 
@@ -1497,6 +1601,13 @@ radv_enc_op_preset(struct radv_cmd_buffer *cmd_buffer, const VkVideoEncodeInfoKH
    struct radv_video_session *vid = cmd_buffer->video.vid;
    uint32_t preset_mode;
 
+   if (vid->enc_preset_mode == RENCODE_PRESET_MODE_QUALITY)
+      preset_mode = RENCODE_IB_OP_SET_QUALITY_ENCODING_MODE;
+   else if (vid->enc_preset_mode == RENCODE_PRESET_MODE_BALANCE)
+      preset_mode = RENCODE_IB_OP_SET_BALANCE_ENCODING_MODE;
+   else
+      preset_mode = RENCODE_IB_OP_SET_SPEED_ENCODING_MODE;
+
    switch (vid->vk.op) {
    case VK_VIDEO_CODEC_OPERATION_ENCODE_H265_BIT_KHR: {
       const struct VkVideoEncodeH265PictureInfoKHR *h265_picture_info =
@@ -1504,22 +1615,14 @@ radv_enc_op_preset(struct radv_cmd_buffer *cmd_buffer, const VkVideoEncodeInfoKH
       const StdVideoEncodeH265PictureInfo *pic = h265_picture_info->pStdPictureInfo;
       const StdVideoH265SequenceParameterSet *sps =
          vk_video_find_h265_enc_std_sps(&cmd_buffer->video.params->vk, pic->pps_seq_parameter_set_id);
-      if (sps->flags.sample_adaptive_offset_enabled_flag && vid->enc_preset_mode == RENCODE_PRESET_MODE_SPEED) {
+      if (sps->flags.sample_adaptive_offset_enabled_flag && vid->enc_preset_mode == RENCODE_PRESET_MODE_SPEED)
          preset_mode = RENCODE_IB_OP_SET_BALANCE_ENCODING_MODE;
-         return;
-      }
       break;
    }
    default:
       break;
    }
 
-   if (vid->enc_preset_mode == RENCODE_PRESET_MODE_QUALITY)
-      preset_mode = RENCODE_IB_OP_SET_QUALITY_ENCODING_MODE;
-   else if (vid->enc_preset_mode == RENCODE_PRESET_MODE_BALANCE)
-      preset_mode = RENCODE_IB_OP_SET_BALANCE_ENCODING_MODE;
-   else
-      preset_mode = RENCODE_IB_OP_SET_SPEED_ENCODING_MODE;
    ENC_BEGIN;
    radeon_emit(cs, preset_mode);
    ENC_END;
@@ -1599,7 +1702,7 @@ radv_enc_headers_h264(struct radv_cmd_buffer *cmd_buffer, const VkVideoEncodeInf
 {
    radv_enc_slice_header(cmd_buffer, enc_info);
    radv_enc_params(cmd_buffer, enc_info);
-   radv_enc_params_h264(cmd_buffer);
+   radv_enc_params_h264(cmd_buffer, enc_info);
 }
 
 static void
@@ -1612,12 +1715,8 @@ radv_enc_headers_hevc(struct radv_cmd_buffer *cmd_buffer, const VkVideoEncodeInf
 static void
 begin(struct radv_cmd_buffer *cmd_buffer, const VkVideoEncodeInfoKHR *enc_info)
 {
-   struct radv_enc_state *enc = &cmd_buffer->video.enc;
    struct radv_video_session *vid = cmd_buffer->video.vid;
 
-   radv_enc_session_info(cmd_buffer);
-   cmd_buffer->video.enc.total_task_size = 0;
-   radv_enc_task_info(cmd_buffer, false);
    radv_enc_op_init(cmd_buffer);
    radv_enc_session_init(cmd_buffer, enc_info);
    if (vid->vk.op == VK_VIDEO_CODEC_OPERATION_ENCODE_H264_BIT_KHR) {
@@ -1632,6 +1731,7 @@ begin(struct radv_cmd_buffer *cmd_buffer, const VkVideoEncodeInfoKHR *enc_info)
    radv_enc_layer_control(cmd_buffer, &vid->rc_layer_control);
    radv_enc_rc_session_init(cmd_buffer);
    radv_enc_quality_params(cmd_buffer);
+   radv_enc_latency(cmd_buffer, vid->vk.enc_usage.tuning_mode);
    // temporal layers init
    unsigned i = 0;
    do {
@@ -1642,18 +1742,6 @@ begin(struct radv_cmd_buffer *cmd_buffer, const VkVideoEncodeInfoKHR *enc_info)
    } while (++i < vid->rc_layer_control.num_temporal_layers);
    radv_enc_op_init_rc(cmd_buffer);
    radv_enc_op_init_rc_vbv(cmd_buffer);
-   radeon_emit_direct(cmd_buffer->cs, enc->task_size_offset, enc->total_task_size);
-}
-
-static void
-destroy(struct radv_cmd_buffer *cmd_buffer)
-{
-   struct radv_enc_state *enc = &cmd_buffer->video.enc;
-   radv_enc_session_info(cmd_buffer);
-   cmd_buffer->video.enc.total_task_size = 0;
-   radv_enc_task_info(cmd_buffer, false);
-   radv_enc_op_close(cmd_buffer);
-   radeon_emit_direct(cmd_buffer->cs, enc->task_size_offset, enc->total_task_size);
 }
 
 static void
@@ -1664,7 +1752,7 @@ radv_vcn_encode_video(struct radv_cmd_buffer *cmd_buffer, const VkVideoEncodeInf
    struct radv_device *device = radv_cmd_buffer_device(cmd_buffer);
    const struct radv_physical_device *pdev = radv_device_physical(device);
    struct radv_enc_state *enc = &cmd_buffer->video.enc;
-
+   uint64_t feedback_query_va;
    switch (vid->vk.op) {
    case VK_VIDEO_CODEC_OPERATION_ENCODE_H264_BIT_KHR:
    case VK_VIDEO_CODEC_OPERATION_ENCODE_H265_BIT_KHR:
@@ -1674,29 +1762,53 @@ radv_vcn_encode_video(struct radv_cmd_buffer *cmd_buffer, const VkVideoEncodeInf
       return;
    }
 
-   if (vid->enc_need_begin) {
-      begin(cmd_buffer, enc_info);
-      vid->enc_need_begin = false;
+   radeon_check_space(device->ws, cmd_buffer->cs, 1024);
+
+   if (pdev->enc_hw_ver >= RADV_VIDEO_ENC_HW_4)
+      radv_vcn_sq_header(cmd_buffer->cs, &cmd_buffer->video.sq, RADEON_VCN_ENGINE_TYPE_ENCODE, false);
+
+   const struct VkVideoInlineQueryInfoKHR *inline_queries = NULL;
+   if (vid->vk.flags & VK_VIDEO_SESSION_CREATE_INLINE_QUERIES_BIT_KHR) {
+      inline_queries = vk_find_struct_const(enc_info->pNext, VIDEO_INLINE_QUERY_INFO_KHR);
+
+      if (inline_queries) {
+         VK_FROM_HANDLE(radv_query_pool, pool, inline_queries->queryPool);
+
+         radv_cs_add_buffer(device->ws, cmd_buffer->cs, pool->bo);
+
+         feedback_query_va = radv_buffer_get_va(pool->bo);
+         feedback_query_va += pool->stride * inline_queries->firstQuery;
+      }
    }
+
+   if (!inline_queries)
+      feedback_query_va = cmd_buffer->video.feedback_query_va;
+
    // before encode
    // session info
    radv_enc_session_info(cmd_buffer);
 
    cmd_buffer->video.enc.total_task_size = 0;
+
    // task info
    radv_enc_task_info(cmd_buffer, true);
 
-   // temporal layers init
-   unsigned i = 0;
-   do {
-      if (vid->enc_need_rate_control) {
+   if (vid->enc_need_begin) {
+      begin(cmd_buffer, enc_info);
+      vid->enc_need_begin = false;
+   } else {
+      // temporal layers init
+      unsigned i = 0;
+      do {
+         if (vid->enc_need_rate_control) {
+            radv_enc_layer_select(cmd_buffer, i);
+            radv_enc_rc_layer_init(cmd_buffer, &vid->rc_layer_init[i]);
+            vid->enc_need_rate_control = false;
+         }
          radv_enc_layer_select(cmd_buffer, i);
-         radv_enc_rc_layer_init(cmd_buffer, &vid->rc_layer_init[i]);
-         vid->enc_need_rate_control = false;
-      }
-      radv_enc_layer_select(cmd_buffer, i);
-      radv_enc_rc_per_pic(cmd_buffer, enc_info, &vid->rc_per_pic[i]);
-   } while (++i < vid->rc_layer_control.num_temporal_layers);
+         radv_enc_rc_per_pic(cmd_buffer, enc_info, &vid->rc_per_pic[i]);
+      } while (++i < vid->rc_layer_control.num_temporal_layers);
+   }
 
    // encode headers
    // ctx
@@ -1711,7 +1823,7 @@ radv_vcn_encode_video(struct radv_cmd_buffer *cmd_buffer, const VkVideoEncodeInf
    radv_enc_bitstream(cmd_buffer, dst_buffer, enc_info->dstBufferOffset);
 
    // feedback
-   radv_enc_feedback(cmd_buffer);
+   radv_enc_feedback(cmd_buffer, feedback_query_va);
 
    // v2 encode statistics
    if (pdev->enc_hw_ver >= RADV_VIDEO_ENC_HW_2) {
@@ -1732,7 +1844,8 @@ radv_vcn_encode_video(struct radv_cmd_buffer *cmd_buffer, const VkVideoEncodeInf
 
    radeon_emit_direct(cmd_buffer->cs, enc->task_size_offset, enc->total_task_size);
 
-   destroy(cmd_buffer);
+   if (pdev->enc_hw_ver >= RADV_VIDEO_ENC_HW_4)
+      radv_vcn_sq_tail(cmd_buffer->cs, &cmd_buffer->video.sq);
 }
 
 static void
@@ -1909,6 +2022,9 @@ radv_video_patch_encode_session_parameters(struct vk_video_session_parameters *p
 {
    switch (params->op) {
    case VK_VIDEO_CODEC_OPERATION_ENCODE_H264_BIT_KHR:
+      for (unsigned i = 0; i < params->h264_enc.h264_pps_count; i++) {
+         params->h264_enc.h264_pps[i].base.pic_init_qp_minus26 = 0;
+      }
       break;
    case VK_VIDEO_CODEC_OPERATION_ENCODE_H265_BIT_KHR: {
       /*
@@ -1919,6 +2035,7 @@ radv_video_patch_encode_session_parameters(struct vk_video_session_parameters *p
       for (unsigned i = 0; i < params->h265_enc.h265_pps_count; i++) {
          params->h265_enc.h265_pps[i].base.flags.cu_qp_delta_enabled_flag = 1;
          params->h265_enc.h265_pps[i].base.diff_cu_qp_delta_depth = 0;
+         params->h265_enc.h265_pps[i].base.init_qp_minus26 = 0;
       }
       break;
    }
@@ -1944,41 +2061,63 @@ radv_GetEncodedVideoSessionParametersKHR(VkDevice device,
    case VK_VIDEO_CODEC_OPERATION_ENCODE_H264_BIT_KHR: {
       const struct VkVideoEncodeH264SessionParametersGetInfoKHR *h264_get_info =
          vk_find_struct_const(pVideoSessionParametersInfo->pNext, VIDEO_ENCODE_H264_SESSION_PARAMETERS_GET_INFO_KHR);
+      size_t sps_size = 0, pps_size = 0;
       if (h264_get_info->writeStdSPS) {
          const StdVideoH264SequenceParameterSet *sps =
             vk_video_find_h264_enc_std_sps(&templ->vk, h264_get_info->stdSPSId);
          assert(sps);
-         vk_video_encode_h264_sps(sps, size_limit, &total_size, pData);
+         vk_video_encode_h264_sps(sps, size_limit, &sps_size, pData);
       }
       if (h264_get_info->writeStdPPS) {
          const StdVideoH264PictureParameterSet *pps =
             vk_video_find_h264_enc_std_pps(&templ->vk, h264_get_info->stdPPSId);
          assert(pps);
+         char *data_ptr = pData ? (char *)pData + sps_size : NULL;
          vk_video_encode_h264_pps(pps, templ->vk.h264_enc.profile_idc == STD_VIDEO_H264_PROFILE_IDC_HIGH, size_limit,
-                                  &total_size, pData);
+                                  &pps_size, data_ptr);
+         if (pFeedbackInfo) {
+            struct VkVideoEncodeH264SessionParametersFeedbackInfoKHR *h264_feedback_info =
+               vk_find_struct(pFeedbackInfo->pNext, VIDEO_ENCODE_H264_SESSION_PARAMETERS_FEEDBACK_INFO_KHR);
+            pFeedbackInfo->hasOverrides = VK_TRUE;
+            if (h264_feedback_info)
+               h264_feedback_info->hasStdPPSOverrides = VK_TRUE;
+         }
       }
+      total_size = sps_size + pps_size;
       break;
    }
    case VK_VIDEO_CODEC_OPERATION_ENCODE_H265_BIT_KHR: {
       const struct VkVideoEncodeH265SessionParametersGetInfoKHR *h265_get_info =
          vk_find_struct_const(pVideoSessionParametersInfo->pNext, VIDEO_ENCODE_H265_SESSION_PARAMETERS_GET_INFO_KHR);
+      size_t sps_size = 0, pps_size = 0, vps_size = 0;
       if (h265_get_info->writeStdVPS) {
          const StdVideoH265VideoParameterSet *vps = vk_video_find_h265_enc_std_vps(&templ->vk, h265_get_info->stdVPSId);
          assert(vps);
-         vk_video_encode_h265_vps(vps, size_limit, &total_size, pData);
+         vk_video_encode_h265_vps(vps, size_limit, &vps_size, pData);
       }
       if (h265_get_info->writeStdSPS) {
          const StdVideoH265SequenceParameterSet *sps =
             vk_video_find_h265_enc_std_sps(&templ->vk, h265_get_info->stdSPSId);
          assert(sps);
-         vk_video_encode_h265_sps(sps, size_limit, &total_size, pData);
+         char *data_ptr = pData ? (char *)pData + vps_size : NULL;
+         vk_video_encode_h265_sps(sps, size_limit, &sps_size, data_ptr);
       }
       if (h265_get_info->writeStdPPS) {
          const StdVideoH265PictureParameterSet *pps =
             vk_video_find_h265_enc_std_pps(&templ->vk, h265_get_info->stdPPSId);
          assert(pps);
-         vk_video_encode_h265_pps(pps, size_limit, &total_size, pData);
+         char *data_ptr = pData ? (char *)pData + vps_size + sps_size : NULL;
+         vk_video_encode_h265_pps(pps, size_limit, &pps_size, data_ptr);
+
+         if (pFeedbackInfo) {
+            struct VkVideoEncodeH265SessionParametersFeedbackInfoKHR *h265_feedback_info =
+               vk_find_struct(pFeedbackInfo->pNext, VIDEO_ENCODE_H265_SESSION_PARAMETERS_FEEDBACK_INFO_KHR);
+            pFeedbackInfo->hasOverrides = VK_TRUE;
+            if (h265_feedback_info)
+               h265_feedback_info->hasStdPPSOverrides = VK_TRUE;
+         }
       }
+      total_size = sps_size + pps_size + vps_size;
       break;
    }
    default:
@@ -1987,26 +2126,6 @@ radv_GetEncodedVideoSessionParametersKHR(VkDevice device,
 
    *pDataSize = total_size;
    return VK_SUCCESS;
-}
-
-void
-radv_video_enc_begin_coding(struct radv_cmd_buffer *cmd_buffer)
-{
-   struct radv_device *device = radv_cmd_buffer_device(cmd_buffer);
-   const struct radv_physical_device *pdev = radv_device_physical(device);
-   radeon_check_space(device->ws, cmd_buffer->cs, 1024);
-
-   if (pdev->enc_hw_ver >= RADV_VIDEO_ENC_HW_4)
-      radv_vcn_sq_header(cmd_buffer->cs, &cmd_buffer->video.sq, true);
-}
-
-void
-radv_video_enc_end_coding(struct radv_cmd_buffer *cmd_buffer)
-{
-   struct radv_device *device = radv_cmd_buffer_device(cmd_buffer);
-   const struct radv_physical_device *pdev = radv_device_physical(device);
-   if (pdev->enc_hw_ver >= RADV_VIDEO_ENC_HW_4)
-      radv_vcn_sq_tail(cmd_buffer->cs, &cmd_buffer->video.sq);
 }
 
 #define VCN_ENC_SESSION_SIZE 128 * 1024
@@ -2030,4 +2149,36 @@ radv_video_get_encode_session_memory_requirements(struct radv_device *device, st
    }
 
    return vk_outarray_status(&out);
+}
+
+void radv_video_get_enc_dpb_image(struct radv_device *device,
+                                  const struct VkVideoProfileListInfoKHR *profile_list,
+                                  struct radv_image *image,
+                                  struct radv_image_create_info *create_info)
+{
+   const struct radv_physical_device *pdev = radv_device_physical(device);
+   uint32_t luma_pitch, luma_size, chroma_size, colloc_bytes;
+   uint32_t num_reconstructed_pictures = image->vk.array_layers;
+   bool has_h264_b_support = false;
+
+   for (unsigned i = 0; i < profile_list->profileCount; i++) {
+      if (profile_list->pProfiles[i].videoCodecOperation == VK_VIDEO_CODEC_OPERATION_ENCODE_H264_BIT_KHR) {
+         if (pdev->enc_hw_ver >= RADV_VIDEO_ENC_HW_3) {
+            has_h264_b_support = true;
+         }
+      }
+   }
+   dpb_image_sizes(image, &luma_pitch, &luma_size, &chroma_size, &colloc_bytes);
+
+   image->size = 0;
+
+   if (has_h264_b_support) {
+      image->size += colloc_bytes;
+   }
+
+   for (unsigned i = 0; i < num_reconstructed_pictures; i++) {
+      image->size += luma_size;
+      image->size += chroma_size;
+   }
+   image->alignment = ENC_ALIGNMENT;
 }

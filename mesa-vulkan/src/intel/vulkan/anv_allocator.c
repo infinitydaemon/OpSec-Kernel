@@ -522,9 +522,9 @@ anv_block_pool_grow(struct anv_block_pool *pool, struct anv_block_state *state,
     * We align to a page size because it makes it easier to do our
     * calculations later in such a way that we state page-aigned.
     */
-   uint32_t total_used = align(pool->state.next, PAGE_SIZE);
+   uint64_t total_used = align(pool->state.next, PAGE_SIZE);
 
-   uint32_t old_size = pool->size;
+   uint64_t old_size = pool->size;
 
    /* The block pool is always initialized to a nonzero size and this function
     * is always called after initialization.
@@ -535,7 +535,7 @@ anv_block_pool_grow(struct anv_block_pool *pool, struct anv_block_state *state,
     * they are based on the next pointers which are updated prior to calling
     * this function.
     */
-   uint32_t required = MAX2(total_used, old_size);
+   uint64_t required = MAX2(total_used, old_size);
 
    /* With softpin, the pool is made up of a bunch of buffers with separate
     * maps.  Make sure we have enough contiguous space that we can get a
@@ -546,7 +546,7 @@ anv_block_pool_grow(struct anv_block_pool *pool, struct anv_block_state *state,
    if (required > pool->max_size) {
       result = VK_ERROR_OUT_OF_DEVICE_MEMORY;
    } else if (total_used * 2 > required) {
-      uint32_t size = old_size * 2;
+      uint64_t size = old_size * 2;
       while (size < required)
          size *= 2;
 
@@ -777,6 +777,10 @@ anv_state_pool_return_blocks(struct anv_state_pool *pool,
    }
 
    uint32_t block_bucket = anv_state_pool_get_bucket(block_size);
+
+   if (block_bucket >= ARRAY_SIZE(pool->buckets))
+      return;
+
    anv_free_list_push(&pool->buckets[block_bucket].free_list,
                       &pool->table, st_idx, count);
 }
@@ -838,6 +842,9 @@ anv_state_pool_alloc_no_vg(struct anv_state_pool *pool,
                            uint32_t size, uint32_t align)
 {
    uint32_t bucket = anv_state_pool_get_bucket(MAX2(size, align));
+
+   if (bucket >= ARRAY_SIZE(pool->buckets))
+      return ANV_STATE_NULL;
 
    struct anv_state *state;
    uint32_t alloc_size = anv_state_pool_get_bucket_size(bucket);
@@ -948,6 +955,9 @@ anv_state_pool_free_no_vg(struct anv_state_pool *pool, struct anv_state state)
    unsigned bucket = anv_state_pool_get_bucket(state.alloc_size);
 
    assert(state.offset >= pool->start_offset);
+
+   if (bucket >= ARRAY_SIZE(pool->buckets))
+      return;
 
    anv_free_list_push(&pool->buckets[bucket].free_list,
                       &pool->table, state.idx, 1);
@@ -1498,10 +1508,15 @@ anv_bo_vma_alloc_or_close(struct anv_device *device,
    assert(bo->vma_heap == NULL);
    assert(explicit_address == intel_48b_address(explicit_address));
 
+   const bool is_small_heap =
+      alloc_flags & (ANV_BO_ALLOC_DESCRIPTOR_POOL |
+                     ANV_BO_ALLOC_DYNAMIC_VISIBLE_POOL |
+                     ANV_BO_ALLOC_32BIT_ADDRESS);
+
    uint32_t align = device->physical->info.mem_alignment;
 
    /* If it's big enough to store a tiled resource, we need 64K alignment */
-   if (bo->size >= 64 * 1024)
+   if (bo->size >= 64 * 1024 && !is_small_heap)
       align = MAX2(64 * 1024, align);
 
    /* If we're using the AUX map, make sure we follow the required
@@ -1512,11 +1527,12 @@ anv_bo_vma_alloc_or_close(struct anv_device *device,
 
    /* Opportunistically align addresses to 2Mb when above 1Mb. We do this
     * because this gives an opportunity for the kernel to use Transparent Huge
-    * Pages (the 2MB page table layout) for faster memory access.
+    * Pages (the 2MB page table layout) for faster memory access. Avoid doing
+    * it for small heaps because that could cause fragmentation.
     *
     * Only available on ICL+.
     */
-   if (device->info->ver >= 11 && bo->size >= 1 * 1024 * 1024)
+   if (device->info->ver >= 11 && bo->size >= 1 * 1024 * 1024 && !is_small_heap)
       align = MAX2(2 * 1024 * 1024, align);
 
    if (alloc_flags & ANV_BO_ALLOC_FIXED_ADDRESS) {

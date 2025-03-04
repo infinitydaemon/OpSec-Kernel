@@ -152,11 +152,12 @@ nv84_decoder_begin_frame_h264(struct pipe_video_codec *decoder,
 {
 }
 
-static void
+static int
 nv84_decoder_end_frame_h264(struct pipe_video_codec *decoder,
                             struct pipe_video_buffer *target,
                             struct pipe_picture_desc *picture)
 {
+   return 0;
 }
 
 static void
@@ -203,7 +204,7 @@ nv84_decoder_begin_frame_mpeg12(struct pipe_video_codec *decoder,
    }
 }
 
-static void
+static int
 nv84_decoder_end_frame_mpeg12(struct pipe_video_codec *decoder,
                               struct pipe_video_buffer *target,
                               struct pipe_picture_desc *picture)
@@ -212,6 +213,7 @@ nv84_decoder_end_frame_mpeg12(struct pipe_video_codec *decoder,
          (struct nv84_decoder *)decoder,
          (struct pipe_mpeg12_picture_desc *)picture,
          (struct nv84_video_buffer *)target);
+   return 0;
 }
 
 static void
@@ -831,7 +833,7 @@ nv84_screen_get_video_param(struct pipe_screen *pscreen,
    case PIPE_VIDEO_CAP_MAX_WIDTH:
    case PIPE_VIDEO_CAP_MAX_HEIGHT:
       return 2048;
-   case PIPE_VIDEO_CAP_PREFERED_FORMAT:
+   case PIPE_VIDEO_CAP_PREFERRED_FORMAT:
       return PIPE_FORMAT_NV12;
    case PIPE_VIDEO_CAP_SUPPORTS_INTERLACED:
    case PIPE_VIDEO_CAP_PREFERS_INTERLACED:

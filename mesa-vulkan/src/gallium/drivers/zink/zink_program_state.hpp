@@ -19,7 +19,7 @@
  * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
  * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
  * IN THE SOFTWARE.
- * 
+ *
  * Authors:
  *    Mike Blumenkrantz <michael.blumenkrantz@gmail.com>
  */
@@ -34,6 +34,9 @@
 #include "zink_pipeline.h"
 #include "zink_program.h"
 #include "zink_screen.h"
+
+#define XXH_INLINE_ALL
+#include "util/xxhash.h"
 
 /* runtime-optimized pipeline state hashing */
 template <zink_dynamic_state DYNAMIC_STATE>
@@ -139,6 +142,9 @@ zink_get_gfx_pipeline(struct zink_context *ctx,
          state->final_hash ^= state->vertex_hash;
       /* even if dynamic stride is available, it may not be usable with the current pipeline */
       if (DYNAMIC_STATE != ZINK_NO_DYNAMIC_STATE)
+#if defined(MVK_VERSION)
+         if (screen->have_dynamic_state_vertex_input_binding_stride)
+#endif
          uses_dynamic_stride = check_vertex_strides(ctx);
       if (!uses_dynamic_stride) {
          uint32_t hash = 0;

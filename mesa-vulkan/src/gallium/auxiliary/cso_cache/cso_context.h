@@ -88,6 +88,9 @@ void
 cso_single_sampler_done(struct cso_context *cso,
                         enum pipe_shader_type shader_stage);
 
+void *
+cso_get_vertex_elements_for_bind(struct cso_context *cso,
+                                 const struct cso_velems_state *velems);
 
 enum pipe_error
 cso_set_vertex_elements(struct cso_context *ctx,
@@ -101,7 +104,8 @@ void cso_set_vertex_buffers(struct cso_context *ctx,
 void cso_set_stream_outputs(struct cso_context *ctx,
                             unsigned num_targets,
                             struct pipe_stream_output_target **targets,
-                            const unsigned *offsets);
+                            const unsigned *offsets,
+                            enum mesa_prim output_prim);
 
 
 enum cso_unbind_flags {

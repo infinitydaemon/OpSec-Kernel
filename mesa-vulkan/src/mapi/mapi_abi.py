@@ -35,16 +35,14 @@ import re
 from optparse import OptionParser
 import gl_XML
 import glX_XML
+import static_data
 
-
-# number of dynamic entries
-ABI_NUM_DYNAMIC_ENTRIES = 256
 
 class ABIEntry(object):
     """Represent an ABI entry."""
 
     _match_c_param = re.compile(
-            '^(?P<type>[\w\s*]+?)(?P<name>\w+)(\[(?P<array>\d+)\])?$')
+            r'^(?P<type>[\w\s*]+?)(?P<name>\w+)(\[(?P<array>\d+)\])?$')
 
     def __init__(self, cols, attrs, xml_data = None):
         self._parse(cols)
@@ -147,7 +145,7 @@ def abi_parse_xml(xml):
         for name in entry_points:
             attrs = {
                     'slot': func.offset,
-                    'hidden': not func.is_static_entry_point(name),
+                    'hidden': name not in static_data.libgl_public_functions,
                     'alias': None if name == func.name else func.name,
                     'handcode': bool(func.has_different_protocol(name)),
             }
@@ -225,7 +223,6 @@ class ABIPrinter(object):
         self.indent = ' ' * 3
         self.noop_warn = 'noop_warn'
         self.noop_generic = 'noop_generic'
-        self.current_get = 'entry_current_get'
 
         self.api_defines = []
         self.api_headers = ['"KHR/khrplatform.h"']
@@ -235,7 +232,6 @@ class ABIPrinter(object):
 
         self.c_header = ''
 
-        self.lib_need_table_size = True
         self.lib_need_noop_array = True
         self.lib_need_stubs = True
         self.lib_need_all_entries = True
@@ -267,13 +263,6 @@ class ABIPrinter(object):
                 decls.append(self._c_decl(ent, prefix, True, export) + ';')
 
         return "\n".join(decls)
-
-    def c_mapi_table(self):
-        """Return defines of the dispatch table size."""
-        num_static_entries = self.entries[-1].slot + 1
-        return ('#define MAPI_TABLE_NUM_STATIC %d\n' + \
-                '#define MAPI_TABLE_NUM_DYNAMIC %d') % (
-                        num_static_entries, ABI_NUM_DYNAMIC_ENTRIES)
 
     def _c_function(self, ent, prefix, mangle=False, stringify=False):
         """Return the function name of an entry."""
@@ -337,8 +326,7 @@ class ABIPrinter(object):
             if ent.ret:
                 ret = 'return '
             stmt1 = self.indent
-            stmt1 += 'const struct _glapi_table *_tbl = %s();' % (
-                    self.current_get)
+            stmt1 += 'const struct _glapi_table *_tbl = GET_DISPATCH();'
             stmt2 = self.indent
             stmt2 += 'mapi_func _func = ((const mapi_func *) _tbl)[%d];' % (
                     ent.slot)
@@ -431,8 +419,6 @@ class ABIPrinter(object):
         if use_generic:
             entries = [self.noop_generic] * len(entries)
 
-        entries.extend([self.noop_generic] * ABI_NUM_DYNAMIC_ENTRIES)
-
         pre = self.indent + '(mapi_func) '
         return pre + (',\n' + pre).join(entries)
 
@@ -475,6 +461,7 @@ class ABIPrinter(object):
             print()
             print(self.c_header)
 
+        print('#define _gloffset_COUNT %d' % (static_data.function_count))
         print()
         print('#ifdef MAPI_TMP_DEFINES')
         print(self.c_public_includes())
@@ -486,13 +473,6 @@ class ABIPrinter(object):
         print(self.c_public_declarations(self.prefix_lib))
         print('#undef MAPI_TMP_DEFINES')
         print('#endif /* MAPI_TMP_DEFINES */')
-
-        if self.lib_need_table_size:
-            print()
-            print('#ifdef MAPI_TMP_TABLE')
-            print(self.c_mapi_table())
-            print('#undef MAPI_TMP_TABLE')
-            print('#endif /* MAPI_TMP_TABLE */')
 
         if self.lib_need_noop_array:
             print()
@@ -584,7 +564,6 @@ class GLAPIPrinter(ABIPrinter):
         self.api_entry = 'GLAPIENTRY'
         self.api_attrs = ''
 
-        self.lib_need_table_size = False
         self.lib_need_noop_array = False
         self.lib_need_stubs = False
         self.lib_need_all_entries = False
@@ -619,7 +598,6 @@ class SharedGLAPIPrinter(GLAPIPrinter):
     def __init__(self, entries):
         super(SharedGLAPIPrinter, self).__init__(entries)
 
-        self.lib_need_table_size = True
         self.lib_need_noop_array = True
         self.lib_need_stubs = True
         self.lib_need_all_entries = True

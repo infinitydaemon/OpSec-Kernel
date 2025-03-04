@@ -49,17 +49,6 @@
 #include "glapi/glapi_priv.h"
 
 
-void
-_glapi_noop_enable_warnings(unsigned char enable)
-{
-}
-
-void
-_glapi_set_warning_func(_glapi_proc func)
-{
-}
-
-
 /**
  * We'll jump though this function pointer whenever a no-op function
  * is called.
@@ -121,12 +110,12 @@ NoOpUnused(void)
 
 /** Return pointer to new dispatch table filled with no-op functions */
 struct _glapi_table *
-_glapi_new_nop_table(unsigned num_entries)
+_glapi_new_nop_table(void)
 {
-   struct _glapi_table *table = malloc(num_entries * sizeof(_glapi_proc));
+   struct _glapi_table *table = malloc(_gloffset_COUNT * sizeof(_glapi_proc));
    if (table) {
       memcpy(table, __glapi_noop_table,
-             num_entries * sizeof(_glapi_proc));
+             _gloffset_COUNT * sizeof(_glapi_proc));
    }
    return table;
 }

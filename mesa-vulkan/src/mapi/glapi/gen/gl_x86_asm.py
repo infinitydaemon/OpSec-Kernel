@@ -91,11 +91,11 @@ class PrintGenericStubs(gl_XML.gl_print_base):
         print('ALIGNTEXT16;\t\t\t\t\t\t\\')
         print('GLOBL_FN(GL_PREFIX(fn, fn_alt));\t\t\t\\')
         print('GL_PREFIX(fn, fn_alt):\t\t\t\t\t\\')
-        print('\tMOV_L(CONTENT(GLNAME(_glapi_Dispatch)), EAX) ;\t\\')
+        print('\tMOV_L(CONTENT(GLNAME(_mesa_glapi_Dispatch)), EAX) ;\t\\')
         print('\tTEST_L(EAX, EAX) ;\t\t\t\t\\')
         print('\tJE(1f) ;\t\t\t\t\t\\')
         print('\tJMP(GL_OFFSET(off)) ;\t\t\t\t\\')
-        print('1:\tCALL(_glapi_get_dispatch) ;\t\t\t\\')
+        print('1:\tCALL(_mesa_glapi_get_dispatch) ;\t\t\t\\')
         print('\tJMP(GL_OFFSET(off))')
         print('#endif')
         print('')
@@ -119,12 +119,12 @@ class PrintGenericStubs(gl_XML.gl_print_base):
         print('\tcall	1f')
         print('1:\tpopl	%eax')
         print('\taddl	$_GLOBAL_OFFSET_TABLE_+[.-1b], %eax')
-        print('\tmovl	_glapi_tls_Dispatch@GOTNTPOFF(%eax), %eax')
+        print('\tmovl	_mesa_glapi_tls_Dispatch@GOTNTPOFF(%eax), %eax')
         print('\tret')
         print('')
         print('#else')
-        print('EXTERN GLNAME(_glapi_Dispatch)')
-        print('EXTERN GLNAME(_glapi_get_dispatch)')
+        print('EXTERN GLNAME(_mesa_glapi_Dispatch)')
+        print('EXTERN GLNAME(_mesa_glapi_get_dispatch)')
         print('#endif')
         print('')
 
@@ -162,7 +162,7 @@ class PrintGenericStubs(gl_XML.gl_print_base):
 
             print('\tGL_STUB(%s, %d, %s)' % (name, f.offset, alt))
 
-            if not f.is_static_entry_point(f.name):
+            if f.name not in static_data.libgl_public_functions:
                 print('\tHIDDEN(GL_PREFIX(%s, %s))' % (name, alt))
 
 
@@ -172,7 +172,7 @@ class PrintGenericStubs(gl_XML.gl_print_base):
             alt = "%s@%u" % (name, stack)
 
             for n in f.entry_points:
-                if f.is_static_entry_point(n):
+                if n in static_data.libgl_public_functions:
                     if n != f.name:
                         alt2 = "%s@%u" % (n, stack)
                         text = '\tGL_STUB_ALIAS(%s, %d, %s, %s, %s)' % (n, f.offset, alt2, name, alt)

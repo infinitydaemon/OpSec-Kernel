@@ -122,9 +122,7 @@
  */
 #include "ir.h"
 #include "glsl_parser_extras.h"
-#include "linker.h"
 #include "util/hash_table.h"
-#include "program.h"
 
 namespace {
 
@@ -166,6 +164,9 @@ public:
       _mesa_hash_table_destroy(this->function_hash, NULL);
       ralloc_free(this->mem_ctx);
    }
+
+   has_recursion_visitor(const has_recursion_visitor &) = delete;
+   has_recursion_visitor & operator=(const has_recursion_visitor &) = delete;
 
    function *get_function(ir_function_signature *sig)
    {

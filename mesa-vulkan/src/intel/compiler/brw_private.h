@@ -22,8 +22,7 @@
  * IN THE SOFTWARE.
  */
 
-#ifndef BRW_PRIVATE_H
-#define BRW_PRIVATE_H
+#pragma once
 
 #include "brw_compiler.h"
 
@@ -31,8 +30,8 @@
 extern "C" {
 #endif
 
-/* brw_fs_reg_allocate.cpp */
-void brw_fs_alloc_reg_sets(struct brw_compiler *compiler);
+/* brw_reg_allocate.cpp */
+void brw_alloc_reg_sets(struct brw_compiler *compiler);
 
 /* brw_disasm.c */
 extern const char *const conditional_modifier[16];
@@ -93,5 +92,3 @@ int brw_simd_select_for_workgroup_size(const struct intel_device_info *devinfo,
 bool brw_should_print_shader(const nir_shader *shader, uint64_t debug_flag);
 
 #endif // __cplusplus
-
-#endif // BRW_PRIVATE_H

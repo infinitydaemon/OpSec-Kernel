@@ -56,7 +56,8 @@ clc_free_kernels_info(const struct clc_kernel_info *kernels,
 int
 clc_c_to_spir(const struct clc_compile_args *args,
               const struct clc_logger *logger,
-              struct clc_binary *out_spir);
+              struct clc_binary *out_spir,
+              struct set *dependencies);
 
 int
 clc_spir_to_spirv(const struct clc_binary *in_spir,
@@ -66,12 +67,16 @@ clc_spir_to_spirv(const struct clc_binary *in_spir,
 int
 clc_c_to_spirv(const struct clc_compile_args *args,
                const struct clc_logger *logger,
-               struct clc_binary *out_spirv);
+               struct clc_binary *out_spirvl,
+               struct set *dependencies);
 
 int
 clc_link_spirv_binaries(const struct clc_linker_args *args,
                         const struct clc_logger *logger,
                         struct clc_binary *out_spirv);
+
+const char *
+clc_spirv_tools_version();
 
 bool
 clc_validate_spirv(const struct clc_binary *spirv,

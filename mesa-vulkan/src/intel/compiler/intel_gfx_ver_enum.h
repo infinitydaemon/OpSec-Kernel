@@ -21,8 +21,7 @@
  * IN THE SOFTWARE.
  */
 
-#ifndef INTEL_GFX_VER_ENUM_H
-#define INTEL_GFX_VER_ENUM_H
+#pragma once
 
 #include "util/macros.h"
 #include "dev/intel_device_info.h"
@@ -41,6 +40,7 @@ enum gfx_ver {
    GFX12   = (1 << 10),
    GFX125  = (1 << 11),
    XE2     = (1 << 12),
+   XE3     = (1 << 13),
    GFX_ALL = ~0
 };
 
@@ -64,9 +64,8 @@ gfx_ver_from_devinfo(const struct intel_device_info *devinfo)
    case 120: return GFX12;
    case 125: return GFX125;
    case 200: return XE2;
+   case 300: return XE3;
    default:
       unreachable("not reached");
    }
 }
-
-#endif

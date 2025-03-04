@@ -64,8 +64,7 @@ visit_vulkan_resource_index(nir_builder *b, apply_layout_state *state, nir_intri
    unsigned stride;
 
    nir_def *set_ptr;
-   if (layout->binding[binding].type == VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC ||
-       layout->binding[binding].type == VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC) {
+   if (vk_descriptor_type_is_dynamic(layout->binding[binding].type)) {
       unsigned idx = state->layout->set[desc_set].dynamic_offset_start + layout->binding[binding].dynamic_offset_offset;
       set_ptr = get_scalar_arg(b, 1, state->args->ac.push_constants);
       offset = state->layout->push_constant_size + idx * 16;
@@ -365,15 +364,31 @@ load_push_constant(nir_builder *b, apply_layout_state *state, nir_intrinsic_inst
 
    const unsigned max_push_constant = sizeof(state->args->ac.inline_push_const_mask) * 8u;
 
+   nir_component_mask_t comps_read = nir_def_components_read(&intrin->def);
+
    nir_def *data[NIR_MAX_VEC_COMPONENTS * 2];
    unsigned num_loads = 0;
    for (unsigned start = 0; start < count;) {
+      if (!(comps_read & BITFIELD64_BIT(start >> (bit_size == 64 ? 1 : 0)))) {
+         data[num_loads++] = nir_undef(b, 1, 32);
+         start += 1;
+         continue;
+      }
+
       /* Try to use inline push constants when possible. */
       unsigned inline_idx = const_offset + start;
       if (const_offset != -1 && inline_idx < max_push_constant &&
           (state->args->ac.inline_push_const_mask & BITFIELD64_BIT(inline_idx))) {
          inline_idx = util_bitcount64(state->args->ac.inline_push_const_mask & BITFIELD64_MASK(inline_idx));
          data[num_loads++] = get_scalar_arg(b, 1, state->args->ac.inline_push_consts[inline_idx]);
+         start += 1;
+         continue;
+      }
+
+      if (!state->args->ac.push_constants.used) {
+         /* Assume this is an inlined push constant load which was expanded to include dwords which are not inlined. */
+         assert(const_offset != -1);
+         data[num_loads++] = nir_undef(b, 1, 32);
          start += 1;
          continue;
       }
@@ -394,7 +409,7 @@ load_push_constant(nir_builder *b, apply_layout_state *state, nir_intrinsic_inst
    return nir_extract_bits(b, data, num_loads, 0, intrin->def.num_components, bit_size);
 }
 
-static void
+static bool
 apply_layout_to_intrin(nir_builder *b, apply_layout_state *state, nir_intrinsic_instr *intrin)
 {
    b->cursor = nir_before_instr(&intrin->instr);
@@ -439,11 +454,13 @@ apply_layout_to_intrin(nir_builder *b, apply_layout_state *state, nir_intrinsic_
       break;
    }
    default:
-      break;
+      return false;
    }
+
+   return true;
 }
 
-static void
+static bool
 apply_layout_to_tex(nir_builder *b, apply_layout_state *state, nir_tex_instr *tex)
 {
    b->cursor = nir_before_instr(&tex->instr);
@@ -511,7 +528,7 @@ apply_layout_to_tex(nir_builder *b, apply_layout_state *state, nir_tex_instr *te
 
    if (tex->op == nir_texop_descriptor_amd) {
       nir_def_replace(&tex->def, image);
-      return;
+      return true;
    }
 
    for (unsigned i = 0; i < tex->num_srcs; i++) {
@@ -528,11 +545,14 @@ apply_layout_to_tex(nir_builder *b, apply_layout_state *state, nir_tex_instr *te
          break;
       }
    }
+
+   return true;
 }
 
-void
+bool
 radv_nir_apply_pipeline_layout(nir_shader *shader, struct radv_device *device, const struct radv_shader_stage *stage)
 {
+   bool progress = false;
    const struct radv_physical_device *pdev = radv_device_physical(device);
    const struct radv_instance *instance = radv_physical_device_instance(pdev);
 
@@ -547,27 +567,25 @@ radv_nir_apply_pipeline_layout(nir_shader *shader, struct radv_device *device, c
       .layout = &stage->layout,
    };
 
-   nir_builder b;
-
-   nir_foreach_function (function, shader) {
-      if (!function->impl)
-         continue;
-
-      b = nir_builder_create(function->impl);
+   nir_foreach_function_impl (impl, shader) {
+      bool impl_progress = false;
+      nir_builder b = nir_builder_create(impl);
 
       /* Iterate in reverse so load_ubo lowering can look at
        * the vulkan_resource_index to tell if it's an inline
        * ubo.
        */
-      nir_foreach_block_reverse (block, function->impl) {
+      nir_foreach_block_reverse (block, impl) {
          nir_foreach_instr_reverse_safe (instr, block) {
             if (instr->type == nir_instr_type_tex)
-               apply_layout_to_tex(&b, &state, nir_instr_as_tex(instr));
+               impl_progress |= apply_layout_to_tex(&b, &state, nir_instr_as_tex(instr));
             else if (instr->type == nir_instr_type_intrinsic)
-               apply_layout_to_intrin(&b, &state, nir_instr_as_intrinsic(instr));
+               impl_progress |= apply_layout_to_intrin(&b, &state, nir_instr_as_intrinsic(instr));
          }
       }
 
-      nir_metadata_preserve(function->impl, nir_metadata_control_flow);
+      progress |= nir_progress(impl_progress, impl, nir_metadata_control_flow);
    }
+
+   return progress;
 }

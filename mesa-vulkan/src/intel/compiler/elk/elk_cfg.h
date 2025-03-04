@@ -25,8 +25,7 @@
  *
  */
 
-#ifndef ELK_CFG_H
-#define ELK_CFG_H
+#pragma once
 
 #include "elk_ir.h"
 #ifdef __cplusplus
@@ -326,7 +325,10 @@ struct elk_cfg_t {
    DECLARE_RALLOC_CXX_OPERATORS(elk_cfg_t)
 
    elk_cfg_t(const elk_backend_shader *s, exec_list *instructions);
+   elk_cfg_t(const elk_cfg_t &) = delete;
    ~elk_cfg_t();
+
+   elk_cfg_t & operator=(const elk_cfg_t &) = delete;
 
    void remove_block(elk_bblock_t *block);
 
@@ -487,7 +489,9 @@ namespace elk {
     */
    struct idom_tree {
       idom_tree(const elk_backend_shader *s);
+      idom_tree(const idom_tree &) = delete;
       ~idom_tree();
+      idom_tree & operator=(const idom_tree &) = delete;
 
       bool
       validate(const elk_backend_shader *) const
@@ -528,5 +532,3 @@ namespace elk {
    };
 }
 #endif
-
-#endif /* ELK_CFG_H */

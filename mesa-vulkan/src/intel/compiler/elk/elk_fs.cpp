@@ -1697,7 +1697,7 @@ elk_fs_visitor::split_virtual_grfs()
 
    /* Count the total number of registers */
    unsigned reg_count = 0;
-   unsigned vgrf_to_reg[num_vars];
+   unsigned *vgrf_to_reg = new unsigned[num_vars];
    for (unsigned i = 0; i < num_vars; i++) {
       vgrf_to_reg[i] = reg_count;
       reg_count += alloc.sizes[i];
@@ -1866,6 +1866,7 @@ cleanup:
    delete[] vgrf_has_split;
    delete[] new_virtual_grf;
    delete[] new_reg_offset;
+   delete[] vgrf_to_reg;
 
    return progress;
 }
@@ -3022,7 +3023,7 @@ elk_fs_visitor::emit_repclear_shader()
 bool
 elk_fs_visitor::remove_duplicate_mrf_writes()
 {
-   elk_fs_inst *last_mrf_move[ELK_MAX_MRF(devinfo->ver)];
+   elk_fs_inst *last_mrf_move[ELK_MAX_MRF_ALL];
    bool progress = false;
 
    /* Need to update the MRF tracking for compressed instructions. */
@@ -3067,7 +3068,7 @@ elk_fs_visitor::remove_duplicate_mrf_writes()
       }
 
       /* Clear out any MRF move records whose sources got overwritten. */
-      for (unsigned i = 0; i < ARRAY_SIZE(last_mrf_move); i++) {
+      for (unsigned i = 0; i < ELK_MAX_MRF(devinfo->ver); i++) {
          if (last_mrf_move[i] &&
              regions_overlap(inst->dst, inst->size_written,
                              last_mrf_move[i]->src[0],
@@ -3182,8 +3183,8 @@ elk_fs_visitor::insert_gfx4_pre_send_dependency_workarounds(elk_bblock_t *block,
 {
    int write_len = regs_written(inst);
    int first_write_grf = inst->dst.nr;
-   bool needs_dep[ELK_MAX_MRF(devinfo->ver)];
-   assert(write_len < (int)sizeof(needs_dep) - 1);
+   bool needs_dep[ELK_MAX_MRF_ALL];
+   assert(write_len < ELK_MAX_MRF(devinfo->ver) - 1);
 
    memset(needs_dep, false, sizeof(needs_dep));
    memset(needs_dep, true, write_len);
@@ -3253,8 +3254,8 @@ elk_fs_visitor::insert_gfx4_post_send_dependency_workarounds(elk_bblock_t *block
 {
    int write_len = regs_written(inst);
    unsigned first_write_grf = inst->dst.nr;
-   bool needs_dep[ELK_MAX_MRF(devinfo->ver)];
-   assert(write_len < (int)sizeof(needs_dep) - 1);
+   bool needs_dep[ELK_MAX_MRF_ALL];
+   assert(write_len < ELK_MAX_MRF(devinfo->ver) - 1);
 
    memset(needs_dep, false, sizeof(needs_dep));
    memset(needs_dep, true, write_len);
@@ -3316,6 +3317,95 @@ elk_fs_visitor::insert_gfx4_send_dependency_workarounds()
 
    if (progress)
       invalidate_analysis(DEPENDENCY_INSTRUCTIONS);
+}
+
+/**
+ * flags_read() and flags_written() return flag access with byte granularity,
+ * but for Flag Register PRM lists "Access Granularity: Word", so we can assume
+ * accessing any part of a word will clear its register dependency.
+ */
+static unsigned
+bytes_bitmask_to_words(unsigned b)
+{
+   unsigned first_byte_mask = b & 0x55555555;
+   unsigned second_byte_mask = b & 0xaaaaaaaa;
+   return first_byte_mask |
+          (first_byte_mask << 1) |
+          second_byte_mask |
+          (second_byte_mask >> 1);
+}
+
+/**
+ * WaClearArfDependenciesBeforeEot
+ *
+ * Flag register dependency not cleared after EOT, so we have to source them
+ * before EOT. We can do this with simple `mov(1) nullUD, f{0,1}UD`
+ *
+ * To avoid emitting MOVs when it's not needed, check if each block  reads all
+ * the flags it sets. We might falsely determine register as unread if it'll be
+ * accessed inside the next blocks, but this still should be good enough.
+ */
+bool
+elk_fs_visitor::workaround_source_arf_before_eot()
+{
+   bool progress = false;
+
+   if (devinfo->platform != INTEL_PLATFORM_CHV)
+      return false;
+
+   unsigned flags_unread = 0;
+
+   foreach_block(block, cfg) {
+      unsigned flags_unread_in_block = 0;
+
+      foreach_inst_in_block(elk_fs_inst, inst, block) {
+         /* Instruction can read and write to the same flag, so the order is important */
+         flags_unread_in_block &= ~bytes_bitmask_to_words(inst->flags_read(devinfo));
+         flags_unread_in_block |= bytes_bitmask_to_words(inst->flags_written(devinfo));
+
+         /* HALT does not start its block even though it can leave a dependency */
+         if (inst->opcode == ELK_OPCODE_HALT ||
+             inst->opcode == ELK_SHADER_OPCODE_HALT_TARGET) {
+            flags_unread |= flags_unread_in_block;
+            flags_unread_in_block = 0;
+         }
+      }
+
+      flags_unread |= flags_unread_in_block;
+
+      if ((flags_unread & 0x0f) && (flags_unread & 0xf0))
+         break;
+   }
+
+   if (flags_unread) {
+      int eot_count = 0;
+
+      foreach_block_and_inst_safe(block, elk_fs_inst, inst, cfg)
+      {
+         if (!inst->eot)
+            continue;
+
+         /* Currently, we always emit only one EOT per program,
+          * this WA should be updated if it ever changes.
+          */
+         ++eot_count;
+         assert(eot_count == 1);
+
+         const fs_builder ibld(this, block, inst);
+         const fs_builder ubld = ibld.exec_all().group(1, 0);
+
+         if (flags_unread & 0x0f)
+            ubld.MOV(ubld.null_reg_ud(), retype(elk_flag_reg(0, 0), ELK_REGISTER_TYPE_UD));
+
+         if (flags_unread & 0xf0)
+            ubld.MOV(ubld.null_reg_ud(), retype(elk_flag_reg(1, 0), ELK_REGISTER_TYPE_UD));
+      }
+
+      progress = true;
+      invalidate_analysis(DEPENDENCY_INSTRUCTIONS);
+   }
+
+   return progress;
 }
 
 bool
@@ -5945,6 +6035,8 @@ elk_fs_visitor::run_vs()
 
    allocate_registers(true /* allow_spilling */);
 
+   workaround_source_arf_before_eot();
+
    return !failed;
 }
 
@@ -6062,6 +6154,8 @@ elk_fs_visitor::run_tcs()
 
    allocate_registers(true /* allow_spilling */);
 
+   workaround_source_arf_before_eot();
+
    return !failed;
 }
 
@@ -6089,6 +6183,8 @@ elk_fs_visitor::run_tes()
    fixup_3src_null_dest();
 
    allocate_registers(true /* allow_spilling */);
+
+   workaround_source_arf_before_eot();
 
    return !failed;
 }
@@ -6134,6 +6230,8 @@ elk_fs_visitor::run_gs()
    fixup_3src_null_dest();
 
    allocate_registers(true /* allow_spilling */);
+
+   workaround_source_arf_before_eot();
 
    return !failed;
 }
@@ -6206,6 +6304,8 @@ elk_fs_visitor::run_fs(bool allow_spilling, bool do_rep_send)
       fixup_3src_null_dest();
 
       allocate_registers(allow_spilling);
+
+      workaround_source_arf_before_eot();
    }
 
    return !failed;
@@ -6243,6 +6343,8 @@ elk_fs_visitor::run_cs(bool allow_spilling)
    fixup_3src_null_dest();
 
    allocate_registers(allow_spilling);
+
+   workaround_source_arf_before_eot();
 
    return !failed;
 }
@@ -6430,10 +6532,7 @@ elk_nir_move_interpolation_to_top(nir_shader *nir)
          }
       }
 
-      progress = progress || impl_progress;
-
-      nir_metadata_preserve(impl, impl_progress ? nir_metadata_control_flow
-                                                : nir_metadata_all);
+      progress |= nir_progress(impl_progress, impl, nir_metadata_control_flow);
    }
 
    return progress;

@@ -31,26 +31,16 @@
 #include "color_gamut.h"
 #include "common.h"
 #include "custom_float.h"
-#include "color_test_values.h"
 #include "3dlut_builder.h"
 #include "shaper_builder.h"
+#include "geometric_scaling.h"
 
 static void color_check_input_cm_update(struct vpe_priv *vpe_priv, struct stream_ctx *stream_ctx,
     const struct vpe_color_space *vcs, const struct vpe_color_adjust *adjustments,
-    bool enable_3dlut);
+    bool enable_3dlut, bool geometric_update);
 
 static void color_check_output_cm_update(
-    struct vpe_priv *vpe_priv, const struct vpe_color_space *vcs);
-
-static bool color_update_regamma_tf(struct vpe_priv *vpe_priv,
-    enum color_transfer_func output_transfer_function, struct fixed31_32 x_scale,
-    struct fixed31_32 y_scale, struct fixed31_32 y_bias, bool can_bypass,
-    struct transfer_func *output_tf);
-
-static bool color_update_degamma_tf(struct vpe_priv *vpe_priv,
-    enum color_transfer_func color_input_tf, struct fixed31_32 x_scale,
-    struct fixed31_32 y_scale, struct fixed31_32 y_bias, bool can_bypass,
-    struct transfer_func *input_tf);
+    struct vpe_priv *vpe_priv, const struct vpe_color_space *vcs, bool geometric_update);
 
 static bool color_update_input_cs(struct vpe_priv *vpe_priv, enum color_space in_cs,
     const struct vpe_color_adjust *adjustments, struct vpe_csc_matrix *input_cs,
@@ -83,7 +73,7 @@ static bool is_ycbcr(enum color_space in_cs)
 }
 
 static void color_check_output_cm_update(
-    struct vpe_priv *vpe_priv, const struct vpe_color_space *vcs)
+    struct vpe_priv *vpe_priv, const struct vpe_color_space *vcs, bool geometric_update)
 {
     enum color_space         cs;
     enum color_transfer_func tf;
@@ -93,14 +83,14 @@ static void color_check_output_cm_update(
     if (cs == COLOR_SPACE_UNKNOWN || tf == TRANSFER_FUNC_UNKNOWN)
         VPE_ASSERT(0);
 
-    if (cs != vpe_priv->output_ctx.cs) {
+    if (cs != vpe_priv->output_ctx.cs || geometric_update) {
         vpe_priv->output_ctx.dirty_bits.color_space = 1;
         vpe_priv->output_ctx.cs                     = cs;
     } else {
         vpe_priv->output_ctx.dirty_bits.color_space = 0;
     }
 
-    if (tf != vpe_priv->output_ctx.tf) {
+    if (tf != vpe_priv->output_ctx.tf || geometric_update) {
         vpe_priv->output_ctx.dirty_bits.transfer_function = 1;
         vpe_priv->output_ctx.tf                           = tf;
     } else {
@@ -110,7 +100,7 @@ static void color_check_output_cm_update(
 
 static void color_check_input_cm_update(struct vpe_priv *vpe_priv, struct stream_ctx *stream_ctx,
     const struct vpe_color_space *vcs, const struct vpe_color_adjust *adjustments,
-    bool enable_3dlut)
+    bool enable_3dlut, bool geometric_update)
 {
     enum color_space         cs;
     enum color_transfer_func tf;
@@ -125,7 +115,7 @@ static void color_check_input_cm_update(struct vpe_priv *vpe_priv, struct stream
     if (cs == COLOR_SPACE_UNKNOWN && tf == TRANSFER_FUNC_UNKNOWN)
         VPE_ASSERT(0);
 
-    if (cs != stream_ctx->cs || enable_3dlut != stream_ctx->enable_3dlut) {
+    if (cs != stream_ctx->cs || enable_3dlut != stream_ctx->enable_3dlut || geometric_update) {
         stream_ctx->dirty_bits.color_space = 1;
         stream_ctx->cs                     = cs;
     } else {
@@ -139,7 +129,7 @@ static void color_check_input_cm_update(struct vpe_priv *vpe_priv, struct stream
     }
     // if the new transfer function is different than the old one or the scaling factor is not one
     //  any new stream will start with a transfer function which is not scaled
-    if (tf != stream_ctx->tf || enable_3dlut != stream_ctx->enable_3dlut) {
+    if (tf != stream_ctx->tf || enable_3dlut != stream_ctx->enable_3dlut || geometric_update) {
         stream_ctx->dirty_bits.transfer_function = 1;
         stream_ctx->tf                           = tf;
     } else {
@@ -149,86 +139,14 @@ static void color_check_input_cm_update(struct vpe_priv *vpe_priv, struct stream
     stream_ctx->enable_3dlut = enable_3dlut;
 }
 
-static bool color_update_regamma_tf(struct vpe_priv *vpe_priv,
-    enum color_transfer_func output_transfer_function, struct fixed31_32 x_scale,
-    struct fixed31_32 y_scale, struct fixed31_32 y_bias, bool can_bypass,
-    struct transfer_func* output_tf)
+static enum vpe_status vpe_allocate_cm_memory(
+    struct vpe_priv *vpe_priv, const struct vpe_build_param *param)
 {
-    struct pwl_params *params = NULL;
-    bool               ret    = true;
-
-    if (can_bypass || output_transfer_function == TRANSFER_FUNC_HLG) {
-        output_tf->type = TF_TYPE_BYPASS;
-        return true;
-    }
-
-    output_tf->sdr_ref_white_level = 80;
-    output_tf->cm_gamma_type = CM_REGAM;
-    output_tf->type = TF_TYPE_DISTRIBUTED_POINTS;
-    output_tf->start_base = y_bias;
-
-    switch (output_transfer_function) {
-    case TRANSFER_FUNC_SRGB:
-    case TRANSFER_FUNC_BT709:
-    case TRANSFER_FUNC_BT1886:
-    case TRANSFER_FUNC_PQ2084:
-    case TRANSFER_FUNC_LINEAR:
-        output_tf->tf = output_transfer_function;
-        break;
-    default:
-        VPE_ASSERT(0);
-        break;
-    }
-
-    ret = vpe_color_calculate_regamma_params(
-        vpe_priv, x_scale, y_scale, &vpe_priv->cal_buffer, output_tf);
-
-    return ret;
-}
-
-static bool color_update_degamma_tf(struct vpe_priv *vpe_priv,
-    enum color_transfer_func color_input_tf, struct fixed31_32 x_scale,
-    struct fixed31_32 y_scale, struct fixed31_32 y_bias, bool can_bypass,
-    struct transfer_func *input_tf)
-{
-    bool               ret    = true;
-    struct pwl_params *params = NULL;
-
-    if (can_bypass || color_input_tf == TRANSFER_FUNC_HLG) {
-        input_tf->type = TF_TYPE_BYPASS;
-        return true;
-    }
-
-    input_tf->cm_gamma_type = CM_DEGAM;
-    input_tf->type = TF_TYPE_DISTRIBUTED_POINTS;
-    input_tf->start_base = y_bias;
-
-    switch (color_input_tf) {
-    case TRANSFER_FUNC_SRGB:
-    case TRANSFER_FUNC_BT709:
-    case TRANSFER_FUNC_BT1886:
-    case TRANSFER_FUNC_PQ2084:
-    case TRANSFER_FUNC_NORMALIZED_PQ:
-    case TRANSFER_FUNC_LINEAR:
-        input_tf->tf = color_input_tf;
-        break;
-    default:
-        VPE_ASSERT(0);
-        break;
-    }
-
-    ret = vpe_color_calculate_degamma_params(vpe_priv, x_scale, y_scale, input_tf);
-
-    return ret;
-}
-
-static enum vpe_status vpe_allocate_cm_memory(struct vpe_priv *vpe_priv, const struct vpe_build_param *param) {
-
     struct stream_ctx  *stream_ctx;
     struct output_ctx  *output_ctx;
     enum vpe_status     status = VPE_STATUS_OK;
 
-    for (uint32_t stream_idx = 0; stream_idx < param->num_streams; stream_idx++) {
+    for (uint32_t stream_idx = 0; stream_idx < vpe_priv->num_streams; stream_idx++) {
         stream_ctx = &vpe_priv->stream_ctx[stream_idx];
 
         if (!stream_ctx->input_cs) {
@@ -241,8 +159,7 @@ static enum vpe_status vpe_allocate_cm_memory(struct vpe_priv *vpe_priv, const s
         }
 
         if (!stream_ctx->input_tf) {
-            stream_ctx->input_tf =
-                (struct transfer_func *)vpe_zalloc(sizeof(struct transfer_func));
+            stream_ctx->input_tf = (struct transfer_func *)vpe_zalloc(sizeof(struct transfer_func));
             if (!stream_ctx->input_tf) {
                 vpe_log("err: out of memory for input tf!");
                 return VPE_STATUS_NO_MEMORY;
@@ -276,8 +193,7 @@ static enum vpe_status vpe_allocate_cm_memory(struct vpe_priv *vpe_priv, const s
 
     output_ctx = &vpe_priv->output_ctx;
     if (!output_ctx->output_tf) {
-        output_ctx->output_tf =
-            (struct transfer_func *)vpe_zalloc(sizeof(struct transfer_func));
+        output_ctx->output_tf = (struct transfer_func *)vpe_zalloc(sizeof(struct transfer_func));
         if (!output_ctx->output_tf) {
             vpe_log("err: out of memory for output tf!");
             return VPE_STATUS_NO_MEMORY;
@@ -295,8 +211,11 @@ static enum color_space color_get_icsc_cs(enum color_space ics)
     case COLOR_SPACE_MSREF_SCRGB:
     case COLOR_SPACE_2020_RGB_FULLRANGE:
     case COLOR_SPACE_2020_RGB_LIMITEDRANGE:
+    case COLOR_SPACE_RGB601:
+    case COLOR_SPACE_RGB601_LIMITED:
+    case COLOR_SPACE_RGB_JFIF:
         return COLOR_SPACE_SRGB;
-    case COLOR_SPACE_JFIF:
+    case COLOR_SPACE_YCBCR_JFIF:
     case COLOR_SPACE_YCBCR601:
     case COLOR_SPACE_YCBCR601_LIMITED:
         return COLOR_SPACE_YCBCR601;
@@ -345,109 +264,11 @@ static bool color_update_input_cs(struct vpe_priv *vpe_priv, enum color_space in
             return false;
         *stream_clr_adjustments = *adjustments;
     }
+    else { // no adjustments needed, but we still need to update the stream_clr_adjustments as it is valid
+        *stream_clr_adjustments = *adjustments;
+    }
 
     return true;
-}
-
-/* This function generates software points for the blnd gam programming block.
-   The logic for the blndgam/ogam programming sequence is a function of:
-   1. Output Range (Studio Full)
-   2. 3DLUT usage
-   3. Output format (HDR SDR)
-
-   SDR Out or studio range out
-      TM Case
-         BLNDGAM : NL -> NL*S + B
-         OGAM    : Bypass
-      Non TM Case
-         BLNDGAM : L -> NL*S + B
-         OGAM    : Bypass
-   Full range HDR Out
-      TM Case
-         BLNDGAM : NL -> L
-         OGAM    : L -> NL
-      Non TM Case
-         BLNDGAM : Bypass
-         OGAM    : L -> NL
-
-*/
-
-static enum vpe_status vpe_update_blnd_gamma(
-    struct vpe_priv                 *vpe_priv,
-    const struct vpe_build_param    *param,
-    const struct vpe_tonemap_params *tm_params,
-    struct transfer_func            *blnd_tf)
-{
-
-    struct output_ctx *output_ctx;
-    struct vpe_color_space   tm_out_cs;
-    struct fixed31_32        x_scale       = vpe_fixpt_one;
-    struct fixed31_32        y_scale       = vpe_fixpt_one;
-    struct fixed31_32        y_bias        = vpe_fixpt_zero;
-    bool                     is_studio     = false;
-    bool                     can_bypass    = false;
-    bool                     lut3d_enabled = false;
-    enum color_space         cs            = COLOR_SPACE_2020_RGB_FULLRANGE;
-    enum color_transfer_func tf            = TRANSFER_FUNC_LINEAR;
-    enum vpe_status          status        = VPE_STATUS_OK;
-
-    is_studio = (param->dst_surface.cs.range == VPE_COLOR_RANGE_STUDIO);
-    output_ctx = &vpe_priv->output_ctx;
-    lut3d_enabled = tm_params->UID != 0 || tm_params->enable_3dlut;
-
-    if (is_studio) {
-
-        if (vpe_is_rgb8(param->dst_surface.format)) {
-            y_scale = STUDIO_RANGE_SCALE_8_BIT;
-            y_bias = STUDIO_RANGE_FOOT_ROOM_8_BIT;
-        }
-        else {
-
-            y_scale = STUDIO_RANGE_SCALE_10_BIT;
-            y_bias = STUDIO_RANGE_FOOT_ROOM_10_BIT;
-        }
-    }
-
-    //If SDR out -> Blend should be NL
-    //If studio out -> No choice but to blend in NL
-    if (!vpe_is_HDR(output_ctx->tf) || is_studio) {
-        if (lut3d_enabled) {
-            tf = TRANSFER_FUNC_LINEAR;
-        }
-        else {
-            tf = output_ctx->tf;
-        }
-
-        if (vpe_is_fp16(param->dst_surface.format)) {
-            y_scale = vpe_fixpt_mul_int(y_scale, CCCS_NORM);
-        }
-        color_update_regamma_tf(vpe_priv,
-            tf,
-            x_scale,
-            y_scale,
-            y_bias,
-            can_bypass,
-            blnd_tf);
-    }
-    else {
-
-        if (lut3d_enabled) {
-            vpe_color_build_tm_cs(tm_params, param->dst_surface, &tm_out_cs);
-            vpe_color_get_color_space_and_tf(&tm_out_cs, &cs, &tf);
-        }
-        else {
-            can_bypass = true;
-        }
-
-        color_update_degamma_tf(vpe_priv,
-            tf,
-            x_scale,
-            y_scale,
-            y_bias,
-            can_bypass,
-            blnd_tf);
-    }
-    return status;
 }
 
 /* This function generates software points for the ogam gamma programming block.
@@ -472,10 +293,8 @@ static enum vpe_status vpe_update_blnd_gamma(
          OGAM    : L -> NL
 
 */
-static enum vpe_status vpe_update_output_gamma(
-    struct vpe_priv              *vpe_priv,
-    const struct vpe_build_param *param,
-    struct transfer_func         *output_tf)
+static enum vpe_status vpe_update_output_gamma(struct vpe_priv *vpe_priv,
+    const struct vpe_build_param *param, struct transfer_func *output_tf, bool geometric_scaling)
 {
     bool               can_bypass = false;
     struct output_ctx *output_ctx = &vpe_priv->output_ctx;
@@ -487,12 +306,12 @@ static enum vpe_status vpe_update_output_gamma(
         y_scale = vpe_fixpt_mul_int(y_scale, CCCS_NORM);
     }
 
-    if (vpe_is_HDR(output_ctx->tf) && !is_studio)
+    if (!geometric_scaling && vpe_is_HDR(output_ctx->tf) && !is_studio)
         can_bypass = false; //Blending is done in linear light so ogam needs to handle the regam
     else
         can_bypass = true;
 
-    color_update_regamma_tf(
+    vpe_color_update_regamma_tf(
         vpe_priv, output_ctx->tf, vpe_fixpt_one, y_scale, vpe_fixpt_zero, can_bypass, output_tf);
 
     return status;
@@ -580,7 +399,7 @@ static bool build_scale_and_bias(struct bias_and_scale *bias_and_scale,
             scale = vpe_fixpt_from_fraction(1024, 940 - 64);
             bias  = vpe_fixpt_from_fraction(-64, 1024);
         } // else report error? here just go with default (1.0, 0.0)
-    } else if (vpe_is_yuv420_8(format) || vpe_is_yuv444_8(format)) {
+    } else if (vpe_is_yuv8(format)) {
         if (vcs->range == VPE_COLOR_RANGE_FULL) {
             scale = vpe_fixpt_from_fraction(256, 255);
         } else if (vcs->range == VPE_COLOR_RANGE_STUDIO) {
@@ -590,7 +409,7 @@ static bool build_scale_and_bias(struct bias_and_scale *bias_and_scale,
             bias_c  = vpe_fixpt_from_fraction(-16, 256); // See notes in function comment
             is_chroma_different = true;
         } // else report error? not sure if default is right
-    } else if (vpe_is_yuv420_10(format) || vpe_is_yuv444_10(format)) {
+    } else if (vpe_is_yuv10(format)) {
         if (vcs->range == VPE_COLOR_RANGE_FULL) {
             scale = vpe_fixpt_from_fraction(1024, 1023);
         } else if (vcs->range == VPE_COLOR_RANGE_STUDIO) {
@@ -602,8 +421,12 @@ static bool build_scale_and_bias(struct bias_and_scale *bias_and_scale,
         } // else report error? not sure if default is right
     }
 
-    vpe_convert_to_custom_float_format(scale, &fmt, &bias_and_scale->scale_green);
-    vpe_convert_to_custom_float_format(bias, &fmt, &bias_and_scale->bias_green);
+    if (!vpe_convert_to_custom_float_format(scale, &fmt, &bias_and_scale->scale_green)) {
+        VPE_ASSERT(0);
+    }
+    if (!vpe_convert_to_custom_float_format(bias, &fmt, &bias_and_scale->bias_green)) {
+        VPE_ASSERT(0);
+    }
 
     // see definition of scale/bias and scale_c/bias_c
     // RGB formats only have scale/bias since all color channels are the same
@@ -614,8 +437,12 @@ static bool build_scale_and_bias(struct bias_and_scale *bias_and_scale,
         bias_and_scale->bias_red   = bias_and_scale->bias_green;
         bias_and_scale->bias_blue  = bias_and_scale->bias_green;
     } else {
-        vpe_convert_to_custom_float_format(scale_c, &fmt, &bias_and_scale->scale_red);
-        vpe_convert_to_custom_float_format(bias_c, &fmt, &bias_and_scale->bias_red);
+        if (!vpe_convert_to_custom_float_format(scale_c, &fmt, &bias_and_scale->scale_red)) {
+            VPE_ASSERT(0);
+        }
+        if (!vpe_convert_to_custom_float_format(bias_c, &fmt, &bias_and_scale->bias_red)) {
+            VPE_ASSERT(0);
+        }
         bias_and_scale->scale_blue = bias_and_scale->scale_red;
         bias_and_scale->bias_blue  = bias_and_scale->bias_red;
     }
@@ -623,14 +450,184 @@ static bool build_scale_and_bias(struct bias_and_scale *bias_and_scale,
     return true;
 }
 
+bool vpe_color_update_regamma_tf(struct vpe_priv *vpe_priv,
+    enum color_transfer_func output_transfer_function, struct fixed31_32 x_scale,
+    struct fixed31_32 y_scale, struct fixed31_32 y_bias, bool can_bypass,
+    struct transfer_func *output_tf)
+{
+    struct pwl_params* params = NULL;
+    bool               ret = true;
+    bool               update = false;
+
+    if (can_bypass || output_transfer_function == TRANSFER_FUNC_HLG) {
+        output_tf->type = TF_TYPE_BYPASS;
+        return true;
+    }
+
+    output_tf->sdr_ref_white_level = 80;
+    output_tf->cm_gamma_type = CM_REGAM;
+    output_tf->type = TF_TYPE_DISTRIBUTED_POINTS;
+    output_tf->start_base = y_bias;
+
+    switch (output_transfer_function) {
+    case TRANSFER_FUNC_SRGB:
+    case TRANSFER_FUNC_BT709:
+    case TRANSFER_FUNC_BT1886:
+    case TRANSFER_FUNC_PQ2084:
+    case TRANSFER_FUNC_LINEAR:
+        output_tf->tf = output_transfer_function;
+        break;
+    default:
+        VPE_ASSERT(0);
+        break;
+    }
+
+    for (uint32_t i = 0; i < vpe_priv->pub.caps->resource_caps.num_dpp; i++) {
+        if (vpe_priv->init.debug.disable_lut_caching ||
+            (output_tf->cache_info[i].cm_gamma_type != output_tf->cm_gamma_type) ||
+            (output_tf->cache_info[i].tf != output_tf->tf) ||
+            (output_tf->cache_info[i].x_scale.value != x_scale.value) ||
+            (output_tf->cache_info[i].y_scale.value != y_scale.value) ||
+            (output_tf->cache_info[i].y_bias.value != y_bias.value)) {
+            // if gamma points have been previously generated,
+            // skip the re-gen no matter it was config cached or not
+            update = true;
+        }
+    }
+
+    if (update) {
+        ret = vpe_color_calculate_regamma_params(
+            vpe_priv, x_scale, y_scale, &vpe_priv->cal_buffer, output_tf);
+        if (ret) {
+            for (uint32_t i = 0; i < vpe_priv->pub.caps->resource_caps.num_dpp; i++) {
+                // reset the cache status and mark as dirty to let hw layer to re-cache
+                output_tf->dirty[i] = true;
+                output_tf->config_cache[i].cached = false;
+                output_tf->cache_info[i].cm_gamma_type = output_tf->cm_gamma_type;
+                output_tf->cache_info[i].tf = output_tf->tf;
+                output_tf->cache_info[i].x_scale = x_scale;
+                output_tf->cache_info[i].y_scale = y_scale;
+                output_tf->cache_info[i].y_bias = y_bias;
+            }
+        }
+    }
+    return ret;
+}
+
+bool vpe_color_update_degamma_tf(struct vpe_priv *vpe_priv, enum color_transfer_func color_input_tf,
+    struct fixed31_32 x_scale, struct fixed31_32 y_scale, struct fixed31_32 y_bias, bool can_bypass,
+    struct transfer_func *input_tf)
+{
+    bool               ret = true;
+    struct pwl_params* params = NULL;
+    bool               update = false;
+
+    if (can_bypass || color_input_tf == TRANSFER_FUNC_HLG) {
+        input_tf->type = TF_TYPE_BYPASS;
+        return true;
+    }
+
+    input_tf->cm_gamma_type = CM_DEGAM;
+    input_tf->type = TF_TYPE_DISTRIBUTED_POINTS;
+    input_tf->start_base = y_bias;
+
+    switch (color_input_tf) {
+    case TRANSFER_FUNC_SRGB:
+    case TRANSFER_FUNC_BT709:
+    case TRANSFER_FUNC_BT1886:
+    case TRANSFER_FUNC_PQ2084:
+    case TRANSFER_FUNC_NORMALIZED_PQ:
+    case TRANSFER_FUNC_LINEAR:
+        input_tf->tf = color_input_tf;
+        break;
+    default:
+        VPE_ASSERT(0);
+        break;
+    }
+
+    for (uint32_t i = 0; i < vpe_priv->pub.caps->resource_caps.num_dpp; i++) {
+        if (vpe_priv->init.debug.disable_lut_caching ||
+            (input_tf->cache_info[i].cm_gamma_type != input_tf->cm_gamma_type) ||
+            (input_tf->cache_info[i].tf != input_tf->tf) ||
+            (input_tf->cache_info[i].x_scale.value != x_scale.value) ||
+            (input_tf->cache_info[i].y_scale.value != y_scale.value) ||
+            (input_tf->cache_info[i].y_bias.value != y_bias.value)) {
+            // if gamma points have been previously generated,
+            // skip the re-gen no matter it was config cached or not
+            update = true;
+        }
+    }
+
+    if (update) {
+        ret = vpe_color_calculate_degamma_params(vpe_priv, x_scale, y_scale, input_tf);
+        if (ret) {
+            for (uint32_t i = 0; i < vpe_priv->pub.caps->resource_caps.num_dpp; i++) {
+                // reset the cache status and mark as dirty to let hw layer to re-cache
+                input_tf->dirty[i] = true;
+                input_tf->config_cache[i].cached = false;
+                input_tf->cache_info[i].cm_gamma_type = input_tf->cm_gamma_type;
+                input_tf->cache_info[i].tf = color_input_tf;
+                input_tf->cache_info[i].x_scale = x_scale;
+                input_tf->cache_info[i].y_scale = y_scale;
+                input_tf->cache_info[i].y_bias = y_bias;
+            }
+        }
+    }
+    return ret;
+}
+
 enum vpe_status vpe_color_build_tm_cs(const struct vpe_tonemap_params *tm_params,
-    struct vpe_surface_info surface_info, struct vpe_color_space *tm_out_cs)
+    const struct vpe_surface_info *surface_info, struct vpe_color_space *tm_out_cs)
 {
     tm_out_cs->tf        = tm_params->lut_out_tf;
     tm_out_cs->primaries = tm_params->lut_out_gamut;
-    tm_out_cs->encoding  = surface_info.cs.encoding;
+    tm_out_cs->encoding  = surface_info->cs.encoding;
     tm_out_cs->range     = VPE_COLOR_RANGE_FULL;     // surface_info.cs.range;
     tm_out_cs->cositing  = VPE_CHROMA_COSITING_NONE; // surface_info.cs.cositing;
+
+    return VPE_STATUS_OK;
+}
+
+enum vpe_status vpe_color_build_shaper_cs(const struct vpe_tonemap_params *tm_params,
+    struct vpe_surface_info *surface_info, struct vpe_color_space *tm_out_cs)
+{
+    tm_out_cs->tf        = tm_params->shaper_tf;
+    tm_out_cs->primaries = tm_params->lut_in_gamut;
+    tm_out_cs->encoding  = VPE_PIXEL_ENCODING_RGB;   // surface_info.cs.range;
+    tm_out_cs->range     = VPE_COLOR_RANGE_FULL;     // surface_info.cs.range;
+    tm_out_cs->cositing  = VPE_CHROMA_COSITING_NONE; // surface_info.cs.cositing;
+
+    return VPE_STATUS_OK;
+}
+
+enum vpe_status vpe_color_update_3dlut(
+    struct vpe_priv *vpe_priv, struct stream_ctx *stream_ctx, bool enable_3dlut)
+{
+    if (!enable_3dlut) {
+        stream_ctx->lut3d_func->state.bits.initialized = 0;
+    } else {
+        bool update = false;
+
+        for (uint32_t i = 0; i < vpe_priv->pub.caps->resource_caps.num_mpc_3dlut; i++)
+            if (vpe_priv->init.debug.disable_lut_caching ||
+                (stream_ctx->lut3d_func->cache_info[i].uid_3dlut !=
+                    stream_ctx->stream.tm_params.UID))
+                update = true;
+
+        if (update) {
+            vpe_convert_to_tetrahedral(
+                vpe_priv, stream_ctx->stream.tm_params.lut_data,
+                stream_ctx->stream.tm_params.lut_dim, stream_ctx->lut3d_func);
+            for (uint32_t i = 0; i < vpe_priv->pub.caps->resource_caps.num_mpc_3dlut; i++) {
+                stream_ctx->lut3d_func->dirty[i]                = true;
+                stream_ctx->lut3d_func->config_cache[i].cached  = false;
+                stream_ctx->lut3d_func->cache_info[i].uid_3dlut = stream_ctx->stream.tm_params.UID;
+            }
+        }
+        stream_ctx->lut3d_func->state.bits.initialized = 1;
+    }
+
+    stream_ctx->uid_3dlut = stream_ctx->stream.tm_params.UID;
 
     return VPE_STATUS_OK;
 }
@@ -643,25 +640,37 @@ enum vpe_status vpe_color_update_color_space_and_tf(
     struct fixed31_32  new_matrix_scaling_factor;
     struct output_ctx *output_ctx                = &vpe_priv->output_ctx;
     enum vpe_status    status                    = VPE_STATUS_OK;
-    struct fixed31_32 y_scale                    = vpe_fixpt_one;
+    struct fixed31_32  y_scale                   = vpe_fixpt_one;
+    bool               geometric_update          = false;
+    bool               geometric_scaling         = false;
 
     status = vpe_allocate_cm_memory(vpe_priv, param);
     if (status == VPE_STATUS_OK) {
 
-        color_check_output_cm_update(vpe_priv, &vpe_priv->output_ctx.surface.cs);
+        vpe_update_geometric_scaling(vpe_priv, param, &geometric_update, &geometric_scaling);
+        color_check_output_cm_update(vpe_priv, &vpe_priv->output_ctx.surface.cs, geometric_update);
 
-        for (stream_idx = 0; stream_idx < param->num_streams; stream_idx++) {
+        for (stream_idx = 0; stream_idx < vpe_priv->num_streams; stream_idx++) {
 
             new_matrix_scaling_factor = vpe_fixpt_one;
             stream_ctx = &vpe_priv->stream_ctx[stream_idx];
+            stream_ctx->geometric_scaling = geometric_scaling;
+            // GDS needs to preserve 'is_yuv_input' flag to be used in updating the whitepoint
+            if (!geometric_update && !geometric_scaling) { // Non GDS cases
+                stream_ctx->is_yuv_input =
+                    stream_ctx->stream.surface_info.cs.encoding == VPE_PIXEL_ENCODING_YCbCr;
+            }
+            bool is_3dlut_enable =
+                stream_ctx->stream.tm_params.UID != 0 || stream_ctx->stream.tm_params.enable_3dlut;
+            bool require_update = stream_ctx->uid_3dlut != stream_ctx->stream.tm_params.UID;
 
             color_check_input_cm_update(vpe_priv, stream_ctx,
-                &param->streams[stream_idx].surface_info.cs, &param->streams[stream_idx].color_adj,
-                param->streams[stream_idx].tm_params.UID != 0 || param->streams[stream_idx].tm_params.enable_3dlut);
+                &stream_ctx->stream.surface_info.cs, &stream_ctx->stream.color_adj,
+                is_3dlut_enable, geometric_update);
 
             build_scale_and_bias(stream_ctx->bias_scale,
-                &param->streams[stream_idx].surface_info.cs,
-                param->streams[stream_idx].surface_info.format);
+                &stream_ctx->stream.surface_info.cs,
+                stream_ctx->stream.surface_info.format);
 
             if (stream_ctx->dirty_bits.color_space) {
                 if (!color_update_input_cs(vpe_priv, stream_ctx->cs,
@@ -681,55 +690,63 @@ enum vpe_status vpe_color_update_color_space_and_tf(
             }
 
             if (stream_ctx->dirty_bits.transfer_function) {
-                if (vpe_is_fp16(stream_ctx->stream.surface_info.format)) {
-                    y_scale = vpe_fixpt_div_int(y_scale, CCCS_NORM);
-                }
-
-                color_update_degamma_tf(vpe_priv, stream_ctx->tf,
-                    vpe_priv->stream_ctx->tf_scaling_factor,
-                    y_scale,
-                    vpe_fixpt_zero,
-                    stream_ctx->stream.tm_params.UID != 0 || stream_ctx->stream.tm_params.enable_3dlut, // By Pass degamma if 3DLUT is enabled
+                vpe_color_update_degamma_tf(vpe_priv, stream_ctx->tf,
+                    vpe_priv->stream_ctx->tf_scaling_factor, y_scale, vpe_fixpt_zero,
+                    is_3dlut_enable || geometric_scaling ||
+                        vpe_is_fp16(stream_ctx->stream.surface_info.format),
                     stream_ctx->input_tf);
             }
 
             if (stream_ctx->dirty_bits.color_space || output_ctx->dirty_bits.color_space) {
-                status = vpe_color_update_gamut(vpe_priv, stream_ctx->cs, output_ctx->cs,
-                    stream_ctx->gamut_remap,
-                    stream_ctx->stream.tm_params.UID != 0 || stream_ctx->stream.tm_params.enable_3dlut);
+                enum color_space shaper_in_cs;
+                bool             can_bypass_gamut = geometric_scaling;
+                if (is_3dlut_enable) {
+                    // Convert vpe_color_space -> color_space
+                    struct vpe_color_space   shaper_params;
+                    enum color_space         in_cs_3dlut;
+                    enum color_transfer_func tf;
+                    vpe_color_build_shaper_cs(&stream_ctx->stream.tm_params,
+                        &vpe_priv->output_ctx.surface, &shaper_params);
+                    vpe_color_get_color_space_and_tf(&shaper_params, &in_cs_3dlut, &tf);
+                    shaper_in_cs = in_cs_3dlut;
+                } else {
+                    shaper_in_cs = output_ctx->cs;
+                }
+                status = vpe_color_update_gamut(vpe_priv, stream_ctx->cs, shaper_in_cs,
+                    stream_ctx->gamut_remap, can_bypass_gamut);
             }
 
-            
-            if (output_ctx->dirty_bits.transfer_function ||
-                output_ctx->dirty_bits.color_space ||
-                stream_ctx->update_3dlut) {
-                vpe_update_blnd_gamma(vpe_priv, param, &stream_ctx->stream.tm_params, stream_ctx->blend_tf);
+            if (output_ctx->dirty_bits.transfer_function || output_ctx->dirty_bits.color_space ||
+                require_update) {
+                vpe_priv->resource.update_blnd_gamma(vpe_priv, param, &stream_ctx->stream, stream_ctx->blend_tf);
             }
         }
 
         if (status == VPE_STATUS_OK) {
             if (output_ctx->dirty_bits.transfer_function ||
                 output_ctx->dirty_bits.color_space) {
-                vpe_update_output_gamma(vpe_priv, param, output_ctx->output_tf);
+                vpe_update_output_gamma(vpe_priv, param, output_ctx->output_tf, geometric_scaling);
             }
         }
-
     }
     return status;
 }
 
 enum vpe_status vpe_color_tm_update_hdr_mult(uint16_t shaper_in_exp_max, uint32_t peak_white,
-    struct fixed31_32 *hdr_multiplier, bool enable3dlut)
+    struct fixed31_32 *hdr_multiplier, bool enable3dlut, bool is_fp16)
 {
     if (enable3dlut) {
         struct fixed31_32 shaper_in_gain;
         struct fixed31_32 pq_norm_gain;
 
-        // HDRMULT = 2^shaper_in_exp_max*(1/PQ(x))
         shaper_in_gain = vpe_fixpt_from_int((long long)1 << shaper_in_exp_max);
-        vpe_compute_pq(vpe_fixpt_from_fraction((long long)peak_white, 10000), &pq_norm_gain);
-
-        *hdr_multiplier = vpe_fixpt_div(shaper_in_gain, pq_norm_gain);
+        if (is_fp16) {
+            *hdr_multiplier = vpe_fixpt_div_int(shaper_in_gain, CCCS_NORM);
+        } else {
+            // HDRMULT = 2^shaper_in_exp_max*(1/PQ(x))
+            vpe_compute_pq(vpe_fixpt_from_fraction((long long)peak_white, 10000), &pq_norm_gain);
+            *hdr_multiplier = vpe_fixpt_div(shaper_in_gain, pq_norm_gain);
+        }
     } else {
         *hdr_multiplier = vpe_fixpt_one;
     }
@@ -737,22 +754,57 @@ enum vpe_status vpe_color_tm_update_hdr_mult(uint16_t shaper_in_exp_max, uint32_
     return VPE_STATUS_OK;
 }
 
-enum vpe_status vpe_color_update_shaper(
-    uint16_t shaper_in_exp_max, struct transfer_func *shaper_func, bool enable_3dlut)
-
+enum vpe_status vpe_color_update_shaper(const struct vpe_priv *vpe_priv, uint16_t shaper_in_exp_max,
+    struct stream_ctx *stream_ctx, enum color_transfer_func tf_in_3dlut, bool enable_3dlut)
 {
+    enum color_transfer_func tf           = TRANSFER_FUNC_LINEAR;
+    bool                     update       = false;
+    enum vpe_status          ret          = VPE_STATUS_OK;
+    struct transfer_func    *shaper_func  = stream_ctx->in_shaper_func;
+    struct fixed31_32        pq_norm_gain = vpe_fixpt_one;
+    VPE_ASSERT(shaper_func != NULL);
     if (!enable_3dlut) {
         shaper_func->type = TF_TYPE_BYPASS;
         return VPE_STATUS_OK;
     }
-    struct vpe_shaper_setup_in shaper_in;
 
-    shaper_in.shaper_in_max      = 1 << 16;
-    shaper_in.use_const_hdr_mult = false; // can't be true. Fix is required.
+    // Force PQ curve when FP16 format
+    if (stream_ctx->tf == TRANSFER_FUNC_LINEAR) {
+        // tf = stream_ctx->stream.tm_params.shaper_tf;
+        tf = tf_in_3dlut;
+        pq_norm_gain =
+            vpe_fixpt_mul_int(vpe_fixpt_one, stream_ctx->stream.tm_params.input_pq_norm_factor);
+    }
+
+    // right now shaper is always programmed with linear, once cached, it is always reused.
+    for (uint32_t i = 0; i < vpe_priv->pub.caps->resource_caps.num_mpc_3dlut; i++) {
+        if (vpe_priv->init.debug.disable_lut_caching ||
+            (shaper_func && (shaper_func->cache_info[i].tf != tf))) {
+            // if the caching has the required data cached, skip the update
+            update = true;
+        }
+    }
 
     shaper_func->type = TF_TYPE_HWPWL;
-    shaper_func->tf   = TRANSFER_FUNC_LINEAR;
-    return vpe_build_shaper(&shaper_in, &shaper_func->pwl);
+    shaper_func->tf   = tf;
+
+    if (update) {
+        struct vpe_shaper_setup_in shaper_in;
+
+        shaper_in.shaper_in_max      = 1 << 16;
+        shaper_in.use_const_hdr_mult = false; // can't be true. Fix is required.
+
+        ret = vpe_build_shaper(&shaper_in, shaper_func->tf, pq_norm_gain, &shaper_func->pwl);
+
+        if (ret == VPE_STATUS_OK) {
+            for (uint32_t i = 0; i < vpe_priv->pub.caps->resource_caps.num_mpc_3dlut; i++) {
+                shaper_func->dirty[i]               = true;
+                shaper_func->config_cache[i].cached = false;
+                shaper_func->cache_info[i].tf       = tf;
+            }
+        }
+    }
+    return ret;
 }
 
 enum vpe_status vpe_color_update_movable_cm(
@@ -764,17 +816,18 @@ enum vpe_status vpe_color_update_movable_cm(
     struct stream_ctx *stream_ctx;
     struct output_ctx *output_ctx = &vpe_priv->output_ctx;
 
-    for (stream_idx = 0; stream_idx < param->num_streams; stream_idx++) {
+    for (stream_idx = 0; stream_idx < vpe_priv->num_streams; stream_idx++) {
         stream_ctx = &vpe_priv->stream_ctx[stream_idx];
 
         bool enable_3dlut = stream_ctx->stream.tm_params.UID != 0 || stream_ctx->stream.tm_params.enable_3dlut;
 
-        if (stream_ctx->update_3dlut || stream_ctx->UID_3DLUT != stream_ctx->stream.tm_params.UID) {
+        if (stream_ctx->uid_3dlut != stream_ctx->stream.tm_params.UID) {
 
             uint32_t                 shaper_norm_factor;
             struct vpe_color_space   tm_out_cs;
+            struct vpe_color_space   cs;
             enum color_space         out_lut_cs;
-            enum color_transfer_func tf;
+            enum color_transfer_func tf, lut_in_tf;
 
             if (!stream_ctx->in_shaper_func) {
                 stream_ctx->in_shaper_func = vpe_zalloc(sizeof(struct transfer_func));
@@ -812,28 +865,26 @@ enum vpe_status vpe_color_update_movable_cm(
                 }
             }
 
-            //Blendgam is updated by output vpe_update_output_gamma_sequence
-
-            get_shaper_norm_factor(
-                &param->streams[stream_idx].tm_params, stream_ctx, &shaper_norm_factor);
+            get_shaper_norm_factor(&stream_ctx->stream.tm_params, stream_ctx, &shaper_norm_factor);
 
             vpe_color_tm_update_hdr_mult(SHAPER_EXP_MAX_IN, shaper_norm_factor,
-                &stream_ctx->lut3d_func->hdr_multiplier, enable_3dlut);
+                &stream_ctx->lut3d_func->hdr_multiplier, enable_3dlut,
+                vpe_is_fp16(stream_ctx->stream.surface_info.format));
 
-            vpe_color_update_shaper(SHAPER_EXP_MAX_IN, stream_ctx->in_shaper_func, enable_3dlut);
+            vpe_color_build_shaper_cs(
+                &stream_ctx->stream.tm_params, &vpe_priv->output_ctx.surface, &cs);
+            vpe_color_get_color_space_and_tf(&cs, &out_lut_cs, &lut_in_tf);
+            vpe_color_update_shaper(
+                vpe_priv, SHAPER_EXP_MAX_IN, stream_ctx, lut_in_tf, enable_3dlut);
 
-            vpe_color_build_tm_cs(&stream_ctx->stream.tm_params, vpe_priv->output_ctx.surface, &tm_out_cs);
+            vpe_color_build_tm_cs(
+                &stream_ctx->stream.tm_params, &vpe_priv->output_ctx.surface, &tm_out_cs);
 
             vpe_color_get_color_space_and_tf(&tm_out_cs, &out_lut_cs, &tf);
-
             vpe_color_update_gamut(vpe_priv, out_lut_cs, vpe_priv->output_ctx.cs,
                 output_ctx->gamut_remap, !enable_3dlut);
 
-            vpe_convert_to_tetrahedral(vpe_priv, param->streams[stream_idx].tm_params.lut_data,
-                stream_ctx->lut3d_func, enable_3dlut);
-
-            stream_ctx->update_3dlut = false;
-            stream_ctx->UID_3DLUT = param->streams[stream_idx].tm_params.UID;
+            vpe_color_update_3dlut(vpe_priv, stream_ctx, enable_3dlut);
         }
     }
 exit:
@@ -900,7 +951,7 @@ void vpe_color_get_color_space_and_tf(
                                                      : COLOR_SPACE_2020_YCBCR_LIMITED;
             break;
         case VPE_PRIMARIES_JFIF:
-            *cs = colorRange == VPE_COLOR_RANGE_FULL ? COLOR_SPACE_JFIF : COLOR_SPACE_UNKNOWN;
+            *cs = colorRange == VPE_COLOR_RANGE_FULL ? COLOR_SPACE_YCBCR_JFIF : COLOR_SPACE_UNKNOWN;
             break;
         default:
             break;
@@ -908,8 +959,8 @@ void vpe_color_get_color_space_and_tf(
     } else {
         switch (vcs->primaries) {
         case VPE_PRIMARIES_BT601:
-            *cs = colorRange == VPE_COLOR_RANGE_FULL ? COLOR_SPACE_YCBCR601
-                                                     : COLOR_SPACE_YCBCR601_LIMITED;
+            *cs = colorRange == VPE_COLOR_RANGE_FULL ? COLOR_SPACE_RGB601
+                                                     : COLOR_SPACE_RGB601_LIMITED;
             break;
         case VPE_PRIMARIES_BT709:
             if (vcs->tf == VPE_TF_G10) {
@@ -922,6 +973,13 @@ void vpe_color_get_color_space_and_tf(
         case VPE_PRIMARIES_BT2020:
             *cs = colorRange == VPE_COLOR_RANGE_FULL ? COLOR_SPACE_2020_RGB_FULLRANGE
                                                      : COLOR_SPACE_2020_RGB_LIMITEDRANGE;
+            break;
+        /* VPE doesn't support JFIF format of RGB output, but geometric down scaling will change cs
+         * parameters to JFIF. Therefore, we need to add JFIF format in RGB output to avoid output
+         * color check fail.
+         */
+        case VPE_PRIMARIES_JFIF:
+            *cs = colorRange == VPE_COLOR_RANGE_FULL ? COLOR_SPACE_RGB_JFIF : COLOR_SPACE_UNKNOWN;
             break;
         default:
             break;
@@ -949,6 +1007,9 @@ void vpe_convert_full_range_color_enum(enum color_space *cs)
     switch (*cs) {
     case COLOR_SPACE_YCBCR601_LIMITED:
         *cs = COLOR_SPACE_YCBCR601;
+        break;
+    case COLOR_SPACE_RGB601_LIMITED:
+        *cs = COLOR_SPACE_RGB601;
         break;
     case COLOR_SPACE_YCBCR709_LIMITED:
         *cs = COLOR_SPACE_YCBCR709;
@@ -996,17 +1057,18 @@ enum vpe_status vpe_color_update_whitepoint(
     const struct vpe_color_space *vpe_cs       = &stream->stream.surface_info.cs;
     bool                          output_isHDR = vpe_is_HDR(vpe_priv->output_ctx.tf);
     bool                          input_isHDR  = false;
-    bool                          isYCbCr      = false;
-    bool                          isG24        = false;
+    bool                          is_yCbCr     = false;
+    bool                          is_g24       = false;
+    bool                          is_fp16      = false;
 
     for (unsigned int stream_index = 0; stream_index < vpe_priv->num_streams; stream_index++) {
 
         input_isHDR = vpe_is_HDR(stream->tf);
-        isYCbCr     = (vpe_cs->encoding == VPE_PIXEL_ENCODING_YCbCr);
-        isG24       = (vpe_cs->tf == VPE_TF_G24);
-
+        is_yCbCr    = stream->is_yuv_input;
+        is_g24      = (vpe_cs->tf == VPE_TF_G24);
+        is_fp16     = vpe_is_fp16(stream->stream.surface_info.format);
         if (!input_isHDR && output_isHDR) {
-            int sdrWhiteLevel        = (isYCbCr || isG24) ? SDR_VIDEO_WHITE_POINT : SDR_WHITE_POINT;
+            int sdrWhiteLevel = (is_yCbCr || is_g24) ? SDR_VIDEO_WHITE_POINT : SDR_WHITE_POINT;
             stream->white_point_gain = vpe_fixpt_from_fraction(sdrWhiteLevel, 10000);
         } else if (input_isHDR && !output_isHDR) {
 
@@ -1017,7 +1079,53 @@ enum vpe_status vpe_color_update_whitepoint(
         } else {
             stream->white_point_gain = vpe_fixpt_one;
         }
+
+        if (is_fp16) {
+            stream->white_point_gain = vpe_fixpt_div_int(stream->white_point_gain, CCCS_NORM);
+        }
+
         stream++;
     }
     return VPE_STATUS_OK;
+}
+
+enum color_range_type vpe_get_range_type(
+    enum color_space color_space, enum vpe_surface_pixel_format format)
+{
+    bool is_limited = false;
+
+    switch (color_space) {
+    case COLOR_SPACE_SRGB:
+    case COLOR_SPACE_MSREF_SCRGB:
+    case COLOR_SPACE_YCBCR601:
+    case COLOR_SPACE_RGB601:
+    case COLOR_SPACE_YCBCR709:
+    case COLOR_SPACE_YCBCR_JFIF:
+    case COLOR_SPACE_RGB_JFIF:
+    case COLOR_SPACE_2020_RGB_FULLRANGE:
+    case COLOR_SPACE_2020_YCBCR:
+        is_limited = false;
+        break;
+    case COLOR_SPACE_SRGB_LIMITED:
+    case COLOR_SPACE_RGB601_LIMITED:
+    case COLOR_SPACE_YCBCR601_LIMITED:
+    case COLOR_SPACE_YCBCR709_LIMITED:
+    case COLOR_SPACE_2020_RGB_LIMITEDRANGE:
+    case COLOR_SPACE_2020_YCBCR_LIMITED:
+        is_limited = true;
+        break;
+    default:
+        VPE_ASSERT(false);
+        break;
+    }
+
+    if (!is_limited)
+        return COLOR_RANGE_FULL;
+
+    if (vpe_is_8bit(format))
+        return COLOR_RANGE_LIMITED_8BPC;
+    else if (vpe_is_10bit(format))
+        return COLOR_RANGE_LIMITED_10BPC;
+    else
+        return COLOR_RANGE_LIMITED_16BPC;
 }

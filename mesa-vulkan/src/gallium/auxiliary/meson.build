@@ -196,8 +196,6 @@ files_libgallium = files(
   'util/u_blitter.h',
   'util/u_cache.c',
   'util/u_cache.h',
-  'util/u_compute.c',
-  'util/u_compute.h',
   'util/u_debug_cb.h',
   'util/u_debug_describe.c',
   'util/u_debug_describe.h',
@@ -408,6 +406,8 @@ files_libgalliumvl = files(
   'vl/vl_defines.h',
   'vl/vl_deint_filter.c',
   'vl/vl_deint_filter.h',
+  'vl/vl_deint_filter_cs.c',
+  'vl/vl_deint_filter_cs.h',
   'vl/vl_idct.c',
   'vl/vl_idct.h',
   'vl/vl_matrix_filter.c',
@@ -437,15 +437,18 @@ if host_machine.system() == 'windows'
 else
   files_libgalliumvlwinsys += files('vl/vl_winsys_drm.c')
 endif
-if with_dri2 and with_platform_x11
+if with_platform_x11
   files_libgalliumvlwinsys += files('vl/vl_winsys_dri.c')
-  if with_dri3
+  if with_dri_platform == 'drm'
     vlwinsys_deps += [
       dep_xcb_sync, dep_xcb_present, dep_xshmfence, dep_xcb_xfixes,
       dep_xcb_dri3,
     ]
     files_libgalliumvlwinsys += files('vl/vl_winsys_dri3.c')
   endif
+endif
+if with_gallium_zink
+  files_libgalliumvlwinsys += files('vl/vl_winsys_kopper.c')
 endif
 
 if with_glx == 'xlib'
@@ -562,8 +565,7 @@ libgalliumvl = static_library(
 
 # some drivers export their screen creation function globally, so all frontends have to contain the
 # full libgalliumvl. So we'll handle this here globally for everybody.
-if (with_gallium_va or with_gallium_vdpau or with_gallium_omx != 'disabled' or
-   with_dri or with_gallium_radeonsi)
+if (with_gallium_va or with_gallium_vdpau or with_dri or with_gallium_radeonsi)
   libgalliumvl_stub = libgalliumvl
 else
   libgalliumvl_stub = _libgalliumvl_stub
@@ -573,7 +575,8 @@ endif
 libgalliumvlwinsys = static_library(
   'galliumvlwinsys',
   files_libgalliumvlwinsys,
-  include_directories : [inc_gallium, inc_include, inc_loader, inc_src],
+  include_directories : [inc_gallium, inc_include, inc_loader, inc_src, include_directories('../drivers/zink')],
   dependencies : [dep_libdrm, vlwinsys_deps, idep_mesautil],
+  link_with : [libloader_x11],
   build_by_default : false,
 )

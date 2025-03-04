@@ -8,6 +8,30 @@
 
 #include "adreno_common.xml.h"
 
+enum fd_lrz_gpu_dir : uint8_t {
+   FD_LRZ_GPU_DIR_DISABLED = 0,
+   FD_LRZ_GPU_DIR_LESS = 1,
+   FD_LRZ_GPU_DIR_GREATER = 2,
+   FD_LRZ_GPU_DIR_NOT_SET = 3,
+};
+
+UNUSED static const char *
+fd_lrz_gpu_dir_to_str(enum fd_lrz_gpu_dir dir)
+{
+   switch (dir) {
+   case FD_LRZ_GPU_DIR_DISABLED:
+      return "DISABLED";
+   case FD_LRZ_GPU_DIR_LESS:
+      return "DIR_LESS";
+   case FD_LRZ_GPU_DIR_GREATER:
+      return "DIR_GREATER";
+   case FD_LRZ_GPU_DIR_NOT_SET:
+      return "DIR_NOT_SET";
+   default:
+      return "INVALID";
+   }
+}
+
 /* Layout of LRZ fast-clear buffer templated on the generation, the
  * members are as follows:
  * - fc1: The first FC buffer, always present. This may contain multiple
@@ -30,7 +54,7 @@ struct PACKED fd_lrzfc_layout<A6XX> {
    uint8_t fc1[FC_SIZE];
    union {
       struct {
-         uint8_t dir_track;
+         enum fd_lrz_gpu_dir dir_track;
          uint8_t _pad_;
          uint32_t gras_lrz_depth_view;
       };
@@ -51,7 +75,15 @@ struct PACKED fd_lrzfc_layout<A7XX> {
       };
       uint8_t fc1[FC_SIZE * 2];
    };
-   uint8_t metadata[512];
+   union {
+      struct {
+         enum fd_lrz_gpu_dir dir_track;
+         uint8_t _padding0;
+         uint32_t gras_lrz_depth_view;
+      };
+      uint8_t metadata[512];
+   };
+   uint8_t _padding1[1536];
    union {
       struct {
          uint8_t fc2_a[FC_SIZE];
@@ -60,5 +92,9 @@ struct PACKED fd_lrzfc_layout<A7XX> {
       uint8_t fc2[FC_SIZE * 2];
    };
 };
+
+static_assert(sizeof(fd_lrzfc_layout<A7XX>) == 0x1800);
+static_assert(offsetof(fd_lrzfc_layout<A7XX>, fc1) == 0x0);
+static_assert(offsetof(fd_lrzfc_layout<A7XX>, fc2) == 0x1000);
 
 #endif

@@ -19,6 +19,7 @@
 #include "vk_log.h"
 #include "vk_util.h"
 
+#include "util/compiler.h"
 #include "util/format_r11g11b10f.h"
 #include "util/format_rgb9e5.h"
 #include "util/format_srgb.h"
@@ -108,12 +109,16 @@ radv_is_atomic_format_supported(VkFormat format)
 bool
 radv_is_storage_image_format_supported(const struct radv_physical_device *pdev, VkFormat format)
 {
+   const struct radv_instance *instance = radv_physical_device_instance(pdev);
    const struct util_format_description *desc = vk_format_description(format);
    unsigned data_format, num_format;
    if (format == VK_FORMAT_UNDEFINED)
       return false;
 
    if (vk_format_has_stencil(format))
+      return false;
+
+   if (instance->drirc.disable_depth_storage && vk_format_has_depth(format))
       return false;
 
    data_format = radv_translate_tex_dataformat(pdev, desc, vk_format_get_first_non_void_channel(format));
@@ -244,13 +249,13 @@ radv_is_zs_format_supported(VkFormat format)
    if (format == VK_FORMAT_D24_UNORM_S8_UINT || format == VK_FORMAT_X8_D24_UNORM_PACK32)
       return false;
 
-   return ac_is_zs_format_supported(vk_format_to_pipe_format(format)) || format == VK_FORMAT_S8_UINT;
+   return ac_is_zs_format_supported(radv_format_to_pipe_format(format)) || format == VK_FORMAT_S8_UINT;
 }
 
 static bool
 radv_is_filter_minmax_format_supported(const struct radv_physical_device *pdev, VkFormat format)
 {
-   return ac_is_reduction_mode_supported(&pdev->info, vk_format_to_pipe_format(format), false);
+   return ac_is_reduction_mode_supported(&pdev->info, radv_format_to_pipe_format(format), false);
 }
 
 bool
@@ -269,7 +274,6 @@ static void
 radv_physical_device_get_format_properties(struct radv_physical_device *pdev, VkFormat format,
                                            VkFormatProperties3 *out_properties)
 {
-   const struct radv_instance *instance = radv_physical_device_instance(pdev);
    VkFormatFeatureFlags2 linear = 0, tiled = 0, buffer = 0;
    const struct util_format_description *desc = vk_format_description(format);
    bool scaled = false;
@@ -315,15 +319,17 @@ radv_physical_device_get_format_properties(struct radv_physical_device *pdev, Vk
             tiling |= VK_FORMAT_FEATURE_2_SAMPLED_IMAGE_YCBCR_CONVERSION_LINEAR_FILTER_BIT;
       }
 
-      if (instance->perftest_flags & RADV_PERFTEST_VIDEO_DECODE) {
+      if (pdev->video_decode_enabled) {
          if (format == VK_FORMAT_G8_B8R8_2PLANE_420_UNORM ||
-             format == VK_FORMAT_G10X6_B10X6R10X6_2PLANE_420_UNORM_3PACK16)
+             format == VK_FORMAT_G10X6_B10X6R10X6_2PLANE_420_UNORM_3PACK16 ||
+             format == VK_FORMAT_G12X4_B12X4R12X4_2PLANE_420_UNORM_3PACK16)
             tiling |= VK_FORMAT_FEATURE_2_VIDEO_DECODE_OUTPUT_BIT_KHR | VK_FORMAT_FEATURE_2_VIDEO_DECODE_DPB_BIT_KHR;
       }
 
       if (pdev->video_encode_enabled) {
          if (format == VK_FORMAT_G8_B8R8_2PLANE_420_UNORM ||
-             format == VK_FORMAT_G10X6_B10X6R10X6_2PLANE_420_UNORM_3PACK16)
+             format == VK_FORMAT_G10X6_B10X6R10X6_2PLANE_420_UNORM_3PACK16 ||
+             format == VK_FORMAT_G12X4_B12X4R12X4_2PLANE_420_UNORM_3PACK16)
             tiling |= VK_FORMAT_FEATURE_2_VIDEO_ENCODE_INPUT_BIT_KHR | VK_FORMAT_FEATURE_2_VIDEO_ENCODE_DPB_BIT_KHR;
       }
 
@@ -622,10 +628,10 @@ radv_get_modifier_flags(struct radv_physical_device *pdev, VkFormat format, uint
          return 0;
 
       /* Only disable support for STORAGE_IMAGE on modifiers that
-       * do not support DCC image stores.
+       * do not support DCC image stores or when explicitly disabled.
        */
       if (!ac_modifier_supports_dcc_image_stores(pdev->info.gfx_level, modifier) ||
-          radv_is_atomic_format_supported(format))
+          radv_is_atomic_format_supported(format) || instance->drirc.disable_dcc_stores)
          features &= ~VK_FORMAT_FEATURE_2_STORAGE_IMAGE_BIT;
 
       if (instance->debug_flags & (RADV_DEBUG_NO_DCC | RADV_DEBUG_NO_DISPLAY_DCC))
@@ -652,7 +658,8 @@ radv_list_drm_format_modifiers(struct radv_physical_device *pdev, VkFormat forma
    VK_OUTARRAY_MAKE_TYPED(VkDrmFormatModifierPropertiesEXT, out, mod_list->pDrmFormatModifierProperties,
                           &mod_list->drmFormatModifierCount);
 
-   ac_get_supported_modifiers(&pdev->info, &radv_modifier_options, vk_format_to_pipe_format(format), &mod_count, NULL);
+   ac_get_supported_modifiers(&pdev->info, &radv_modifier_options, radv_format_to_pipe_format(format), &mod_count,
+                              NULL);
 
    uint64_t *mods = malloc(mod_count * sizeof(uint64_t));
    if (!mods) {
@@ -660,15 +667,22 @@ radv_list_drm_format_modifiers(struct radv_physical_device *pdev, VkFormat forma
       mod_list->drmFormatModifierCount = 0;
       return;
    }
-   ac_get_supported_modifiers(&pdev->info, &radv_modifier_options, vk_format_to_pipe_format(format), &mod_count, mods);
+   ac_get_supported_modifiers(&pdev->info, &radv_modifier_options, radv_format_to_pipe_format(format), &mod_count,
+                              mods);
 
    for (unsigned i = 0; i < mod_count; ++i) {
       VkFormatFeatureFlags2 features = radv_get_modifier_flags(pdev, format, mods[i], format_props);
       if (!features)
          continue;
 
-      unsigned planes =
-         vk_format_get_plane_count(format) + ac_modifier_has_dcc(mods[i]) + ac_modifier_has_dcc_retile(mods[i]);
+      unsigned planes = vk_format_get_plane_count(format);
+
+      if (pdev->info.gfx_level < GFX12) {
+         /* DCC is transparent to the userspace driver on GFX12 so it doesn't
+          * need additional planes.
+          */
+         planes += ac_modifier_has_dcc(mods[i]) + ac_modifier_has_dcc_retile(mods[i]);
+      }
 
       vk_outarray_append_typed(VkDrmFormatModifierPropertiesEXT, &out, out_props)
       {
@@ -701,7 +715,8 @@ radv_list_drm_format_modifiers_2(struct radv_physical_device *pdev, VkFormat for
    VK_OUTARRAY_MAKE_TYPED(VkDrmFormatModifierProperties2EXT, out, mod_list->pDrmFormatModifierProperties,
                           &mod_list->drmFormatModifierCount);
 
-   ac_get_supported_modifiers(&pdev->info, &radv_modifier_options, vk_format_to_pipe_format(format), &mod_count, NULL);
+   ac_get_supported_modifiers(&pdev->info, &radv_modifier_options, radv_format_to_pipe_format(format), &mod_count,
+                              NULL);
 
    uint64_t *mods = malloc(mod_count * sizeof(uint64_t));
    if (!mods) {
@@ -709,15 +724,22 @@ radv_list_drm_format_modifiers_2(struct radv_physical_device *pdev, VkFormat for
       mod_list->drmFormatModifierCount = 0;
       return;
    }
-   ac_get_supported_modifiers(&pdev->info, &radv_modifier_options, vk_format_to_pipe_format(format), &mod_count, mods);
+   ac_get_supported_modifiers(&pdev->info, &radv_modifier_options, radv_format_to_pipe_format(format), &mod_count,
+                              mods);
 
    for (unsigned i = 0; i < mod_count; ++i) {
       VkFormatFeatureFlags2 features = radv_get_modifier_flags(pdev, format, mods[i], format_props);
       if (!features)
          continue;
 
-      unsigned planes =
-         vk_format_get_plane_count(format) + ac_modifier_has_dcc(mods[i]) + ac_modifier_has_dcc_retile(mods[i]);
+      unsigned planes = vk_format_get_plane_count(format);
+
+      if (pdev->info.gfx_level < GFX12) {
+         /* DCC is transparent to the userspace driver on GFX12 so it doesn't
+          * need additional planes.
+          */
+         planes += ac_modifier_has_dcc(mods[i]) + ac_modifier_has_dcc_retile(mods[i]);
+      }
 
       vk_outarray_append_typed(VkDrmFormatModifierProperties2EXT, &out, out_props)
       {
@@ -737,9 +759,6 @@ radv_check_modifier_support(struct radv_physical_device *pdev, const VkPhysicalD
                             VkImageFormatProperties *props, VkFormat format, uint64_t modifier)
 {
    uint32_t max_width, max_height;
-
-   if (info->type != VK_IMAGE_TYPE_2D)
-      return VK_ERROR_FORMAT_NOT_SUPPORTED;
 
    if (radv_is_format_emulated(pdev, format))
       return VK_ERROR_FORMAT_NOT_SUPPORTED;
@@ -1079,8 +1098,6 @@ get_external_image_format_properties(struct radv_physical_device *pdev,
          break;
       FALLTHROUGH;
    case VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT:
-      if (pImageFormatInfo->type != VK_IMAGE_TYPE_2D)
-         break;
       flags = VK_EXTERNAL_MEMORY_FEATURE_EXPORTABLE_BIT | VK_EXTERNAL_MEMORY_FEATURE_IMPORTABLE_BIT;
       if (handleType == VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT &&
           pImageFormatInfo->tiling != VK_IMAGE_TILING_LINEAR)
@@ -1210,8 +1227,8 @@ radv_GetPhysicalDeviceImageFormatProperties2(VkPhysicalDevice physicalDevice,
           *    vkGetPhysicalDeviceImageFormatProperties2 returns
           *    VK_ERROR_FORMAT_NOT_SUPPORTED.
           */
-         result = vk_errorf(pdev, VK_ERROR_FORMAT_NOT_SUPPORTED, "unsupported VkExternalMemoryTypeFlagBitsKHR 0x%x",
-                            external_info->handleType);
+         result = vk_errorf(pdev, VK_ERROR_FORMAT_NOT_SUPPORTED, "unsupported VkExternalMemoryHandleTypeFlagBits %s",
+                            vk_ExternalMemoryHandleTypeFlagBits_to_str(external_info->handleType));
          goto fail;
       }
    }
@@ -1390,9 +1407,8 @@ radv_GetDeviceImageSparseMemoryRequirements(VkDevice device, const VkDeviceImage
    UNUSED VkResult result;
    VkImage image;
 
-   /* Determining the image size/alignment require to create a surface, which is complicated without
-    * creating an image.
-    * TODO: Avoid creating an image.
+   /* Determining the image size/alignment require to create a surface, which isn't really possible
+    * without creating an image.
     */
    result =
       radv_image_create(device, &(struct radv_image_create_info){.vk_info = pInfo->pCreateInfo}, NULL, &image, true);

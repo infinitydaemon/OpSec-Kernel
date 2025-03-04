@@ -28,7 +28,7 @@
 #define _LARGEFILE64_SOURCE 1
 #include <assert.h>
 #include <sys/mman.h>
-#include "pan_afbc_cso.h"
+#include "pan_mod_conv_cso.h"
 #include "pan_blend_cso.h"
 #include "pan_earlyzs.h"
 #include "pan_encoder.h"
@@ -46,6 +46,7 @@
 #include "util/hash_table.h"
 #include "util/simple_mtx.h"
 #include "util/u_blitter.h"
+#include "util/u_printf.h"
 
 #include "compiler/shader_enums.h"
 #include "midgard/midgard_compile.h"
@@ -123,6 +124,9 @@ struct panfrost_streamout {
 struct panfrost_context {
    /* Gallium context */
    struct pipe_context base;
+
+   /* Context flags */
+   unsigned flags;
 
    /* Dirty global state */
    enum pan_dirty_3d dirty;
@@ -206,7 +210,7 @@ struct panfrost_context {
 
    struct blitter_context *blitter;
 
-   struct pan_afbc_shaders afbc_shaders;
+   struct pan_mod_convert_shaders mod_convert_shaders;
 
    struct panfrost_blend_state *blend;
 
@@ -239,6 +243,11 @@ struct panfrost_context {
    union {
       struct panfrost_csf_context csf;
    };
+
+   struct {
+      struct u_printf_ctx ctx;
+      struct panfrost_bo *bo;
+   } printf;
 };
 
 /* Corresponds to the CSO */
@@ -253,7 +262,7 @@ struct pan_linkage {
    struct panfrost_bo *bo;
 
    /* Uploaded attribute descriptors */
-   mali_ptr producer, consumer;
+   uint64_t producer, consumer;
 
    /* Varyings buffers required */
    uint32_t present;
@@ -293,6 +302,7 @@ enum {
    PAN_SYSVAL_BLEND_CONSTANTS = 16,
    PAN_SYSVAL_XFB = 17,
    PAN_SYSVAL_NUM_VERTICES = 18,
+   PAN_SYSVAL_PRINTF_BUFFER = 19,
 };
 
 #define PAN_TXS_SYSVAL_ID(texidx, dim, is_array)                               \
@@ -322,6 +332,7 @@ enum panfrost_resource_table {
    PAN_TABLE_SAMPLER,
    PAN_TABLE_TEXTURE,
    PAN_TABLE_IMAGE,
+   PAN_TABLE_SSBO,
 
    PAN_NUM_RESOURCE_TABLES
 };
@@ -352,17 +363,20 @@ struct panfrost_fs_key {
    bool line_smooth;
 };
 
+struct panfrost_vs_key {
+   /* We have a special "transform feedback" vertex program derived from a
+    * vertex shader. If is_xfb is set on a vertex shader, this is a transform
+    * feedback shader, else it is a regular vertex shader. */
+   bool is_xfb;
+
+   /* Bit mask of varyings in the linked FS that use noperspective
+    * interpolation, starting at VARYING_SLOT_VAR0 */
+   uint32_t noperspective_varyings;
+};
+
 struct panfrost_shader_key {
    union {
-      /* Vertex shaders do not use shader keys. However, we have a
-       * special "transform feedback" vertex program derived from a
-       * vertex shader. If vs_is_xfb is set on a vertex shader, this
-       * is a transform feedback shader, else it is a regular
-       * (unkeyed) vertex shader.
-       */
-      bool vs_is_xfb;
-
-      /* Fragment shaders use regular shader keys */
+      struct panfrost_vs_key vs;
       struct panfrost_fs_key fs;
    };
 };
@@ -419,6 +433,10 @@ struct panfrost_uncompiled_shader {
     */
    uint32_t fixed_varying_mask;
 
+   /* On fragments shaders, bit mask of varyings using noprespective
+    * interpolation, starting at VARYING_SLOT_VAR0 */
+   uint32_t noperspective_varyings;
+
    /* If gl_FragColor was lowered, we need to optimize the stores later */
    bool fragcolor_lowered;
 };
@@ -454,7 +472,7 @@ void panfrost_disk_cache_init(struct panfrost_screen *screen);
 
 bool panfrost_nir_remove_fragcolor_stores(nir_shader *s, unsigned nr_cbufs);
 
-bool panfrost_nir_lower_sysvals(nir_shader *s,
+bool panfrost_nir_lower_sysvals(nir_shader *s, unsigned arch,
                                 struct panfrost_sysvals *sysvals);
 
 bool panfrost_nir_lower_res_indices(nir_shader *shader,
@@ -507,12 +525,12 @@ void panfrost_update_shader_variant(struct panfrost_context *ctx,
 
 void panfrost_analyze_sysvals(struct panfrost_compiled_shader *ss);
 
-mali_ptr
+uint64_t
 panfrost_get_index_buffer(struct panfrost_batch *batch,
                           const struct pipe_draw_info *info,
                           const struct pipe_draw_start_count_bias *draw);
 
-mali_ptr
+uint64_t
 panfrost_get_index_buffer_bounded(struct panfrost_batch *batch,
                                   const struct pipe_draw_info *info,
                                   const struct pipe_draw_start_count_bias *draw,
@@ -520,7 +538,7 @@ panfrost_get_index_buffer_bounded(struct panfrost_batch *batch,
 
 /* Instancing */
 
-mali_ptr panfrost_vertex_buffer_address(struct panfrost_context *ctx,
+uint64_t panfrost_vertex_buffer_address(struct panfrost_context *ctx,
                                         unsigned i);
 
 void panfrost_shader_context_init(struct pipe_context *pctx);

@@ -24,6 +24,7 @@
 #include "nir_schedule.h"
 #include "util/dag.h"
 #include "util/u_dynarray.h"
+#include "nir.h"
 
 /** @file
  *
@@ -395,6 +396,8 @@ nir_schedule_intrinsic_deps(nir_deps_state *state,
 
    case nir_intrinsic_shared_atomic:
    case nir_intrinsic_shared_atomic_swap:
+   case nir_intrinsic_shared_append_amd:
+   case nir_intrinsic_shared_consume_amd:
    case nir_intrinsic_store_shared:
    case nir_intrinsic_store_shared2_amd:
       add_write_dep(state, &state->store_shared, n);
@@ -411,6 +414,15 @@ nir_schedule_intrinsic_deps(nir_deps_state *state,
 
       break;
    }
+
+   case nir_intrinsic_ddx:
+   case nir_intrinsic_ddx_fine:
+   case nir_intrinsic_ddx_coarse:
+   case nir_intrinsic_ddy:
+   case nir_intrinsic_ddy_fine:
+   case nir_intrinsic_ddy_coarse:
+      /* Match the old behaviour. TODO: Is this correct with discards? */
+      break;
 
    default:
       /* Attempt to handle other intrinsics that we haven't individually

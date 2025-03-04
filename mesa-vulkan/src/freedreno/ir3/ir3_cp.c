@@ -1,24 +1,6 @@
 /*
- * Copyright (C) 2014 Rob Clark <robclark@freedesktop.org>
- *
- * Permission is hereby granted, free of charge, to any person obtaining a
- * copy of this software and associated documentation files (the "Software"),
- * to deal in the Software without restriction, including without limitation
- * the rights to use, copy, modify, merge, publish, distribute, sublicense,
- * and/or sell copies of the Software, and to permit persons to whom the
- * Software is furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice (including the next
- * paragraph) shall be included in all copies or substantial portions of the
- * Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
- * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
- * SOFTWARE.
+ * Copyright © 2014 Rob Clark <robclark@freedesktop.org>
+ * SPDX-License-Identifier: MIT
  *
  * Authors:
  *    Rob Clark <robclark@freedesktop.org>
@@ -187,43 +169,20 @@ lower_immed(struct ir3_cp_ctx *ctx, struct ir3_instruction *instr, unsigned n,
       new_flags &= ~IR3_REG_FNEG;
    }
 
-   /* Reallocate for 4 more elements whenever it's necessary.  Note that ir3
-    * printing relies on having groups of 4 dwords, so we fill the unused
-    * slots with a dummy value.
-    */
-   struct ir3_const_state *const_state = ir3_const_state(ctx->so);
-   if (const_state->immediates_count == const_state->immediates_size) {
-      const_state->immediates = rerzalloc(
-         const_state, const_state->immediates,
-         __typeof__(const_state->immediates[0]), const_state->immediates_size,
-         const_state->immediates_size + 4);
-      const_state->immediates_size += 4;
+   reg->num = ir3_const_find_imm(ctx->so, reg->uim_val);
 
-      for (int i = const_state->immediates_count;
-           i < const_state->immediates_size; i++)
-         const_state->immediates[i] = 0xd0d0d0d0;
-   }
-
-   int i;
-   for (i = 0; i < const_state->immediates_count; i++) {
-      if (const_state->immediates[i] == reg->uim_val)
-         break;
-   }
-
-   if (i == const_state->immediates_count) {
-      /* Add on a new immediate to be pushed, if we have space left in the
-       * constbuf.
-       */
-      if (const_state->offsets.immediate + const_state->immediates_count / 4 >=
-          ir3_max_const(ctx->so))
+   if (reg->num == INVALID_CONST_REG) {
+      /* Don't modify the const state for the binning variant. */
+      if (ctx->so->binning_pass)
          return false;
 
-      const_state->immediates[i] = reg->uim_val;
-      const_state->immediates_count++;
+      reg->num = ir3_const_add_imm(ctx->so, reg->uim_val);
+
+      if (reg->num == INVALID_CONST_REG)
+         return false;
    }
 
    reg->flags = new_flags;
-   reg->num = i + (4 * const_state->offsets.immediate);
 
    instr->srcs[n] = reg;
 
@@ -250,15 +209,47 @@ unuse(struct ir3_instruction *instr)
    }
 }
 
+/* Try to swap src n of instr using new_flags with src swap_n. */
+static bool
+try_swap_two_srcs(struct ir3_instruction *instr, unsigned n, unsigned new_flags,
+                  unsigned swap_n)
+{
+   /* NOTE: pre-swap first two src's before valid_flags(),
+    * which might try to dereference the n'th src:
+    */
+   swap(instr->srcs[swap_n], instr->srcs[n]);
+
+   bool valid_swap =
+      /* can we propagate mov if we move 2nd src to first? */
+      ir3_valid_flags(instr, swap_n, new_flags) &&
+      /* and does first src fit in second slot? */
+      ir3_valid_flags(instr, n, instr->srcs[n]->flags);
+
+   if (!valid_swap) {
+      /* put things back the way they were: */
+      swap(instr->srcs[swap_n], instr->srcs[n]);
+   } else {
+      /* otherwise leave things swapped */
+      instr->cat3.swapped = true;
+   }
+
+   return valid_swap;
+}
+
 /**
  * Handles the special case of the 2nd src (n == 1) to "normal" mad
  * instructions, which cannot reference a constant.  See if it is
  * possible to swap the 1st and 2nd sources.
+ * The same case is handled for sad but since it's 3-src commutative, we can
+ * also try to swap the 2nd src with the 3rd. In addition, we can try to swap
+ * either the 1st or 3rd srcs with the 2nd which may be useful since only the
+ * 2nd src supports (neg).
  */
 static bool
-try_swap_mad_two_srcs(struct ir3_instruction *instr, unsigned new_flags)
+try_swap_cat3_two_srcs(struct ir3_instruction *instr, unsigned n,
+                       unsigned new_flags)
 {
-   if (!is_mad(instr->opc))
+   if (!(is_mad(instr->opc) && n == 1) && !is_sad(instr->opc))
       return false;
 
    /* If we've already tried, nothing more to gain.. we will only
@@ -280,28 +271,23 @@ try_swap_mad_two_srcs(struct ir3_instruction *instr, unsigned new_flags)
    /* If the reason we couldn't fold without swapping is something
     * other than const source, then swapping won't help:
     */
-   if (!(new_flags & (IR3_REG_CONST | IR3_REG_SHARED)))
+   if (!(new_flags & (IR3_REG_CONST | IR3_REG_SHARED | IR3_REG_SNEG)))
       return false;
 
-   instr->cat3.swapped = true;
+   if (n == 1) {
+      /* Both mad and sad support swapping srcs 2 and 1. */
+      if (try_swap_two_srcs(instr, n, new_flags, 0)) {
+         return true;
+      }
 
-   /* NOTE: pre-swap first two src's before valid_flags(),
-    * which might try to dereference the n'th src:
-    */
-   swap(instr->srcs[0], instr->srcs[1]);
+      /* sad also supports swapping srcs 2 and 3. */
+      if (is_sad(instr->opc) && try_swap_two_srcs(instr, n, new_flags, 2)) {
+         return true;
+      }
+   }
 
-   bool valid_swap =
-      /* can we propagate mov if we move 2nd src to first? */
-      ir3_valid_flags(instr, 0, new_flags) &&
-      /* and does first src fit in second slot? */
-      ir3_valid_flags(instr, 1, instr->srcs[1]->flags);
-
-   if (!valid_swap) {
-      /* put things back the way they were: */
-      swap(instr->srcs[0], instr->srcs[1]);
-   } /* otherwise leave things swapped */
-
-   return valid_swap;
+   /* sad also supports swapping srcs 1 or 3 with 2. */
+   return is_sad(instr->opc) && try_swap_two_srcs(instr, n, new_flags, 1);
 }
 
 /**
@@ -339,7 +325,7 @@ reg_cp(struct ir3_cp_ctx *ctx, struct ir3_instruction *instr,
          reg->def->instr->use_count++;
 
          return true;
-      } else if (n == 1 && try_swap_mad_two_srcs(instr, new_flags)) {
+      } else if (try_swap_cat3_two_srcs(instr, n, new_flags)) {
          return true;
       }
    } else if ((is_same_type_mov(src) || is_const_mov(src)) &&
@@ -366,7 +352,7 @@ reg_cp(struct ir3_cp_ctx *ctx, struct ir3_instruction *instr,
           * src prior to multiply) can swap their first two srcs if
           * src[0] is !CONST and src[1] is CONST:
           */
-         if ((n == 1) && try_swap_mad_two_srcs(instr, new_flags)) {
+         if (try_swap_cat3_two_srcs(instr, n, new_flags)) {
             return true;
          } else {
             return false;
@@ -442,6 +428,7 @@ reg_cp(struct ir3_cp_ctx *ctx, struct ir3_instruction *instr,
 
          assert((opc_cat(instr->opc) == 1) ||
                       (opc_cat(instr->opc) == 2) ||
+                      (is_cat3_alt(instr->opc) && (n == 0 || n == 2)) ||
                       (opc_cat(instr->opc) == 6) ||
                       is_meta(instr) ||
                       (instr->opc == OPC_ISAM && (n == 1 || n == 2)) ||
@@ -590,8 +577,8 @@ instr_cp(struct ir3_cp_ctx *ctx, struct ir3_instruction *instr)
 
       assert(samp_tex->opc == OPC_META_COLLECT);
 
-      struct ir3_register *samp = samp_tex->srcs[0];
-      struct ir3_register *tex = samp_tex->srcs[1];
+      struct ir3_register *tex = samp_tex->srcs[0];
+      struct ir3_register *samp = samp_tex->srcs[1];
 
       if ((samp->flags & IR3_REG_IMMED) && (tex->flags & IR3_REG_IMMED) &&
           (samp->iim_val < 16) && (tex->iim_val < 16)) {

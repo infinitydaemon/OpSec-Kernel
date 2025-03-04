@@ -1,7 +1,7 @@
 /*
 ************************************************************************************************************************
 *
-*  Copyright (C) 2023 Advanced Micro Devices, Inc.  All rights reserved.
+*  Copyright (C) 2022-2024 Advanced Micro Devices, Inc. All rights reserved.
 *  SPDX-License-Identifier: MIT
 *
 ***********************************************************************************************************************/
@@ -71,6 +71,11 @@ protected:
         return inTail;
     }
 
+    virtual ADDR_E_RETURNCODE HwlComputeSurfaceAddrFromCoordLinear(
+        const ADDR3_COMPUTE_SURFACE_ADDRFROMCOORD_INPUT* pIn,
+        const ADDR3_COMPUTE_SURFACE_INFO_INPUT*          pSurfInfoIn,
+        ADDR3_COMPUTE_SURFACE_ADDRFROMCOORD_OUTPUT*      pOut) const override;
+
     virtual ADDR_E_RETURNCODE HwlComputeSurfaceAddrFromCoordTiled(
         const ADDR3_COMPUTE_SURFACE_ADDRFROMCOORD_INPUT* pIn,
         ADDR3_COMPUTE_SURFACE_ADDRFROMCOORD_OUTPUT*      pOut) const override;
@@ -97,6 +102,8 @@ protected:
         return m_numEquations;
     }
 
+    BOOL_32 HwlValidateNonSwModeParams(const ADDR3_GET_POSSIBLE_SWIZZLE_MODE_INPUT* pIn) const override;
+
     virtual ADDR_E_RETURNCODE HwlGetPossibleSwizzleModes(
         const ADDR3_GET_POSSIBLE_SWIZZLE_MODE_INPUT*   pIn,
         ADDR3_GET_POSSIBLE_SWIZZLE_MODE_OUTPUT*        pOut) const override;
@@ -107,6 +114,9 @@ protected:
     virtual VOID HwlCalcBlockSize(
         const ADDR3_COMPUTE_SURFACE_INFO_PARAMS_INPUT* pIn,
         ADDR_EXTENT3D*                                 pExtent) const override final;
+
+    ADDR_EXTENT3D HwlGetMicroBlockSize(
+        const ADDR3_COMPUTE_SURFACE_INFO_PARAMS_INPUT* pIn) const;
 
     virtual ADDR_EXTENT3D HwlGetMipInTailMaxSize(
         const ADDR3_COMPUTE_SURFACE_INFO_PARAMS_INPUT* pIn,
@@ -134,15 +144,33 @@ private:
                                               (1u << ADDR3_4KB_3D);
     static const UINT_32 Blk256BSwModeMask  = (1u << ADDR3_256B_2D);
 
+    static const UINT_32 MaxImageDim  = 32768; // Max image size is 32k
+    static const UINT_32 MaxMipLevels = 16;
+
     virtual ADDR_E_RETURNCODE HwlComputePipeBankXor(
         const ADDR3_COMPUTE_PIPEBANKXOR_INPUT* pIn,
         ADDR3_COMPUTE_PIPEBANKXOR_OUTPUT*      pOut) const override;
 
     virtual BOOL_32 HwlInitGlobalParams(const ADDR_CREATE_INPUT* pCreateIn) override;
 
+    virtual ADDR_E_RETURNCODE HwlComputeStereoInfo(
+        const ADDR3_COMPUTE_SURFACE_INFO_INPUT* pIn,
+        UINT_32*                                pAlignY,
+        UINT_32*                                pRightXor) const override;
+
     void SanityCheckSurfSize(
         const ADDR3_COMPUTE_SURFACE_INFO_PARAMS_INPUT*   pIn,
         const ADDR3_COMPUTE_SURFACE_INFO_OUTPUT*         pOut) const;
+
+    virtual ADDR_E_RETURNCODE HwlCopyMemToSurface(
+        const ADDR3_COPY_MEMSURFACE_INPUT*  pIn,
+        const ADDR3_COPY_MEMSURFACE_REGION* pRegions,
+        UINT_32                             regionCount) const override;
+
+    virtual ADDR_E_RETURNCODE HwlCopySurfaceToMem(
+        const ADDR3_COPY_MEMSURFACE_INPUT*  pIn,
+        const ADDR3_COPY_MEMSURFACE_REGION* pRegions,
+        UINT_32                             regionCount) const override;
 
     UINT_32           m_numSwizzleBits;
 

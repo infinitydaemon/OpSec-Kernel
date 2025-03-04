@@ -29,75 +29,7 @@ import copy
 
 import license
 import gl_XML, glX_XML
-
-def should_use_push(registers):
-    for [reg, offset] in registers:
-        if reg[1:4] == "xmm":
-            return 0
-
-    N = len(registers)
-    return (N & 1) != 0
-
-
-def local_size(registers):
-    # The x86-64 ABI says "the value (%rsp - 8) is always a multiple of
-    # 16 when control is transfered to the function entry point."  This
-    # means that the local stack usage must be (16*N)+8 for some value
-    # of N.  (16*N)+8 = (8*(2N))+8 = 8*(2N+1).  As long as N is odd, we
-    # meet this requirement.
-
-    N = (len(registers) | 1)
-    return 8*N
-
-
-def save_all_regs(registers):
-    adjust_stack = 0
-    if not should_use_push(registers):
-        adjust_stack = local_size(registers)
-        print('\tsubq\t$%u, %%rsp' % (adjust_stack))
-
-    for [reg, stack_offset] in registers:
-        save_reg( reg, stack_offset, adjust_stack )
-    return
-
-
-def restore_all_regs(registers):
-    adjust_stack = 0
-    if not should_use_push(registers):
-        adjust_stack = local_size(registers)
-
-    temp = copy.deepcopy(registers)
-    while len(temp):
-        [reg, stack_offset] = temp.pop()
-        restore_reg(reg, stack_offset, adjust_stack)
-
-    if adjust_stack:
-        print('\taddq\t$%u, %%rsp' % (adjust_stack))
-    return
-
-
-def save_reg(reg, offset, use_move):
-    if use_move:
-        if offset == 0:
-            print('\tmovq\t%s, (%%rsp)' % (reg))
-        else:
-            print('\tmovq\t%s, %u(%%rsp)' % (reg, offset))
-    else:
-        print('\tpushq\t%s' % (reg))
-
-    return
-
-
-def restore_reg(reg, offset, use_move):
-    if use_move:
-        if offset == 0:
-            print('\tmovq\t(%%rsp), %s' % (reg))
-        else:
-            print('\tmovq\t%u(%%rsp), %s' % (offset, reg))
-    else:
-        print('\tpopq\t%s' % (reg))
-
-    return
+import static_data
 
 
 class PrintGenericStubs(gl_XML.gl_print_base):
@@ -137,7 +69,7 @@ class PrintGenericStubs(gl_XML.gl_print_base):
         print('\t.text')
         print('')
         print('_x86_64_get_dispatch:')
-        print('\tmovq\t_glapi_tls_Dispatch@GOTTPOFF(%rip), %rax')
+        print('\tmovq\t_mesa_glapi_tls_Dispatch@GOTTPOFF(%rip), %rax')
         print('\tmovq\t%fs:(%rax), %rax')
         print('\tret')
         print('\t.size\t_x86_64_get_dispatch, .-_x86_64_get_dispatch')
@@ -197,7 +129,7 @@ class PrintGenericStubs(gl_XML.gl_print_base):
         print('\t.p2align\t4,,15')
         print('\t.globl\tGL_PREFIX(%s)' % (name))
         print('\t.type\tGL_PREFIX(%s), @function' % (name))
-        if not f.is_static_entry_point(f.name):
+        if f.name not in static_data.libgl_public_functions:
             print('\tHIDDEN(GL_PREFIX(%s))' % (name))
         print('GL_PREFIX(%s):' % (name))
         print('\tcall\t_x86_64_get_dispatch@PLT')
@@ -218,7 +150,7 @@ class PrintGenericStubs(gl_XML.gl_print_base):
             dispatch = f.dispatch_name()
             for n in f.entry_points:
                 if n != f.name:
-                    if f.is_static_entry_point(n):
+                    if n in static_data.libgl_public_functions:
                         text = '\t.globl GL_PREFIX(%s) ; .set GL_PREFIX(%s), GL_PREFIX(%s)' % (n, n, dispatch)
 
                         if f.has_different_protocol(n):

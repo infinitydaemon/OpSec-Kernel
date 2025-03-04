@@ -22,8 +22,7 @@
  * IN THE SOFTWARE.
  */
 
-#ifndef ELK_IR_ANALYSIS_H
-#define ELK_IR_ANALYSIS_H
+#pragma once
 
 namespace elk {
    /**
@@ -139,6 +138,7 @@ public:
     * object of type \p T.
     */
    elk_analysis(const C *c) : c(c), p(NULL) {}
+   elk_analysis(const elk_analysis &) = delete;
 
    /**
     * Destroy a program analysis.
@@ -147,6 +147,8 @@ public:
    {
       delete p;
    }
+
+   elk_analysis & operator=(const elk_analysis &) = delete;
 
    /**
     * Obtain the result of a program analysis.  This gives a
@@ -188,5 +190,3 @@ private:
    const C *c;
    T *p;
 };
-
-#endif

@@ -16,22 +16,18 @@
 #include "vk_buffer.h"
 
 struct radv_device;
+struct radv_device_memory;
 
 struct radv_buffer {
    struct vk_buffer vk;
 
    /* Set when bound */
    struct radeon_winsys_bo *bo;
-   VkDeviceSize offset;
-   uint64_t bo_va;
+   uint64_t addr;
    uint64_t range;
 };
 
 VK_DEFINE_NONDISP_HANDLE_CASTS(radv_buffer, vk.base, VkBuffer, VK_OBJECT_TYPE_BUFFER)
-
-void radv_buffer_init(struct radv_buffer *buffer, struct radv_device *device, struct radeon_winsys_bo *bo,
-                      uint64_t size, uint64_t offset);
-void radv_buffer_finish(struct radv_buffer *buffer);
 
 VkResult radv_create_buffer(struct radv_device *device, const VkBufferCreateInfo *pCreateInfo,
                             const VkAllocationCallbacks *pAllocator, VkBuffer *pBuffer, bool is_internal);
@@ -45,5 +41,11 @@ VkResult radv_bo_virtual_bind(struct radv_device *device, struct vk_object_base 
                               struct radeon_winsys_bo *bo, uint64_t bo_offset);
 
 void radv_bo_destroy(struct radv_device *device, struct vk_object_base *object, struct radeon_winsys_bo *bo);
+
+VkResult radv_bo_from_fd(struct radv_device *device, int fd, unsigned priority, struct radv_device_memory *mem,
+                         uint64_t *alloc_size);
+
+VkResult radv_bo_from_ptr(struct radv_device *device, void *host_ptr, uint64_t alloc_size, unsigned priority,
+                          struct radv_device_memory *mem);
 
 #endif /* RADV_BUFFER_H */

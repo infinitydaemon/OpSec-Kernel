@@ -8,6 +8,7 @@
 #include "tu_perfetto.h"
 #include "tu_buffer.h"
 #include "tu_device.h"
+#include "tu_queue.h"
 #include "tu_image.h"
 
 #include "util/hash_table.h"
@@ -53,6 +54,7 @@ enum tu_stage_id {
    COMPUTE_STAGE_ID,
    CLEAR_SYSMEM_STAGE_ID,
    CLEAR_GMEM_STAGE_ID,
+   GENERIC_CLEAR_STAGE_ID,
    GMEM_LOAD_STAGE_ID,
    GMEM_STORE_STAGE_ID,
    SYSMEM_RESOLVE_STAGE_ID,
@@ -81,6 +83,7 @@ static const struct {
    [COMPUTE_STAGE_ID]        = { "Compute", "Compute job" },
    [CLEAR_SYSMEM_STAGE_ID]   = { "Clear Sysmem", "" },
    [CLEAR_GMEM_STAGE_ID]     = { "Clear GMEM", "Per-tile (GMEM) clear" },
+   [GENERIC_CLEAR_STAGE_ID]  = { "Clear Sysmem/Gmem", ""},
    [GMEM_LOAD_STAGE_ID]      = { "GMEM Load", "Per tile system memory to GMEM load" },
    [GMEM_STORE_STAGE_ID]     = { "GMEM Store", "Per tile GMEM to system memory store" },
    [SYSMEM_RESOLVE_STAGE_ID] = { "SysMem Resolve", "System memory MSAA resolve" },
@@ -180,8 +183,6 @@ stage_push(struct tu_device *dev)
    return &p->stages[p->stage_depth++];
 }
 
-typedef void (*trace_payload_as_extra_func)(perfetto::protos::pbzero::GpuRenderStageEvent *, const void*);
-
 static struct tu_perfetto_stage *
 stage_pop(struct tu_device *dev)
 {
@@ -205,6 +206,7 @@ stage_start(struct tu_device *dev,
             const char *app_event,
             const void *payload = nullptr,
             size_t payload_size = 0,
+            const void *indirect = nullptr,
             trace_payload_as_extra_func payload_as_extra = nullptr)
 {
    struct tu_perfetto_stage *stage = stage_push(dev);
@@ -243,6 +245,7 @@ static void
 stage_end(struct tu_device *dev, uint64_t ts_ns, enum tu_stage_id stage_id,
           const void *flush_data,
           const void* payload = nullptr,
+          const void *indirect = nullptr,
           trace_payload_as_extra_func payload_as_extra = nullptr)
 {
    struct tu_perfetto_stage *stage = stage_pop(dev);
@@ -294,12 +297,12 @@ stage_end(struct tu_device *dev, uint64_t ts_ns, enum tu_stage_id stage_id,
       if (stage->payload) {
          if (stage->start_payload_function)
             ((trace_payload_as_extra_func) stage->start_payload_function)(
-               event, stage->payload);
+               event, stage->payload, nullptr);
          free((void *)stage->payload);
       }
 
       if (payload && payload_as_extra)
-         payload_as_extra(event, payload);
+         payload_as_extra(event, payload, indirect);
    });
 }
 
@@ -361,33 +364,20 @@ emit_sync_timestamp(uint64_t cpu_ts, uint64_t gpu_ts)
    });
 }
 
-static void
-emit_submit_id(uint32_t submission_id)
+uint64_t
+tu_perfetto_begin_submit()
 {
-   TuRenderpassDataSource::Trace([=](TuRenderpassDataSource::TraceContext tctx) {
-      auto packet = tctx.NewTracePacket();
-
-      packet->set_timestamp(perfetto::base::GetBootTimeNs().count());
-
-      auto event = packet->set_vulkan_api_event();
-      auto submit = event->set_vk_queue_submit();
-
-      submit->set_submission_id(submission_id);
-   });
+   return perfetto::base::GetBootTimeNs().count();
 }
 
-struct tu_perfetto_clocks
-tu_perfetto_submit(struct tu_device *dev,
-                   uint32_t submission_id,
-                   struct tu_perfetto_clocks *gpu_clocks)
+static struct tu_perfetto_clocks
+sync_clocks(struct tu_device *dev,
+            const struct tu_perfetto_clocks *gpu_clocks)
 {
    struct tu_perfetto_clocks clocks {};
    if (gpu_clocks) {
       clocks = *gpu_clocks;
    }
-
-   if (!u_trace_perfetto_active(tu_device_get_u_trace(dev)))
-      return {};
 
    clocks.cpu = perfetto::base::GetBootTimeNs().count();
 
@@ -454,8 +444,36 @@ tu_perfetto_submit(struct tu_device *dev,
       next_clock_sync_ns = clocks.cpu + 30000000;
    }
 
-   emit_sync_timestamp(clocks.cpu, clocks.gpu_ts + clocks.gpu_ts_offset);
-   emit_submit_id(submission_id);
+   return clocks;
+}
+
+struct tu_perfetto_clocks
+tu_perfetto_end_submit(struct tu_queue *queue,
+                       uint32_t submission_id,
+                       uint64_t start_ts,
+                       struct tu_perfetto_clocks *gpu_clocks)
+{
+   struct tu_device *dev = queue->device;
+   if (!u_trace_perfetto_active(tu_device_get_u_trace(dev)))
+      return {};
+
+   struct tu_perfetto_clocks clocks = sync_clocks(dev, gpu_clocks);
+   if (clocks.gpu_ts > 0)
+      emit_sync_timestamp(clocks.cpu, clocks.gpu_ts + clocks.gpu_ts_offset);
+
+   TuRenderpassDataSource::Trace([=](TuRenderpassDataSource::TraceContext tctx) {
+      auto packet = tctx.NewTracePacket();
+
+      packet->set_timestamp(start_ts);
+
+      auto event = packet->set_vulkan_api_event();
+      auto submit = event->set_vk_queue_submit();
+
+      submit->set_duration_ns(clocks.cpu - start_ts);
+      submit->set_vk_queue((uintptr_t) queue);
+      submit->set_submission_id(submission_id);
+   });
+
    return clocks;
 }
 
@@ -474,19 +492,21 @@ tu_perfetto_submit(struct tu_device *dev,
 #define CREATE_EVENT_CALLBACK(event_name, stage_id)                                 \
    void tu_perfetto_start_##event_name(                                             \
       struct tu_device *dev, uint64_t ts_ns, uint16_t tp_idx,                       \
-      const void *flush_data, const struct trace_start_##event_name *payload)       \
+      const void *flush_data, const struct trace_start_##event_name *payload,       \
+      const void *indirect_data)                                                    \
    {                                                                                \
       stage_start(                                                                  \
-         dev, ts_ns, stage_id, NULL, payload, sizeof(*payload),                     \
+         dev, ts_ns, stage_id, NULL, payload, sizeof(*payload), indirect_data,      \
          (trace_payload_as_extra_func) &trace_payload_as_extra_start_##event_name); \
    }                                                                                \
                                                                                     \
    void tu_perfetto_end_##event_name(                                               \
       struct tu_device *dev, uint64_t ts_ns, uint16_t tp_idx,                       \
-      const void *flush_data, const struct trace_end_##event_name *payload)         \
+      const void *flush_data, const struct trace_end_##event_name *payload,         \
+      const void *indirect_data)                                                    \
    {                                                                                \
       stage_end(                                                                    \
-         dev, ts_ns, stage_id, flush_data, payload,                                 \
+         dev, ts_ns, stage_id, flush_data, payload, indirect_data,                  \
          (trace_payload_as_extra_func) &trace_payload_as_extra_end_##event_name);   \
    }
 
@@ -497,6 +517,8 @@ CREATE_EVENT_CALLBACK(draw_ib_gmem, GMEM_STAGE_ID)
 CREATE_EVENT_CALLBACK(draw_ib_sysmem, BYPASS_STAGE_ID)
 CREATE_EVENT_CALLBACK(blit, BLIT_STAGE_ID)
 CREATE_EVENT_CALLBACK(compute, COMPUTE_STAGE_ID)
+CREATE_EVENT_CALLBACK(compute_indirect, COMPUTE_STAGE_ID)
+CREATE_EVENT_CALLBACK(generic_clear, GENERIC_CLEAR_STAGE_ID)
 CREATE_EVENT_CALLBACK(gmem_clear, CLEAR_GMEM_STAGE_ID)
 CREATE_EVENT_CALLBACK(sysmem_clear, CLEAR_SYSMEM_STAGE_ID)
 CREATE_EVENT_CALLBACK(sysmem_clear_all, CLEAR_SYSMEM_STAGE_ID)
@@ -510,7 +532,8 @@ tu_perfetto_start_cmd_buffer_annotation(
    uint64_t ts_ns,
    uint16_t tp_idx,
    const void *flush_data,
-   const struct trace_start_cmd_buffer_annotation *payload)
+   const struct trace_start_cmd_buffer_annotation *payload,
+   const void *indirect_data)
 {
    /* No extra func necessary, the only arg is in the end payload.*/
    stage_start(dev, ts_ns, CMD_BUFFER_ANNOTATION_STAGE_ID, payload->str, payload,
@@ -523,7 +546,8 @@ tu_perfetto_end_cmd_buffer_annotation(
    uint64_t ts_ns,
    uint16_t tp_idx,
    const void *flush_data,
-   const struct trace_end_cmd_buffer_annotation *payload)
+   const struct trace_end_cmd_buffer_annotation *payload,
+   const void *indirect_data)
 {
    /* Pass the payload string as the app_event, which will appear right on the
     * event block, rather than as metadata inside.
@@ -538,7 +562,8 @@ tu_perfetto_start_cmd_buffer_annotation_rp(
    uint64_t ts_ns,
    uint16_t tp_idx,
    const void *flush_data,
-   const struct trace_start_cmd_buffer_annotation_rp *payload)
+   const struct trace_start_cmd_buffer_annotation_rp *payload,
+   const void *indirect_data)
 {
    /* No extra func necessary, the only arg is in the end payload.*/
    stage_start(dev, ts_ns, CMD_BUFFER_ANNOTATION_RENDER_PASS_STAGE_ID,
@@ -551,7 +576,8 @@ tu_perfetto_end_cmd_buffer_annotation_rp(
    uint64_t ts_ns,
    uint16_t tp_idx,
    const void *flush_data,
-   const struct trace_end_cmd_buffer_annotation_rp *payload)
+   const struct trace_end_cmd_buffer_annotation_rp *payload,
+   const void *indirect_data)
 {
    /* Pass the payload string as the app_event, which will appear right on the
     * event block, rather than as metadata inside.

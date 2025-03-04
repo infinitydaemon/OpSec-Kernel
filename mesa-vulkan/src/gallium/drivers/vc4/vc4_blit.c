@@ -23,6 +23,7 @@
 
 #include "nir/pipe_nir.h"
 #include "util/format/u_format.h"
+#include "util/perf/cpu_trace.h"
 #include "util/u_surface.h"
 #include "util/u_blitter.h"
 #include "compiler/nir/nir_builder.h"
@@ -70,7 +71,7 @@ vc4_tile_blit(struct pipe_context *pctx, struct pipe_blit_info *info)
         assert ((is_color_blit && !(is_depth_blit || is_stencil_blit)) ||
                 (!is_color_blit && (is_depth_blit || is_stencil_blit)));
 
-        if (info->scissor_enable)
+        if (info->scissor_enable || info->swizzle_enable)
                 return;
 
         if (info->dst.box.x != info->src.box.x ||
@@ -342,6 +343,8 @@ vc4_yuv_blit(struct pipe_context *pctx, struct pipe_blit_info *info)
         if (!(info->mask & PIPE_MASK_RGBA))
                 return;
 
+        if (info->swizzle_enable)
+                return;
         if (src->tiled)
                 return;
 
@@ -543,6 +546,8 @@ void
 vc4_blit(struct pipe_context *pctx, const struct pipe_blit_info *blit_info)
 {
         struct pipe_blit_info info = *blit_info;
+
+        MESA_TRACE_FUNC();
 
         vc4_yuv_blit(pctx, &info);
 

@@ -23,6 +23,7 @@
 
 #include "vk_device.h"
 
+#include "vk_alloc.h"
 #include "vk_common_entrypoints.h"
 #include "vk_instance.h"
 #include "vk_log.h"
@@ -35,6 +36,7 @@
 #include "util/hash_table.h"
 #include "util/perf/cpu_trace.h"
 #include "util/ralloc.h"
+#include "util/timespec.h"
 
 static enum vk_device_timeline_mode
 get_timeline_mode(struct vk_physical_device *physical_device)
@@ -83,6 +85,42 @@ collect_enabled_features(struct vk_device *device,
    if (pCreateInfo->pEnabledFeatures)
       vk_set_physical_device_features_1_0(&device->enabled_features, pCreateInfo->pEnabledFeatures);
    vk_set_physical_device_features(&device->enabled_features, pCreateInfo->pNext);
+}
+
+static VkResult
+vk_device_memory_report_init(struct vk_device *device,
+                             const VkDeviceCreateInfo *pCreateInfo)
+{
+   struct vk_device_memory_report *mem_reports = NULL;
+   uint32_t count = 0;
+
+   vk_foreach_struct_const(pnext, pCreateInfo->pNext) {
+      if (pnext->sType == VK_STRUCTURE_TYPE_DEVICE_DEVICE_MEMORY_REPORT_CREATE_INFO_EXT)
+         count++;
+   }
+
+   if (!count)
+      return VK_SUCCESS;
+
+   mem_reports = vk_alloc(&device->alloc, sizeof(*mem_reports) * count,
+                          8, VK_SYSTEM_ALLOCATION_SCOPE_DEVICE);
+   if (!mem_reports)
+      return VK_ERROR_OUT_OF_HOST_MEMORY;
+
+   count = 0;
+   vk_foreach_struct_const(pnext, pCreateInfo->pNext) {
+      if (pnext->sType == VK_STRUCTURE_TYPE_DEVICE_DEVICE_MEMORY_REPORT_CREATE_INFO_EXT) {
+         const struct VkDeviceDeviceMemoryReportCreateInfoEXT *report = (void *)pnext;
+	 mem_reports[count].callback = report->pfnUserCallback;
+	 mem_reports[count].data = report->pUserData;
+	 count++;
+      }
+   }
+
+   device->memory_report_count = count;
+   device->memory_reports = mem_reports;
+
+   return VK_SUCCESS;
 }
 
 VkResult
@@ -165,8 +203,12 @@ vk_device_init(struct vk_device *device,
       break;
 
    case VK_DEVICE_TIMELINE_MODE_ASSISTED:
-      if (debug_get_bool_option("MESA_VK_ENABLE_SUBMIT_THREAD", false)) {
-         device->submit_mode = VK_QUEUE_SUBMIT_MODE_THREADED;
+      if (os_get_option("MESA_VK_ENABLE_SUBMIT_THREAD")) {
+         if (debug_get_bool_option("MESA_VK_ENABLE_SUBMIT_THREAD", false)) {
+            device->submit_mode = VK_QUEUE_SUBMIT_MODE_THREADED;
+         } else {
+            device->submit_mode = VK_QUEUE_SUBMIT_MODE_IMMEDIATE;
+         }
       } else {
          device->submit_mode = VK_QUEUE_SUBMIT_MODE_THREADED_ON_DEMAND;
       }
@@ -183,7 +225,51 @@ vk_device_init(struct vk_device *device,
 
    simple_mtx_init(&device->trace_mtx, mtx_plain);
 
+   vk_foreach_struct_const (ext, pCreateInfo->pNext) {
+      switch (ext->sType) {
+      case VK_STRUCTURE_TYPE_DEVICE_PIPELINE_BINARY_INTERNAL_CACHE_CONTROL_KHR: {
+         const VkDevicePipelineBinaryInternalCacheControlKHR *cache_control = (const void *)ext;
+         if (cache_control->disableInternalCache)
+            device->disable_internal_cache = true;
+         break;
+      }
+      default:
+         break;
+      }
+   }
+
+   if (device->enabled_extensions.KHR_calibrated_timestamps ||
+       device->enabled_extensions.EXT_calibrated_timestamps) {
+      /* sorted by preference */
+      const VkTimeDomainKHR calibrate_domains[] = {
+         VK_TIME_DOMAIN_CLOCK_MONOTONIC_RAW_KHR,
+         VK_TIME_DOMAIN_CLOCK_MONOTONIC_KHR,
+      };
+      for (uint32_t i = 0; i < ARRAY_SIZE(calibrate_domains); i++) {
+         const VkTimeDomainKHR domain = calibrate_domains[i];
+         uint64_t ts;
+         if (vk_device_get_timestamp(NULL, domain, &ts) == VK_SUCCESS) {
+            device->calibrate_time_domain = domain;
+            break;
+         }
+      }
+
+      assert(device->calibrate_time_domain != VK_TIME_DOMAIN_DEVICE_KHR);
+      device->device_time_domain_period =
+         (uint64_t)ceilf(device->physical->properties.timestampPeriod);
+   }
+
+   result = vk_device_memory_report_init(device, pCreateInfo);
+   if (result != VK_SUCCESS)
+      return result;
+
    return VK_SUCCESS;
+}
+
+static void
+vk_device_memory_report_finish(struct vk_device *device)
+{
+   vk_free(&device->alloc, device->memory_reports);
 }
 
 void
@@ -192,6 +278,7 @@ vk_device_finish(struct vk_device *device)
    /* Drivers should tear down their own queues */
    assert(list_is_empty(&device->queues));
 
+   vk_device_memory_report_finish(device);
    vk_memory_trace_finish(device);
 
 #if DETECT_OS_ANDROID
@@ -534,6 +621,90 @@ vk_common_DeviceWaitIdle(VkDevice _device)
       if (result != VK_SUCCESS)
          return result;
    }
+
+   return VK_SUCCESS;
+}
+
+VkResult
+vk_device_get_timestamp(struct vk_device *device, VkTimeDomainKHR domain,
+                        uint64_t *timestamp)
+{
+   if (domain == VK_TIME_DOMAIN_DEVICE_KHR) {
+      assert(device && device->get_timestamp);
+      return device->get_timestamp(device, timestamp);
+   }
+
+   /* device is not used for host time domains */
+#ifndef _WIN32
+   clockid_t clockid;
+   struct timespec ts;
+
+   switch (domain) {
+   case VK_TIME_DOMAIN_CLOCK_MONOTONIC_KHR:
+      clockid = CLOCK_MONOTONIC;
+      break;
+   case VK_TIME_DOMAIN_CLOCK_MONOTONIC_RAW_KHR:
+      /* The "RAW" clocks on Linux are called "FAST" on FreeBSD */
+#if defined(CLOCK_MONOTONIC_RAW)
+      clockid = CLOCK_MONOTONIC_RAW;
+      break;
+#elif defined(CLOCK_MONOTONIC_FAST)
+      clockid = CLOCK_MONOTONIC_FAST;
+      break;
+#else
+      FALLTHROUGH;
+#endif
+   default:
+      goto fail;
+   }
+
+   if (clock_gettime(clockid, &ts) < 0)
+      goto fail;
+
+   *timestamp = (uint64_t)ts.tv_sec * NSEC_PER_SEC + ts.tv_nsec;
+   return VK_SUCCESS;
+
+fail:
+#endif /* _WIN32 */
+   return VK_ERROR_FEATURE_NOT_PRESENT;
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL
+vk_common_GetCalibratedTimestampsKHR(
+   VkDevice _device, uint32_t timestampCount,
+   const VkCalibratedTimestampInfoKHR *pTimestampInfos, uint64_t *pTimestamps,
+   uint64_t *pMaxDeviation)
+{
+   VK_FROM_HANDLE(vk_device, device, _device);
+   uint64_t begin, end;
+   VkResult result;
+
+   /* collect timestamps as tight as possible */
+   result =
+      vk_device_get_timestamp(device, device->calibrate_time_domain, &begin);
+   for (uint32_t i = 0; i < timestampCount; i++) {
+      const VkTimeDomainKHR domain = pTimestampInfos[i].timeDomain;
+      if (domain == device->calibrate_time_domain)
+         pTimestamps[i] = begin;
+      else
+         result |= vk_device_get_timestamp(device, domain, &pTimestamps[i]);
+   }
+   result |=
+      vk_device_get_timestamp(device, device->calibrate_time_domain, &end);
+
+   if (result != VK_SUCCESS)
+      return VK_ERROR_OUT_OF_HOST_MEMORY;
+
+   uint64_t max_clock_period = 0;
+   for (uint32_t i = 0; i < timestampCount; i++) {
+      const VkTimeDomainKHR domain = pTimestampInfos[i].timeDomain;
+      const uint64_t period = domain == VK_TIME_DOMAIN_DEVICE_KHR
+         ? device->device_time_domain_period
+         : domain != device->calibrate_time_domain ? 1 : 0;
+      max_clock_period = MAX2(max_clock_period, period);
+   }
+
+   *pMaxDeviation = vk_time_max_deviation(begin, end, max_clock_period);
 
    return VK_SUCCESS;
 }

@@ -29,6 +29,7 @@
 #include <sys/sysinfo.h>
 #include <unistd.h>
 #include <xf86drm.h>
+#include <xf86drmMode.h>
 
 #ifdef MAJOR_IN_MKDEV
 #include <sys/mkdev.h>
@@ -71,7 +72,7 @@
 #include "wayland-drm-client-protocol.h"
 #endif
 
-#define V3DV_API_VERSION VK_MAKE_VERSION(1, 2, VK_HEADER_VERSION)
+#define V3DV_API_VERSION VK_MAKE_VERSION(1, 3, VK_HEADER_VERSION)
 
 #ifdef ANDROID_STRICT
 #if ANDROID_API_LEVEL <= 32
@@ -177,6 +178,7 @@ get_device_extensions(const struct v3dv_physical_device *device,
       .KHR_shader_expect_assume             = true,
       .KHR_shader_float_controls            = true,
       .KHR_shader_non_semantic_info         = true,
+      .KHR_shader_relaxed_extended_instruction = true,
       .KHR_sampler_mirror_clamp_to_edge     = true,
       .KHR_sampler_ycbcr_conversion         = true,
       .KHR_spirv_1_4                        = true,
@@ -223,6 +225,7 @@ get_device_extensions(const struct v3dv_physical_device *device,
       .EXT_primitive_topology_list_restart  = true,
       .EXT_private_data                     = true,
       .EXT_provoking_vertex                 = true,
+      .EXT_queue_family_foreign             = true,
       .EXT_separate_stencil_usage           = true,
       .EXT_shader_demote_to_helper_invocation = true,
       .EXT_shader_module_identifier         = true,
@@ -238,7 +241,6 @@ get_device_extensions(const struct v3dv_physical_device *device,
    if (vk_android_get_ugralloc() != NULL) {
       ext->ANDROID_external_memory_android_hardware_buffer = true;
       ext->ANDROID_native_buffer = true;
-      ext->EXT_queue_family_foreign = true;
    }
 #endif
 }
@@ -507,6 +509,9 @@ get_features(const struct v3dv_physical_device *physical_device,
       /* VK_EXT_swapchain_maintenance1 */
       .swapchainMaintenance1 = true,
 #endif
+
+      /* VK_KHR_shader_relaxed_extended_instruction */
+      .shaderRelaxedExtendedInstruction = true,
    };
 }
 
@@ -586,22 +591,22 @@ v3dv_CreateInstance(const VkInstanceCreateInfo *pCreateInfo,
          instance->default_pipeline_cache_enabled = false;
          instance->meta_cache_enabled = false;
       } else {
-         fprintf(stderr, "Wrong value for envvar V3DV_ENABLE_PIPELINE_CACHE. "
-                 "Allowed values are: full, no-default-cache, no-meta-cache, off\n");
+         mesa_loge("Wrong value for envvar V3DV_ENABLE_PIPELINE_CACHE. "
+                   "Allowed values are: full, no-default-cache, no-meta-cache, off\n");
       }
    }
 
    if (instance->pipeline_cache_enabled == false) {
-      fprintf(stderr, "WARNING: v3dv pipeline cache is disabled. Performance "
-              "can be affected negatively\n");
+      mesa_logw("v3dv pipeline cache is disabled. Performance "
+                "can be affected negatively\n");
    }
    if (instance->default_pipeline_cache_enabled == false) {
-      fprintf(stderr, "WARNING: default v3dv pipeline cache is disabled. "
-              "Performance can be affected negatively\n");
+      mesa_logw("default v3dv pipeline cache is disabled. "
+                "Performance can be affected negatively\n");
    }
    if (instance->meta_cache_enabled == false) {
-      fprintf(stderr, "WARNING: custom pipeline cache for meta operations are disabled. "
-              "Performance can be affected negatively\n");
+      mesa_logw("custom pipeline cache for meta operations are disabled. "
+                "Performance can be affected negatively\n");
    }
 
 
@@ -641,6 +646,9 @@ physical_device_finish(struct v3dv_physical_device *device)
    v3d_compiler_free(device->compiler);
 
    util_sparse_array_finish(&device->bo_map);
+
+   if (device->perfcntr)
+      v3d_perfcntrs_fini(device->perfcntr);
 
    close(device->render_fd);
    if (device->display_fd >= 0)
@@ -736,7 +744,7 @@ v3d_has_feature(struct v3dv_physical_device *device, enum drm_v3d_param feature)
    struct drm_v3d_get_param p = {
       .param = feature,
    };
-   if (v3dv_ioctl(device->render_fd, DRM_IOCTL_V3D_GET_PARAM, &p) != 0)
+   if (v3d_ioctl(device->render_fd, DRM_IOCTL_V3D_GET_PARAM, &p) != 0)
       return false;
    return p.value;
 }
@@ -862,7 +870,7 @@ get_device_properties(const struct v3dv_physical_device *device,
       (UINT32_MAX - sizeof(struct v3dv_descriptor_set)) /
       sizeof(struct v3dv_descriptor);
    const uint32_t max_gpu_descriptors =
-      (UINT32_MAX / v3dv_X(device, max_descriptor_bo_size)());
+      (UINT32_MAX / v3d_X((&device->devinfo), max_descriptor_bo_size)());
 
    VkSubgroupFeatureFlags subgroup_ops = VK_SUBGROUP_FEATURE_BASIC_BIT;
    if (device->devinfo.ver >= 71) {
@@ -1052,8 +1060,8 @@ get_device_properties(const struct v3dv_physical_device *device,
       .conformanceVersion = {
          .major = 1,
          .minor = 3,
-         .subminor = 6,
-         .patch = 1,
+         .subminor = 8,
+         .patch = 3,
       },
       .supportedDepthResolveModes = VK_RESOLVE_MODE_SAMPLE_ZERO_BIT,
       .supportedStencilResolveModes = VK_RESOLVE_MODE_SAMPLE_ZERO_BIT,
@@ -1123,9 +1131,11 @@ get_device_properties(const struct v3dv_physical_device *device,
          VK_SAMPLE_COUNT_1_BIT | VK_SAMPLE_COUNT_4_BIT,
 
       /* Vulkan 1.3 properties */
-      .maxInlineUniformBlockSize = 4096,
+      .maxInlineUniformBlockSize = MAX_INLINE_UNIFORM_BLOCK_SIZE,
       .maxPerStageDescriptorInlineUniformBlocks = MAX_INLINE_UNIFORM_BUFFERS,
       .maxDescriptorSetInlineUniformBlocks = MAX_INLINE_UNIFORM_BUFFERS,
+      .maxInlineUniformTotalSize =
+          MAX_INLINE_UNIFORM_BUFFERS * MAX_INLINE_UNIFORM_BLOCK_SIZE,
       .maxPerStageDescriptorUpdateAfterBindInlineUniformBlocks =
          MAX_INLINE_UNIFORM_BUFFERS,
       .maxDescriptorSetUpdateAfterBindInlineUniformBlocks =
@@ -1259,12 +1269,9 @@ get_device_properties(const struct v3dv_physical_device *device,
 
 static VkResult
 create_physical_device(struct v3dv_instance *instance,
-                       drmDevicePtr gpu_device,
-                       drmDevicePtr display_device)
+                       int32_t render_fd, int32_t primary_fd)
 {
    VkResult result = VK_SUCCESS;
-   int32_t display_fd = -1;
-   int32_t render_fd = -1;
 
    struct v3dv_physical_device *device =
       vk_zalloc(&instance->vk.alloc, sizeof(*device), 8,
@@ -1285,38 +1292,13 @@ create_physical_device(struct v3dv_instance *instance,
    if (result != VK_SUCCESS)
       goto fail;
 
-   assert(gpu_device);
-   const char *path = gpu_device->nodes[DRM_NODE_RENDER];
-   render_fd = open(path, O_RDWR | O_CLOEXEC);
-   if (render_fd < 0) {
-      fprintf(stderr, "Opening %s failed: %s\n", path, strerror(errno));
-      result = VK_ERROR_INITIALIZATION_FAILED;
-      goto fail;
-   }
-
-   /* If we are running on VK_KHR_display we need to acquire the master
-    * display device now for the v3dv_wsi_init() call below. For anything else
-    * we postpone that until a swapchain is created.
-    */
-
-   const char *primary_path;
-#if !USE_V3D_SIMULATOR
-   if (display_device)
-      primary_path = display_device->nodes[DRM_NODE_PRIMARY];
-   else
-      primary_path = NULL;
-#else
-   primary_path = gpu_device->nodes[DRM_NODE_PRIMARY];
-#endif
-
    struct stat primary_stat = {0}, render_stat = {0};
 
-   device->has_primary = primary_path;
+   device->has_primary = primary_fd >= 0;
    if (device->has_primary) {
-      if (stat(primary_path, &primary_stat) != 0) {
+      if (fstat(primary_fd, &primary_stat) != 0) {
          result = vk_errorf(instance, VK_ERROR_INITIALIZATION_FAILED,
-                            "failed to stat DRM primary node %s",
-                            primary_path);
+                            "failed to stat DRM primary node");
          goto fail;
       }
 
@@ -1325,42 +1307,21 @@ create_physical_device(struct v3dv_instance *instance,
 
    if (fstat(render_fd, &render_stat) != 0) {
       result = vk_errorf(instance, VK_ERROR_INITIALIZATION_FAILED,
-                         "failed to stat DRM render node %s",
-                         path);
+                         "failed to stat DRM render node");
       goto fail;
    }
+
    device->has_render = true;
    device->render_devid = render_stat.st_rdev;
-
-#if USE_V3D_SIMULATOR
-   device->device_id = gpu_device->deviceinfo.pci->device_id;
-#endif
-
-   if (instance->vk.enabled_extensions.KHR_display ||
-       instance->vk.enabled_extensions.KHR_xcb_surface ||
-       instance->vk.enabled_extensions.KHR_xlib_surface ||
-       instance->vk.enabled_extensions.KHR_wayland_surface ||
-       instance->vk.enabled_extensions.EXT_acquire_drm_display) {
-#if !USE_V3D_SIMULATOR
-      /* Open the primary node on the vc4 display device */
-      assert(display_device);
-      display_fd = open(primary_path, O_RDWR | O_CLOEXEC);
-#else
-      /* There is only one device with primary and render nodes.
-       * Open its primary node.
-       */
-      display_fd = open(primary_path, O_RDWR | O_CLOEXEC);
-#endif
-   }
 
 #if USE_V3D_SIMULATOR
    device->sim_file = v3d_simulator_init(render_fd);
 #endif
 
-   device->render_fd = render_fd;    /* The v3d render node  */
-   device->display_fd = display_fd;  /* Master vc4 primary node */
+   device->render_fd = render_fd;
+   device->display_fd = primary_fd;
 
-   if (!v3d_get_device_info(device->render_fd, &device->devinfo, &v3dv_ioctl)) {
+   if (!v3d_get_device_info(device->render_fd, &device->devinfo, &v3d_ioctl)) {
       result = vk_errorf(instance, VK_ERROR_INITIALIZATION_FAILED,
                          "Failed to get info from device.");
       goto fail;
@@ -1385,6 +1346,16 @@ create_physical_device(struct v3dv_instance *instance,
       result = vk_errorf(instance, VK_ERROR_INITIALIZATION_FAILED,
                          "Kernel driver doesn't have required features.");
       goto fail;
+   }
+
+   if (device->caps.perfmon) {
+      device->perfcntr = v3d_perfcntrs_init(&device->devinfo, device->render_fd);
+
+      if (!device->perfcntr) {
+         result = vk_errorf(instance, VK_ERROR_INITIALIZATION_FAILED,
+                            "Failed to get init perfmon.");
+         goto fail;
+      }
    }
 
    result = init_uuids(device);
@@ -1467,16 +1438,124 @@ fail:
 
    if (render_fd >= 0)
       close(render_fd);
-   if (display_fd >= 0)
-      close(display_fd);
+   if (primary_fd >= 0)
+      close(primary_fd);
 
    return result;
+}
+
+static bool
+try_device(const char *path, int *fd, const char *target)
+{
+   drmVersionPtr version = NULL;
+
+   *fd = open(path, O_RDWR | O_CLOEXEC);
+   if (*fd < 0) {
+      mesa_loge("Opening %s failed: %s\n", path, strerror(errno));
+      return false;
+   }
+
+   if (!target)
+      return true;
+
+   version = drmGetVersion(*fd);
+   if (!version) {
+      mesa_loge("Retrieving device version failed: %s\n", strerror(errno));
+      goto fail;
+   }
+
+   if (strcmp(version->name, target) != 0)
+      goto fail;
+
+   drmFreeVersion(version);
+   return true;
+
+fail:
+   drmFreeVersion(version);
+   close(*fd);
+   *fd = -1;
+   return false;
+}
+
+static void
+try_display_device(struct v3dv_instance *instance, const char *path,
+                   int32_t *fd)
+{
+   *fd = open(path, O_RDWR | O_CLOEXEC);
+   if (*fd < 0) {
+      mesa_loge("Opening %s failed: %s\n", path, strerror(errno));
+      return;
+   }
+
+   /* The display driver must have KMS capabilities */
+   if (!drmIsKMS(*fd))
+      goto fail;
+
+   /* Note that VK_EXT_acquire_drm_display requires KHR_display so there is
+    * no need to check for it explicitly here.
+    */
+   if (!instance->vk.enabled_extensions.KHR_display) {
+      if (instance->vk.enabled_extensions.KHR_xcb_surface ||
+          instance->vk.enabled_extensions.KHR_xlib_surface ||
+          instance->vk.enabled_extensions.KHR_wayland_surface)
+         return;
+      else
+         goto fail;
+   }
+
+   /* When using VK_EXT_acquire_drm_display, the user is expected to get
+    * the master fd and provide it to the driver through vkAcquireDrmDisplayEXT.
+    * Therefore, the fd we open here won't be master.
+    */
+   if (instance->vk.enabled_extensions.EXT_acquire_drm_display)
+      return;
+
+   /* If using VK_KHR_display, we require the fd to have a connected output.
+    * We need to use this strategy because Raspberry Pi 5 can load different
+    * drivers for different types of connectors and the one with a connected
+    * output may not be vc4, which unlike Raspberry Pi 4, doesn't drive the
+    * DSI output for example.
+    *
+    * If the display device isn't the DRM master, we can't get its resources.
+    */
+   if (!drmIsMaster(*fd))
+      goto fail;
+
+   drmModeResPtr mode_res = drmModeGetResources(*fd);
+   if (!mode_res) {
+      mesa_loge("Failed to get DRM mode resources: %s\n", strerror(errno));
+      goto fail;
+   }
+
+   drmModeConnection connection = DRM_MODE_DISCONNECTED;
+
+   /* Only use a display device if there is at least one connected connector */
+   for (int c = 0; c < mode_res->count_connectors && connection == DRM_MODE_DISCONNECTED; c++) {
+      drmModeConnectorPtr connector = drmModeGetConnector(*fd, mode_res->connectors[c]);
+
+      if (!connector)
+         continue;
+
+      connection = connector->connection;
+      drmModeFreeConnector(connector);
+   }
+
+   drmModeFreeResources(mode_res);
+
+   if (connection == DRM_MODE_DISCONNECTED)
+      goto fail;
+
+   return;
+
+fail:
+   close(*fd);
+   *fd = -1;
 }
 
 /* This driver hook is expected to return VK_SUCCESS (unless a memory
  * allocation error happened) if no compatible device is found. If a
  * compatible device is found, it may return an error code if device
- * inialization failed.
+ * initialization failed.
  */
 static VkResult
 enumerate_devices(struct vk_instance *vk_instance)
@@ -1494,10 +1573,8 @@ enumerate_devices(struct vk_instance *vk_instance)
 
    VkResult result = VK_SUCCESS;
 
-#if !USE_V3D_SIMULATOR
-   int32_t v3d_idx = -1;
-   int32_t vc4_idx = -1;
-#endif
+   int32_t render_fd = -1;
+   int32_t primary_fd = -1;
    for (unsigned i = 0; i < (unsigned)max_devices; i++) {
 #if USE_V3D_SIMULATOR
       /* In the simulator, we look for an Intel/AMD render node */
@@ -1506,54 +1583,33 @@ enumerate_devices(struct vk_instance *vk_instance)
            devices[i]->bustype == DRM_BUS_PCI &&
           (devices[i]->deviceinfo.pci->vendor_id == 0x8086 ||
            devices[i]->deviceinfo.pci->vendor_id == 0x1002)) {
-         result = create_physical_device(instance, devices[i], NULL);
-         if (result == VK_SUCCESS)
-            break;
+         if (try_device(devices[i]->nodes[DRM_NODE_RENDER], &render_fd, NULL))
+            try_device(devices[i]->nodes[DRM_NODE_PRIMARY], &primary_fd, NULL);
       }
 #else
       /* On actual hardware, we should have a gpu device (v3d) and a display
-       * device (vc4). We will need to use the display device to allocate WSI
-       * buffers and share them with the render node via prime, but that is a
-       * privileged operation so we need t have an authenticated display fd
-       * and for that we need the display server to provide the it (with DRI3),
-       * so here we only check that the device is present but we don't try to
-       * open it.
+       * device. We will need to use the display device to allocate WSI
+       * buffers and share them with the render node via prime. We want to
+       * allocate the display buffer on the WSI device as the display device
+       * may not have a MMU (this is true at least on Raspberry Pi 4).
        */
       if (devices[i]->bustype != DRM_BUS_PLATFORM)
          continue;
 
-      if (devices[i]->available_nodes & 1 << DRM_NODE_RENDER) {
-         char **compat = devices[i]->deviceinfo.platform->compatible;
-         while (*compat) {
-            if (strncmp(*compat, "brcm,2711-v3d", 13) == 0 ||
-                strncmp(*compat, "brcm,2712-v3d", 13) == 0) {
-               v3d_idx = i;
-               break;
-            }
-            compat++;
-         }
-      } else if (devices[i]->available_nodes & 1 << DRM_NODE_PRIMARY) {
-         char **compat = devices[i]->deviceinfo.platform->compatible;
-         while (*compat) {
-            if (strncmp(*compat, "brcm,bcm2712-vc6", 16) == 0 ||
-                strncmp(*compat, "brcm,bcm2711-vc5", 16) == 0 ||
-                strncmp(*compat, "brcm,bcm2835-vc4", 16) == 0) {
-               vc4_idx = i;
-               break;
-            }
-            compat++;
-         }
-      }
+      if ((devices[i]->available_nodes & 1 << DRM_NODE_RENDER))
+         try_device(devices[i]->nodes[DRM_NODE_RENDER], &render_fd, "v3d");
+      if ((devices[i]->available_nodes & 1 << DRM_NODE_PRIMARY))
+         try_display_device(instance, devices[i]->nodes[DRM_NODE_PRIMARY], &primary_fd);
 #endif
+
+      if (render_fd >= 0 && primary_fd >= 0)
+         break;
    }
 
-#if !USE_V3D_SIMULATOR
-   if (v3d_idx != -1) {
-      drmDevicePtr v3d_device = devices[v3d_idx];
-      drmDevicePtr vc4_device = vc4_idx != -1 ? devices[vc4_idx] : NULL;
-      result = create_physical_device(instance, v3d_device, vc4_device);
-   }
-#endif
+   if (render_fd < 0)
+      result = VK_ERROR_INCOMPATIBLE_DRIVER;
+   else
+      result = create_physical_device(instance, render_fd, primary_fd);
 
    drmFreeDevices(devices, max_devices);
 
@@ -1569,9 +1625,6 @@ v3dv_physical_device_vendor_id(const struct v3dv_physical_device *dev)
 uint32_t
 v3dv_physical_device_device_id(const struct v3dv_physical_device *dev)
 {
-#if USE_V3D_SIMULATOR
-   return dev->device_id;
-#else
    switch (dev->devinfo.ver) {
    case 42:
       return 0xBE485FD3; /* Broadcom deviceID for 2711 */
@@ -1580,7 +1633,6 @@ v3dv_physical_device_device_id(const struct v3dv_physical_device *dev)
    default:
       unreachable("Unsupported V3D version");
    }
-#endif
 }
 
 /* We support exactly one queue family. */
@@ -1843,14 +1895,14 @@ v3dv_CreateDevice(VkPhysicalDevice physicalDevice,
 
 
 #if MESA_DEBUG
-   v3dv_X(device, device_check_prepacked_sizes)();
+   v3d_X((&device->devinfo), device_check_prepacked_sizes)();
 #endif
    init_device_meta(device);
    v3dv_bo_cache_init(device);
    v3dv_pipeline_cache_init(&device->default_pipeline_cache, device, 0,
                             device->instance->default_pipeline_cache_enabled);
    device->default_attribute_float =
-      v3dv_X(device, create_default_attribute_values)(device, NULL);
+      v3d_X((&device->devinfo), create_default_attribute_values)(device, NULL);
 
    device->device_address_mem_ctx = ralloc_context(NULL);
    util_dynarray_init(&device->device_address_bo_list,
@@ -1949,8 +2001,8 @@ device_free_wsi_dumb(int32_t display_fd, int32_t dumb_handle)
    struct drm_mode_destroy_dumb destroy_dumb = {
       .handle = dumb_handle,
    };
-   if (v3dv_ioctl(display_fd, DRM_IOCTL_MODE_DESTROY_DUMB, &destroy_dumb)) {
-      fprintf(stderr, "destroy dumb object %d: %s\n", dumb_handle, strerror(errno));
+   if (v3d_ioctl(display_fd, DRM_IOCTL_MODE_DESTROY_DUMB, &destroy_dumb)) {
+      mesa_loge("destroy dumb object %d: %s\n", dumb_handle, strerror(errno));
    }
 }
 
@@ -2030,7 +2082,7 @@ device_import_bo(struct v3dv_device *device,
    struct drm_v3d_get_bo_offset get_offset = {
       .handle = handle,
    };
-   ret = v3dv_ioctl(render_fd, DRM_IOCTL_V3D_GET_BO_OFFSET, &get_offset);
+   ret = v3d_ioctl(render_fd, DRM_IOCTL_V3D_GET_BO_OFFSET, &get_offset);
    if (ret)
       return VK_ERROR_INVALID_EXTERNAL_HANDLE;
    assert(get_offset.offset != 0);
@@ -2074,7 +2126,7 @@ device_alloc_for_wsi(struct v3dv_device *device,
    };
 
    int err;
-   err = v3dv_ioctl(display_fd, DRM_IOCTL_MODE_CREATE_DUMB, &create_dumb);
+   err = v3d_ioctl(display_fd, DRM_IOCTL_MODE_CREATE_DUMB, &create_dumb);
    if (err < 0)
       goto fail_create;
 
@@ -2205,6 +2257,9 @@ v3dv_AllocateMemory(VkDevice _device,
           * according to VkExternalImageFormatProperties, so it must be
           * fd or dmabuf, which don't have special requirements for us.
           */
+         break;
+      case VK_STRUCTURE_TYPE_IMPORT_ANDROID_HARDWARE_BUFFER_INFO_ANDROID:
+         /* This case is handled in the common code */
          break;
       default:
          vk_debug_ignored_stype(ext->sType);
@@ -2933,7 +2988,7 @@ v3dv_CreateSampler(VkDevice _device,
       }
    }
 
-   v3dv_X(device, pack_sampler_state)(device, sampler, pCreateInfo, bc_info);
+   v3d_X((&device->devinfo), pack_sampler_state)(device, sampler, pCreateInfo, bc_info);
 
    *pSampler = v3dv_sampler_to_handle(sampler);
 

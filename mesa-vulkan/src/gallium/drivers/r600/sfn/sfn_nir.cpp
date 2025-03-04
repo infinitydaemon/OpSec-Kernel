@@ -623,6 +623,8 @@ optimize_once(nir_shader *shader)
    NIR_PASS(progress, shader, nir_copy_prop);
    NIR_PASS(progress, shader, nir_opt_dce);
    NIR_PASS(progress, shader, nir_opt_algebraic);
+   if (shader->options->has_bitfield_select)
+      NIR_PASS(progress, shader, nir_opt_generate_bfi);
    NIR_PASS(progress, shader, nir_opt_constant_folding);
    NIR_PASS(progress, shader, nir_opt_copy_prop_vars);
    NIR_PASS(progress, shader, nir_opt_remove_phis);
@@ -636,9 +638,19 @@ optimize_once(nir_shader *shader)
    NIR_PASS(progress, shader, nir_opt_if, nir_opt_if_optimize_phi_true_false);
    NIR_PASS(progress, shader, nir_opt_dead_cf);
    NIR_PASS(progress, shader, nir_opt_cse);
-   NIR_PASS(progress, shader, nir_opt_peephole_select, 200, true, true);
 
-   NIR_PASS(progress, shader, nir_opt_conditional_discard);
+   nir_opt_peephole_select_options peephole_select_options = {
+      .limit = 200,
+      .indirect_load_ok = true,
+      .expensive_alu_ok = true,
+   };
+   NIR_PASS(progress, shader, nir_opt_peephole_select, &peephole_select_options);
+
+   nir_opt_peephole_select_options peephole_discard_options = {
+      .limit = 0,
+      .discard_ok = true,
+   };
+   NIR_PASS(progress, shader, nir_opt_peephole_select, &peephole_discard_options);
    NIR_PASS(progress, shader, nir_opt_dce);
    NIR_PASS(progress, shader, nir_opt_undef);
    NIR_PASS(progress, shader, nir_opt_loop_unroll);
@@ -679,12 +691,6 @@ r600_lower_to_scalar_instr_filter(const nir_instr *instr, const void *)
    case nir_op_fdot2:
    case nir_op_fdot3:
    case nir_op_fdot4:
-   case nir_op_fddx:
-   case nir_op_fddx_coarse:
-   case nir_op_fddx_fine:
-   case nir_op_fddy:
-   case nir_op_fddy_coarse:
-   case nir_op_fddy_fine:
       return nir_src_bit_size(alu->src[0].src) == 64;
    default:
       return true;
@@ -736,10 +742,6 @@ r600_lower_and_optimize_nir(nir_shader *sh,
                             enum amd_gfx_level gfx_level,
                             struct pipe_stream_output_info *so_info)
 {
-   bool lower_64bit =
-      gfx_level < CAYMAN &&
-      (sh->options->lower_int64_options || sh->options->lower_doubles_options) &&
-      ((sh->info.bit_sizes_float | sh->info.bit_sizes_int) & 64);
 
    r600::sort_uniforms(sh);
    NIR_PASS_V(sh, r600_nir_fix_kcache_indirect_access);
@@ -765,8 +767,17 @@ r600_lower_and_optimize_nir(nir_shader *sh,
               nir_lower_io,
               io_modes,
               r600_glsl_type_size,
-              nir_lower_io_lower_64bit_to_32);
+              (nir_lower_io_options)
+              (nir_lower_io_lower_64bit_to_32 |
+               nir_lower_io_use_interpolated_input_intrinsics));
 
+   nir_shader_gather_info(sh, nir_shader_get_entrypoint(sh));
+
+   bool lower_64bit_io_to_vec2 = (sh->info.bit_sizes_float | sh->info.bit_sizes_int) & 64;
+   bool lower_64bit =
+      gfx_level < CAYMAN &&
+      (sh->options->lower_int64_options || sh->options->lower_doubles_options) &&
+      lower_64bit_io_to_vec2;
    if (sh->info.stage == MESA_SHADER_FRAGMENT)
       NIR_PASS_V(sh, r600_lower_fs_pos_input);
 
@@ -815,7 +826,7 @@ r600_lower_and_optimize_nir(nir_shader *sh,
    NIR_PASS_V(sh, r600_nir_lower_int_tg4);
    NIR_PASS_V(sh, r600::r600_nir_lower_tex_to_backend, gfx_level);
 
-   if ((sh->info.bit_sizes_float | sh->info.bit_sizes_int) & 64) {
+   if (lower_64bit_io_to_vec2) {
       NIR_PASS_V(sh, r600::r600_nir_split_64bit_io);
       NIR_PASS_V(sh, r600::r600_split_64bit_alu_and_phi);
       NIR_PASS_V(sh, nir_split_64bit_vec3_and_vec4);
@@ -828,10 +839,8 @@ r600_lower_and_optimize_nir(nir_shader *sh,
    if (lower_64bit)
       NIR_PASS_V(sh, r600::r600_nir_64_to_vec2);
 
-   if ((sh->info.bit_sizes_float | sh->info.bit_sizes_int) & 64) {
+   if (lower_64bit_io_to_vec2)
       NIR_PASS_V(sh, r600::r600_split_64bit_uniforms_and_ubo);
-      NIR_PASS_V(sh, nir_lower_doubles, NULL, sh->options->lower_doubles_options);
-   }
 
    /* Lower to scalar to let some optimization work out better */
    while (optimize_once(sh))
@@ -847,6 +856,7 @@ r600_lower_and_optimize_nir(nir_shader *sh,
               nir_lower_vars_to_scratch,
               nir_var_function_temp,
               40,
+              r600_get_natural_size_align_bytes,
               r600_get_natural_size_align_bytes);
 
    while (optimize_once(sh))
@@ -868,7 +878,7 @@ r600_lower_and_optimize_nir(nir_shader *sh,
    NIR_PASS_V(sh, nir_lower_bool_to_int32);
 
    NIR_PASS_V(sh, nir_lower_locals_to_regs, 32);
-   NIR_PASS_V(sh, nir_convert_from_ssa, true);
+   NIR_PASS_V(sh, nir_convert_from_ssa, true, false);
    NIR_PASS_V(sh, nir_opt_dce);
 }
 

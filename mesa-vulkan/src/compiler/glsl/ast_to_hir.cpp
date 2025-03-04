@@ -391,7 +391,7 @@ arithmetic_result_type(ir_rvalue * &value_a, ir_rvalue * &value_b,
    /*    "If the operands are integer types, they must both be signed or
     *    both be unsigned."
     *
-    * From this rule and the preceeding conversion it can be inferred that
+    * From this rule and the preceding conversion it can be inferred that
     * both types must be GLSL_TYPE_FLOAT, or GLSL_TYPE_UINT, or GLSL_TYPE_INT.
     * The is_numeric check above already filtered out the case where either
     * type is not one of these, so now the base types need only be tested for
@@ -1262,7 +1262,7 @@ check_builtin_array_max_size(const char *name, unsigned size,
                        state->Const.MaxTextureCoords);
    } else if (strcmp("gl_ClipDistance", name) == 0) {
       state->clip_dist_size = size;
-      if (size + state->cull_dist_size > state->Const.MaxClipPlanes) {
+      if (size > state->Const.MaxClipPlanes) {
          /* From section 7.1 (Vertex Shader Special Variables) of the
           * GLSL 1.30 spec:
           *
@@ -1278,7 +1278,7 @@ check_builtin_array_max_size(const char *name, unsigned size,
       }
    } else if (strcmp("gl_CullDistance", name) == 0) {
       state->cull_dist_size = size;
-      if (size + state->clip_dist_size > state->Const.MaxClipPlanes) {
+      if (size > state->Const.MaxClipPlanes) {
          /* From the ARB_cull_distance spec:
           *
           *   "The gl_CullDistance array is predeclared as unsized and
@@ -1292,6 +1292,21 @@ check_builtin_array_max_size(const char *name, unsigned size,
                           "be larger than gl_MaxCullDistances (%u)",
                           state->Const.MaxClipPlanes);
       }
+   }
+
+   /* From the ARB_cull_distance spec:
+    *
+    * It is a compile-time or link-time error for the set of shaders forming
+    * a program to have the sum of the sizes of the gl_ClipDistance and
+    * gl_CullDistance arrays to be larger than
+    * gl_MaxCombinedClipAndCullDistances.
+    */
+   if (state->clip_dist_size + state->cull_dist_size >
+       state->Const.MaxClipPlanes) {
+       _mesa_glsl_error(&loc, state, "The combined size of 'gl_ClipDistance' "
+                        "and 'gl_CullDistance' size cannot be larger than "
+                        "gl_MaxCombinedClipAndCullDistances (%u)",
+                        state->Const.MaxClipPlanes);
    }
 }
 
@@ -3996,14 +4011,16 @@ apply_layout_qualifier_to_variable(const struct ast_type_qualifier *qual,
    /* Layout qualifiers for gl_FragDepth, which are enabled by extension
     * AMD_conservative_depth.
     */
-   if (qual->flags.q.depth_type
-       && !state->is_version(420, 0)
-       && !state->AMD_conservative_depth_enable
-       && !state->ARB_conservative_depth_enable) {
+   if (qual->flags.q.depth_type &&
+       ((!state->is_version(420, 0) &&
+         !state->AMD_conservative_depth_enable &&
+         !state->ARB_conservative_depth_enable) &&
+       (!state->is_version(0, 300) &&
+        !state->EXT_conservative_depth_enable))) {
        _mesa_glsl_error(loc, state,
                         "extension GL_AMD_conservative_depth or "
-                        "GL_ARB_conservative_depth must be enabled "
-                        "to use depth layout qualifiers");
+                        "GL_ARB_conservative_depth or GL_EXT_conservative_depth"
+                        "must be enabled to use depth layout qualifiers");
    } else if (qual->flags.q.depth_type
               && strcmp(var->name, "gl_FragDepth") != 0) {
        _mesa_glsl_error(loc, state,
@@ -4485,8 +4502,8 @@ get_variable_being_redeclared(ir_variable **var_ptr, YYLTYPE loc,
        * We don't really need to do anything here, just allow the
        * redeclaration. Any error on the gl_FragCoord is handled on the ast
        * level at apply_layout_qualifier_to_variable using the
-       * ast_type_qualifier and _mesa_glsl_parse_state, or later at
-       * linker.cpp.
+       * ast_type_qualifier and _mesa_glsl_parse_state, or later in the
+       * linker.
        */
       /* According to section 4.3.7 of the GLSL 1.30 spec,
        * the following built-in varaibles can be redeclared with an
@@ -4510,7 +4527,8 @@ get_variable_being_redeclared(ir_variable **var_ptr, YYLTYPE loc,
       /* Layout qualifiers for gl_FragDepth. */
    } else if ((state->is_version(420, 0) ||
                state->AMD_conservative_depth_enable ||
-               state->ARB_conservative_depth_enable)
+               state->ARB_conservative_depth_enable ||
+               state->EXT_conservative_depth_enable)
               && strcmp(var->name, "gl_FragDepth") == 0) {
 
       /** From the AMD_conservative_depth spec:
@@ -6448,6 +6466,8 @@ ast_function::hir(exec_list *instructions,
                continue;
 
             tsig = fn->matching_signature(state, &sig->parameters,
+                                          state->has_implicit_conversions(),
+                                          state->has_implicit_int_to_uint_conversion(),
                                           false);
             if (!tsig) {
                _mesa_glsl_error(& loc, state, "subroutine type mismatch '%s' - signatures do not match\n", decl->identifier);
@@ -7152,7 +7172,9 @@ ast_case_label::hir(exec_list *instructions,
 
          /* Check if int->uint implicit conversion is supported. */
          bool integer_conversion_supported =
-            _mesa_glsl_can_implicitly_convert(&glsl_type_builtin_int, &glsl_type_builtin_uint, state);
+            _mesa_glsl_can_implicitly_convert(&glsl_type_builtin_int, &glsl_type_builtin_uint,
+                                              state->has_implicit_conversions(),
+                                              state->has_implicit_int_to_uint_conversion());
 
          if ((!glsl_type_is_integer_32(type_a) || !glsl_type_is_integer_32(type_b)) ||
               !integer_conversion_supported) {

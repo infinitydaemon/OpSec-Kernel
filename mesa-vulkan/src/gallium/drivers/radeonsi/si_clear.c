@@ -49,47 +49,21 @@ static void si_init_clear_image_dcc_single(struct si_clear_info *info, struct si
 }
 
 void si_execute_clears(struct si_context *sctx, struct si_clear_info *info,
-                       unsigned num_clears, unsigned types, bool render_condition_enable)
+                       unsigned num_clears, bool render_condition_enable)
 {
-   if (!num_clears)
-      return;
-
-   /* Flush caches and wait for idle. */
-   if (types & (SI_CLEAR_TYPE_CMASK | SI_CLEAR_TYPE_DCC)) {
-      si_make_CB_shader_coherent(sctx, sctx->framebuffer.nr_samples,
-                                 sctx->framebuffer.CB_has_shader_readable_metadata,
-                                 sctx->framebuffer.all_DCC_pipe_aligned);
-   }
-
-   if (types & SI_CLEAR_TYPE_HTILE) {
-      si_make_DB_shader_coherent(sctx, sctx->framebuffer.nr_samples, sctx->framebuffer.has_stencil,
-                                 sctx->framebuffer.DB_has_shader_readable_metadata);
-   }
-
-   /* Flush caches in case we use compute. */
-   sctx->flags |= SI_CONTEXT_INV_VCACHE;
-
-   /* GFX6-8: CB and DB don't use L2. */
-   if (sctx->gfx_level <= GFX8)
-      sctx->flags |= SI_CONTEXT_INV_L2;
-
-   si_mark_atom_dirty(sctx, &sctx->atoms.s.cache_flush);
-
-   unsigned flags = SI_OP_SKIP_CACHE_INV_BEFORE |
-                    (render_condition_enable ? SI_OP_CS_RENDER_COND_ENABLE : 0);
+   assert(num_clears);
 
    /* Execute clears. */
    for (unsigned i = 0; i < num_clears; i++) {
       if (info[i].format) {
          si_compute_clear_image_dcc_single(sctx, (struct si_texture*)info[i].resource,
                                            info[i].level, info[i].format, &info[i].color,
-                                           flags);
+                                           render_condition_enable);
          continue;
       }
 
       if (info[i].is_dcc_msaa) {
-         gfx9_clear_dcc_msaa(sctx, info[i].resource, info[i].clear_value,
-                             flags, SI_COHERENCY_CP);
+         gfx9_clear_dcc_msaa(sctx, info[i].resource, info[i].clear_value, render_condition_enable);
          continue;
       }
 
@@ -98,23 +72,14 @@ void si_execute_clears(struct si_context *sctx, struct si_clear_info *info,
       if (info[i].writemask != 0xffffffff) {
          si_compute_clear_buffer_rmw(sctx, info[i].resource, info[i].offset, info[i].size,
                                      info[i].clear_value, info[i].writemask,
-                                     flags, SI_COHERENCY_CP);
+                                     render_condition_enable);
       } else {
          /* Compute shaders are much faster on both dGPUs and APUs. Don't use CP DMA. */
          si_clear_buffer(sctx, info[i].resource, info[i].offset, info[i].size,
-                         &info[i].clear_value, 4, flags, SI_COHERENCY_CP,
-                         SI_COMPUTE_CLEAR_METHOD);
+                         &info[i].clear_value, 4, SI_COMPUTE_CLEAR_METHOD,
+                         render_condition_enable);
       }
    }
-
-   /* Wait for idle. */
-   sctx->flags |= SI_CONTEXT_CS_PARTIAL_FLUSH;
-
-   /* GFX6-8: CB and DB don't use L2. */
-   if (sctx->gfx_level <= GFX8)
-      sctx->flags |= SI_CONTEXT_WB_L2;
-
-   si_mark_atom_dirty(sctx, &sctx->atoms.s.cache_flush);
 }
 
 static bool si_alloc_separate_cmask(struct si_screen *sscreen, struct si_texture *tex)
@@ -940,70 +905,32 @@ static void si_fast_clear(struct si_context *sctx, unsigned *buffers,
 
       /* Transition from TC-incompatible to TC-compatible HTILE if requested. */
       if (zstex->enable_tc_compatible_htile_next_clear) {
-          /* If both depth and stencil are present, they must be cleared together. */
-         if ((*buffers & PIPE_CLEAR_DEPTHSTENCIL) == PIPE_CLEAR_DEPTHSTENCIL ||
-             (*buffers & PIPE_CLEAR_DEPTH && (!zstex->surface.has_stencil ||
-                                              zstex->htile_stencil_disabled))) {
-            /* The conversion from TC-incompatible to TC-compatible can only be done in one clear. */
-            assert(zstex->buffer.b.b.last_level == 0);
-            assert(!zstex->tc_compatible_htile);
+         assert(zstex->buffer.b.b.last_level == 0);
+         assert(!zstex->tc_compatible_htile);
 
-            /* Enable TC-compatible HTILE. */
-            zstex->enable_tc_compatible_htile_next_clear = false;
-            zstex->tc_compatible_htile = true;
+         /* Decompress both depth and stencil. TC-compatible HTILE uses slightly different
+          * compression, so we must decompress before we change it.
+          *
+          * The clear isn't just memset. It still reads HTILE and decides what to do based on that.
+          * We need to decompress fully, so that HTILE doesn't contain any compression flags.
+          */
+         si_decompress_subresource(&sctx->b, zsbuf->texture, PIPE_MASK_ZS, 0, 0,
+                                   util_max_layer(zsbuf->texture, 0), false);
 
-            /* Update the framebuffer state to reflect the change. */
-            sctx->framebuffer.DB_has_shader_readable_metadata = true;
-            sctx->framebuffer.dirty_zsbuf = true;
-            si_mark_atom_dirty(sctx, &sctx->atoms.s.framebuffer);
+         /* Enable TC-compatible HTILE. */
+         zstex->enable_tc_compatible_htile_next_clear = false;
+         zstex->tc_compatible_htile = true;
 
-            /* Update all sampler views and shader images in all contexts. */
-            p_atomic_inc(&sctx->screen->dirty_tex_counter);
+         /* Update the framebuffer state to reflect the change. */
+         sctx->framebuffer.DB_has_shader_readable_metadata = true;
+         sctx->framebuffer.dirty_zsbuf = true;
+         si_mark_atom_dirty(sctx, &sctx->atoms.s.framebuffer);
 
-            /* Perform the clear here if possible, else clear to uncompressed. */
-            uint32_t clear_value;
+         /* Update all sampler views and shader images in all contexts. */
+         p_atomic_inc(&sctx->screen->dirty_tex_counter);
+      }
 
-            if (zstex->htile_stencil_disabled || !zstex->surface.has_stencil) {
-               if (si_can_fast_clear_depth(zstex, level, depth, *buffers)) {
-                  /* Z-only clear. */
-                  clear_value = si_get_htile_clear_value(zstex, depth);
-                  *buffers &= ~PIPE_CLEAR_DEPTH;
-                  zstex->depth_cleared_level_mask_once |= BITFIELD_BIT(level);
-                  zstex->depth_cleared_level_mask |= BITFIELD_BIT(level);
-                  update_db_depth_clear = true;
-               }
-            } else if ((*buffers & PIPE_CLEAR_DEPTHSTENCIL) == PIPE_CLEAR_DEPTHSTENCIL) {
-               if (si_can_fast_clear_depth(zstex, level, depth, *buffers) &&
-                   si_can_fast_clear_stencil(zstex, level, stencil, *buffers)) {
-                  /* Combined Z+S clear. */
-                  clear_value = si_get_htile_clear_value(zstex, depth);
-                  *buffers &= ~PIPE_CLEAR_DEPTHSTENCIL;
-                  zstex->depth_cleared_level_mask_once |= BITFIELD_BIT(level);
-                  zstex->depth_cleared_level_mask |= BITFIELD_BIT(level);
-                  zstex->stencil_cleared_level_mask_once |= BITFIELD_BIT(level);
-                  update_db_depth_clear = true;
-                  update_db_stencil_clear = true;
-               }
-            }
-
-            if (!update_db_depth_clear) {
-               /* Clear to uncompressed, so that it doesn't contain values incompatible
-                * with the new TC-compatible HTILE setting.
-                *
-                * 0xfffff30f = uncompressed Z + S
-                * 0xfffc000f = uncompressed Z only
-                */
-               clear_value = !zstex->htile_stencil_disabled ? 0xfffff30f : 0xfffc000f;
-            }
-
-            zstex->need_flush_after_depth_decompression = sctx->gfx_level == GFX10_3;
-
-            assert(num_clears < ARRAY_SIZE(info));
-            si_init_buffer_clear(&info[num_clears++], &zstex->buffer.b.b,
-                                 zstex->surface.meta_offset, zstex->surface.meta_size, clear_value);
-            clear_types |= SI_CLEAR_TYPE_HTILE;
-         }
-      } else if (num_clears || !fb_too_small) {
+      if (num_clears || !fb_too_small) {
          /* This is where the HTILE buffer clear is done.
           *
           * If there is no clear scheduled and the framebuffer size is too small, we should use
@@ -1123,7 +1050,11 @@ static void si_fast_clear(struct si_context *sctx, unsigned *buffers,
       }
    }
 
-   si_execute_clears(sctx, info, num_clears, clear_types, sctx->render_cond_enabled);
+   if (num_clears) {
+      si_barrier_before_image_fast_clear(sctx, clear_types);
+      si_execute_clears(sctx, info, num_clears, sctx->render_cond_enabled);
+      si_barrier_after_image_fast_clear(sctx);
+   }
 }
 
 static void si_fb_clear_via_compute(struct si_context *sctx, unsigned *buffers,
@@ -1213,8 +1144,8 @@ static void gfx6_clear(struct pipe_context *ctx, unsigned buffers,
             if ((zstex->depth_clear_value[level] != 0) != (depth != 0)) {
                /* ZRANGE_PRECISION register of a bound surface will change so we
                 * must flush the DB caches. */
-               sctx->flags |= SI_CONTEXT_FLUSH_AND_INV_DB;
-               si_mark_atom_dirty(sctx, &sctx->atoms.s.cache_flush);
+               sctx->barrier_flags |= SI_BARRIER_SYNC_AND_INV_DB;
+               si_mark_atom_dirty(sctx, &sctx->atoms.s.barrier);
             }
             /* Update DB_DEPTH_CLEAR. */
             zstex->depth_clear_value[level] = depth;
@@ -1249,8 +1180,8 @@ static void gfx6_clear(struct pipe_context *ctx, unsigned buffers,
        * The root cause is unknown.
        */
       if (sctx->gfx_level == GFX11 || sctx->gfx_level == GFX11_5) {
-         sctx->flags |= SI_CONTEXT_VS_PARTIAL_FLUSH;
-         si_mark_atom_dirty(sctx, &sctx->atoms.s.cache_flush);
+         sctx->barrier_flags |= SI_BARRIER_SYNC_VS;
+         si_mark_atom_dirty(sctx, &sctx->atoms.s.barrier);
       }
    }
 
@@ -1427,7 +1358,9 @@ bool si_compute_fast_clear_image(struct si_context *sctx, struct pipe_resource *
    }
 
    assert(num_clears <= ARRAY_SIZE(info));
-   si_execute_clears(sctx, info, num_clears, clear_types, render_condition_enable);
+   si_barrier_before_image_fast_clear(sctx, clear_types);
+   si_execute_clears(sctx, info, num_clears, render_condition_enable);
+   si_barrier_after_image_fast_clear(sctx);
    return true;
 }
 

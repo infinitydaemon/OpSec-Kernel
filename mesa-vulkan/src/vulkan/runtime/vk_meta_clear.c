@@ -96,10 +96,10 @@ get_clear_pipeline_layout(struct vk_device *device,
                           struct vk_meta_device *meta,
                           VkPipelineLayout *layout_out)
 {
-   const char key[] = "vk-meta-clear-pipeline-layout";
+   enum vk_meta_object_key_type key = VK_META_OBJECT_KEY_CLEAR;
 
    VkPipelineLayout from_cache =
-      vk_meta_lookup_pipeline_layout(meta, key, sizeof(key));
+      vk_meta_lookup_pipeline_layout(meta, &key, sizeof(key));
    if (from_cache != VK_NULL_HANDLE) {
       *layout_out = from_cache;
       return VK_SUCCESS;
@@ -118,7 +118,7 @@ get_clear_pipeline_layout(struct vk_device *device,
    };
 
    return vk_meta_create_pipeline_layout(device, meta, &info,
-                                         key, sizeof(key), layout_out);
+                                         &key, sizeof(key), layout_out);
 }
 
 static VkResult
@@ -209,7 +209,7 @@ vk_meta_clear_attachments(struct vk_command_buffer *cmd,
 
    struct vk_meta_clear_key key;
    memset(&key, 0, sizeof(key));
-   key.key_type = VK_META_OBJECT_KEY_CLEAR_PIPELINE;
+   key.key_type = VK_META_OBJECT_KEY_CLEAR;
    vk_meta_rendering_info_copy(&key.render, render);
 
    struct vk_meta_clear_push_data push = {0};
@@ -368,6 +368,9 @@ vk_meta_clear_rendering(struct vk_meta_device *meta,
 
       VK_FROM_HANDLE(vk_image_view, iview, att_info->imageView);
       render.color_attachment_formats[i] = iview->format;
+      render.color_attachment_write_masks[i] =
+         VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
+         VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
       assert(render.samples == 0 || render.samples == iview->image->samples);
       render.samples = MAX2(render.samples, iview->image->samples);
 
@@ -486,14 +489,17 @@ clear_image_level_layers(struct vk_command_buffer *cmd,
       vk_render.pColorAttachments = &vk_att;
       meta_render.color_attachment_count = 1;
       meta_render.color_attachment_formats[0] = format;
+      meta_render.color_attachment_write_masks[0] =
+         VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
+         VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
    }
 
-   if (image->aspects & VK_IMAGE_ASPECT_DEPTH_BIT) {
+   if (aspects & VK_IMAGE_ASPECT_DEPTH_BIT) {
       vk_render.pDepthAttachment = &vk_att;
       meta_render.depth_attachment_format = format;
    }
 
-   if (image->aspects & VK_IMAGE_ASPECT_STENCIL_BIT) {
+   if (aspects & VK_IMAGE_ASPECT_STENCIL_BIT) {
       vk_render.pStencilAttachment = &vk_att;
       meta_render.stencil_attachment_format = format;
    }

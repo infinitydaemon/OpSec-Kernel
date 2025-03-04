@@ -8,6 +8,7 @@
 
 #include "amdgpu_cs.h"
 #include "util/detect_os.h"
+#include "amdgpu_winsys.h"
 #include "util/os_time.h"
 #include <inttypes.h>
 #include <stdio.h>
@@ -27,7 +28,7 @@
 
 void amdgpu_fence_destroy(struct amdgpu_fence *fence)
 {
-   amdgpu_cs_destroy_syncobj(fence->aws->dev, fence->syncobj);
+   ac_drm_cs_destroy_syncobj(fence->aws->fd, fence->syncobj);
 
    if (fence->ctx)
       amdgpu_ctx_reference(&fence->ctx, NULL);
@@ -37,24 +38,24 @@ void amdgpu_fence_destroy(struct amdgpu_fence *fence)
 }
 
 static struct pipe_fence_handle *
-amdgpu_fence_create(struct amdgpu_cs *cs)
+amdgpu_fence_create(struct amdgpu_cs *acs)
 {
    struct amdgpu_fence *fence = CALLOC_STRUCT(amdgpu_fence);
-   struct amdgpu_ctx *ctx = cs->ctx;
+   struct amdgpu_ctx *ctx = acs->ctx;
 
    fence->reference.count = 1;
    fence->aws = ctx->aws;
    amdgpu_ctx_reference(&fence->ctx, ctx);
    fence->ctx = ctx;
-   fence->ip_type = cs->ip_type;
-   if (amdgpu_cs_create_syncobj2(ctx->aws->dev, 0, &fence->syncobj)) {
+   fence->ip_type = acs->ip_type;
+   if (ac_drm_cs_create_syncobj2(ctx->aws->fd, 0, &fence->syncobj)) {
       free(fence);
       return NULL;
    }
 
    util_queue_fence_init(&fence->submitted);
    util_queue_fence_reset(&fence->submitted);
-   fence->queue_index = cs->queue_index;
+   fence->queue_index = acs->queue_index;
    return (struct pipe_fence_handle *)fence;
 }
 
@@ -72,7 +73,7 @@ amdgpu_fence_import_syncobj(struct radeon_winsys *rws, int fd)
    fence->aws = aws;
    fence->ip_type = 0xffffffff;
 
-   r = amdgpu_cs_import_syncobj(aws->dev, fd, &fence->syncobj);
+   r = ac_drm_cs_import_syncobj(aws->fd, fd, &fence->syncobj);
    if (r) {
       FREE(fence);
       return NULL;
@@ -98,15 +99,15 @@ amdgpu_fence_import_sync_file(struct radeon_winsys *rws, int fd)
    /* fence->ctx == NULL means that the fence is syncobj-based. */
 
    /* Convert sync_file into syncobj. */
-   int r = amdgpu_cs_create_syncobj(aws->dev, &fence->syncobj);
+   int r = ac_drm_cs_create_syncobj(aws->fd, &fence->syncobj);
    if (r) {
       FREE(fence);
       return NULL;
    }
 
-   r = amdgpu_cs_syncobj_import_sync_file(aws->dev, fence->syncobj, fd);
+   r = ac_drm_cs_syncobj_import_sync_file(aws->fd, fence->syncobj, fd);
    if (r) {
-      amdgpu_cs_destroy_syncobj(aws->dev, fence->syncobj);
+      ac_drm_cs_destroy_syncobj(aws->fd, fence->syncobj);
       FREE(fence);
       return NULL;
    }
@@ -127,7 +128,7 @@ static int amdgpu_fence_export_sync_file(struct radeon_winsys *rws,
    util_queue_fence_wait(&fence->submitted);
 
    /* Convert syncobj into sync_file. */
-   r = amdgpu_cs_syncobj_export_sync_file(aws->dev, fence->syncobj, &fd);
+   r = ac_drm_cs_syncobj_export_sync_file(aws->fd, fence->syncobj, &fd);
    return r ? -1 : fd;
 }
 
@@ -137,18 +138,18 @@ static int amdgpu_export_signalled_sync_file(struct radeon_winsys *rws)
    uint32_t syncobj;
    int fd = -1;
 
-   int r = amdgpu_cs_create_syncobj2(aws->dev, DRM_SYNCOBJ_CREATE_SIGNALED,
+   int r = ac_drm_cs_create_syncobj2(aws->fd, DRM_SYNCOBJ_CREATE_SIGNALED,
                                      &syncobj);
    if (r) {
       return -1;
    }
 
-   r = amdgpu_cs_syncobj_export_sync_file(aws->dev, syncobj, &fd);
+   r = ac_drm_cs_syncobj_export_sync_file(aws->fd, syncobj, &fd);
    if (r) {
       fd = -1;
    }
 
-   amdgpu_cs_destroy_syncobj(aws->dev, syncobj);
+   ac_drm_cs_destroy_syncobj(aws->fd, syncobj);
    return fd;
 }
 
@@ -207,10 +208,13 @@ bool amdgpu_fence_wait(struct pipe_fence_handle *fence, uint64_t timeout,
    if ((uint64_t)abs_timeout == OS_TIMEOUT_INFINITE)
       abs_timeout = INT64_MAX;
 
-   if (amdgpu_cs_syncobj_wait(afence->aws->dev, &afence->syncobj, 1,
+   if (ac_drm_cs_syncobj_wait(afence->aws->fd, &afence->syncobj, 1,
                               abs_timeout, 0, NULL))
-
       return false;
+
+   /* Check that guest-side syncobj agrees with the user fence. */
+   if (user_fence_cpu && afence->aws->info.is_virtio)
+      assert(afence->seq_no <= *user_fence_cpu);
 
    afence->signalled = true;
    return true;
@@ -226,22 +230,22 @@ static bool amdgpu_fence_wait_rel_timeout(struct radeon_winsys *rws,
 static struct pipe_fence_handle *
 amdgpu_cs_get_next_fence(struct radeon_cmdbuf *rcs)
 {
-   struct amdgpu_cs *cs = amdgpu_cs(rcs);
+   struct amdgpu_cs *acs = amdgpu_cs(rcs);
    struct pipe_fence_handle *fence = NULL;
 
-   if (cs->noop)
+   if (acs->noop)
       return NULL;
 
-   if (cs->next_fence) {
-      amdgpu_fence_reference(&fence, cs->next_fence);
+   if (acs->next_fence) {
+      amdgpu_fence_reference(&fence, acs->next_fence);
       return fence;
    }
 
-   fence = amdgpu_fence_create(cs);
+   fence = amdgpu_fence_create(acs);
    if (!fence)
       return NULL;
 
-   amdgpu_fence_reference(&cs->next_fence, fence);
+   amdgpu_fence_reference(&acs->next_fence, fence);
    return fence;
 }
 
@@ -272,7 +276,8 @@ static struct radeon_winsys_ctx *amdgpu_ctx_create(struct radeon_winsys *rws,
    int r;
    struct amdgpu_bo_alloc_request alloc_buffer = {};
    uint32_t amdgpu_priority = radeon_to_amdgpu_priority(priority);
-   amdgpu_bo_handle buf_handle;
+   ac_drm_device *dev;
+   ac_drm_bo buf_handle;
 
    if (!ctx)
       return NULL;
@@ -281,7 +286,9 @@ static struct radeon_winsys_ctx *amdgpu_ctx_create(struct radeon_winsys *rws,
    ctx->reference.count = 1;
    ctx->allow_context_lost = allow_context_lost;
 
-   r = amdgpu_cs_ctx_create2(ctx->aws->dev, amdgpu_priority, &ctx->ctx);
+   dev = ctx->aws->dev;
+
+   r = ac_drm_cs_ctx_create2(dev, amdgpu_priority, &ctx->ctx_handle);
    if (r) {
       fprintf(stderr, "amdgpu: amdgpu_cs_ctx_create2 failed. (%i)\n", r);
       goto error_create;
@@ -291,13 +298,14 @@ static struct radeon_winsys_ctx *amdgpu_ctx_create(struct radeon_winsys *rws,
    alloc_buffer.phys_alignment = ctx->aws->info.gart_page_size;
    alloc_buffer.preferred_heap = AMDGPU_GEM_DOMAIN_GTT;
 
-   r = amdgpu_bo_alloc(ctx->aws->dev, &alloc_buffer, &buf_handle);
+   r = ac_drm_bo_alloc(dev, &alloc_buffer, &buf_handle);
    if (r) {
       fprintf(stderr, "amdgpu: amdgpu_bo_alloc failed. (%i)\n", r);
       goto error_user_fence_alloc;
    }
 
-   r = amdgpu_bo_cpu_map(buf_handle, (void**)&ctx->user_fence_cpu_address_base);
+   ctx->user_fence_cpu_address_base = NULL;
+   r = ac_drm_bo_cpu_map(dev, buf_handle, (void**)&ctx->user_fence_cpu_address_base);
    if (r) {
       fprintf(stderr, "amdgpu: amdgpu_bo_cpu_map failed. (%i)\n", r);
       goto error_user_fence_map;
@@ -305,13 +313,15 @@ static struct radeon_winsys_ctx *amdgpu_ctx_create(struct radeon_winsys *rws,
 
    memset(ctx->user_fence_cpu_address_base, 0, alloc_buffer.alloc_size);
    ctx->user_fence_bo = buf_handle;
+   ac_drm_bo_export(dev, buf_handle, amdgpu_bo_handle_type_kms, &ctx->user_fence_bo_kms_handle);
 
    return (struct radeon_winsys_ctx*)ctx;
 
 error_user_fence_map:
-   amdgpu_bo_free(buf_handle);
+   ac_drm_bo_free(dev, buf_handle);
+
 error_user_fence_alloc:
-   amdgpu_cs_ctx_free(ctx->ctx);
+   ac_drm_cs_ctx_free(dev, ctx->ctx_handle);
 error_create:
    FREE(ctx);
    return NULL;
@@ -354,7 +364,7 @@ static int amdgpu_submit_gfx_nop(struct amdgpu_ctx *ctx)
    struct amdgpu_bo_alloc_request request = {0};
    struct drm_amdgpu_bo_list_in bo_list_in;
    struct drm_amdgpu_cs_chunk_ib ib_in = {0};
-   amdgpu_bo_handle buf_handle;
+   ac_drm_bo bo;
    amdgpu_va_handle va_handle = NULL;
    struct drm_amdgpu_cs_chunk chunks[2];
    struct drm_amdgpu_bo_list_entry list;
@@ -368,40 +378,45 @@ static int amdgpu_submit_gfx_nop(struct amdgpu_ctx *ctx)
     * it by submitting a no-op job. If it reports an error, then assume
     * that the reset is not complete.
     */
-   amdgpu_context_handle temp_ctx;
-   r = amdgpu_cs_ctx_create2(ctx->aws->dev, AMDGPU_CTX_PRIORITY_NORMAL, &temp_ctx);
+   uint32_t temp_ctx_handle;
+   r = ac_drm_cs_ctx_create2(ctx->aws->dev, AMDGPU_CTX_PRIORITY_NORMAL, &temp_ctx_handle);
    if (r)
       return r;
 
    request.preferred_heap = AMDGPU_GEM_DOMAIN_VRAM;
    request.alloc_size = 4096;
    request.phys_alignment = 4096;
-   r = amdgpu_bo_alloc(ctx->aws->dev, &request, &buf_handle);
+   r = ac_drm_bo_alloc(ctx->aws->dev, &request, &bo);
    if (r)
       goto destroy_ctx;
 
-   r = amdgpu_va_range_alloc(ctx->aws->dev, amdgpu_gpu_va_range_general,
-                 request.alloc_size, request.phys_alignment,
-                 0, &va, &va_handle,
-                 AMDGPU_VA_RANGE_32_BIT | AMDGPU_VA_RANGE_HIGH);
+   r = ac_drm_va_range_alloc(ctx->aws->dev, amdgpu_gpu_va_range_general,
+                             request.alloc_size, request.phys_alignment,
+                             0, &va, &va_handle,
+                             AMDGPU_VA_RANGE_32_BIT | AMDGPU_VA_RANGE_HIGH);
    if (r)
       goto destroy_bo;
-   r = amdgpu_bo_va_op_raw(ctx->aws->dev, buf_handle, 0, request.alloc_size, va,
+
+   uint32_t kms_handle;
+   ac_drm_bo_export(ctx->aws->dev, bo, amdgpu_bo_handle_type_kms, &kms_handle);
+
+   r = ac_drm_bo_va_op_raw(ctx->aws->dev, kms_handle, 0, request.alloc_size, va,
                            AMDGPU_VM_PAGE_READABLE | AMDGPU_VM_PAGE_WRITEABLE | AMDGPU_VM_PAGE_EXECUTABLE,
                            AMDGPU_VA_OP_MAP);
    if (r)
       goto destroy_bo;
 
-   r = amdgpu_bo_cpu_map(buf_handle, &cpu);
+   r = ac_drm_bo_cpu_map(ctx->aws->dev, bo, &cpu);
    if (r)
       goto destroy_bo;
 
    noop_dw_size = ctx->aws->info.ip[AMD_IP_GFX].ib_pad_dw_mask + 1;
    ((uint32_t*)cpu)[0] = PKT3(PKT3_NOP, noop_dw_size - 2, 0);
 
-   amdgpu_bo_cpu_unmap(buf_handle);
+   ac_drm_bo_cpu_unmap(ctx->aws->dev, bo);
 
-   amdgpu_bo_export(buf_handle, amdgpu_bo_handle_type_kms, &list.bo_handle);
+   list.bo_handle = kms_handle;
+   ac_drm_bo_export(ctx->aws->dev, bo, amdgpu_bo_handle_type_kms, &list.bo_handle);
    list.bo_priority = 0;
 
    bo_list_in.list_handle = ~0;
@@ -421,14 +436,14 @@ static int amdgpu_submit_gfx_nop(struct amdgpu_ctx *ctx)
    chunks[1].length_dw = sizeof(struct drm_amdgpu_cs_chunk_ib) / 4;
    chunks[1].chunk_data = (uintptr_t)&ib_in;
 
-   r = amdgpu_cs_submit_raw2(ctx->aws->dev, temp_ctx, 0, 2, chunks, &seq_no);
+   r = ac_drm_cs_submit_raw2(ctx->aws->dev, temp_ctx_handle, 0, 2, chunks, &seq_no);
 
 destroy_bo:
    if (va_handle)
-      amdgpu_va_range_free(va_handle);
-   amdgpu_bo_free(buf_handle);
+      ac_drm_va_range_free(va_handle);
+   ac_drm_bo_free(ctx->aws->dev, bo);
 destroy_ctx:
-   amdgpu_cs_ctx_free(temp_ctx);
+   ac_drm_cs_ctx_free(ctx->aws->dev, temp_ctx_handle);
 
    return r;
 }
@@ -488,7 +503,7 @@ amdgpu_ctx_query_reset_status(struct radeon_winsys_ctx *rwctx, bool full_reset_o
     * that the context reset is complete.
     */
    if (ctx->sw_status != PIPE_NO_RESET) {
-      int r = amdgpu_cs_query_reset_state2(ctx->ctx, &flags);
+      int r = ac_drm_cs_query_reset_state2(ctx->aws->dev, ctx->ctx_handle, &flags);
       if (!r) {
          if (flags & AMDGPU_CTX_QUERY2_FLAGS_RESET) {
             if (reset_completed) {
@@ -534,22 +549,22 @@ static bool amdgpu_cs_has_user_fence(struct amdgpu_cs *acs)
           acs->ip_type == AMD_IP_SDMA;
 }
 
-static inline unsigned amdgpu_cs_epilog_dws(struct amdgpu_cs *cs)
+static inline unsigned amdgpu_cs_epilog_dws(struct amdgpu_cs *acs)
 {
-   if (cs->has_chaining)
+   if (acs->has_chaining)
       return 4; /* for chaining */
 
    return 0;
 }
 
 static struct amdgpu_cs_buffer *
-amdgpu_lookup_buffer(struct amdgpu_cs_context *cs, struct amdgpu_winsys_bo *bo,
+amdgpu_lookup_buffer(struct amdgpu_cs_context *csc, struct amdgpu_winsys_bo *bo,
                      struct amdgpu_buffer_list *list)
 {
    int num_buffers = list->num_buffers;
    struct amdgpu_cs_buffer *buffers = list->buffers;
    unsigned hash = bo->unique_id & (BUFFER_HASHLIST_SIZE-1);
-   int i = cs->buffer_indices_hashlist[hash];
+   int i = csc->buffer_indices_hashlist[hash];
 
    /* not found or found */
    if (i < 0)
@@ -570,7 +585,7 @@ amdgpu_lookup_buffer(struct amdgpu_cs_context *cs, struct amdgpu_winsys_bo *bo,
           *         AAAAAAAAAAABBBBBBBBBBBBBBCCCCCCCC
           * will collide here: ^ and here:   ^,
           * meaning that we should get very few collisions in the end. */
-         cs->buffer_indices_hashlist[hash] = i & 0x7fff;
+         csc->buffer_indices_hashlist[hash] = i & 0x7fff;
          return &buffers[i];
       }
    }
@@ -578,13 +593,13 @@ amdgpu_lookup_buffer(struct amdgpu_cs_context *cs, struct amdgpu_winsys_bo *bo,
 }
 
 struct amdgpu_cs_buffer *
-amdgpu_lookup_buffer_any_type(struct amdgpu_cs_context *cs, struct amdgpu_winsys_bo *bo)
+amdgpu_lookup_buffer_any_type(struct amdgpu_cs_context *csc, struct amdgpu_winsys_bo *bo)
 {
-   return amdgpu_lookup_buffer(cs, bo, &cs->buffer_lists[get_buf_list_idx(bo)]);
+   return amdgpu_lookup_buffer(csc, bo, &csc->buffer_lists[get_buf_list_idx(bo)]);
 }
 
 static struct amdgpu_cs_buffer *
-amdgpu_do_add_buffer(struct amdgpu_cs_context *cs, struct amdgpu_winsys_bo *bo,
+amdgpu_do_add_buffer(struct amdgpu_cs_context *csc, struct amdgpu_winsys_bo *bo,
                      struct amdgpu_buffer_list *list, bool add_ref)
 {
    /* New buffer, check if the backing array is large enough. */
@@ -613,17 +628,17 @@ amdgpu_do_add_buffer(struct amdgpu_cs_context *cs, struct amdgpu_winsys_bo *bo,
    buffer->usage = 0;
 
    unsigned hash = bo->unique_id & (BUFFER_HASHLIST_SIZE-1);
-   cs->buffer_indices_hashlist[hash] = idx & 0x7fff;
+   csc->buffer_indices_hashlist[hash] = idx & 0x7fff;
    return buffer;
 }
 
 static struct amdgpu_cs_buffer *
-amdgpu_lookup_or_add_buffer(struct amdgpu_cs_context *cs, struct amdgpu_winsys_bo *bo,
+amdgpu_lookup_or_add_buffer(struct amdgpu_cs_context *csc, struct amdgpu_winsys_bo *bo,
                             struct amdgpu_buffer_list *list, bool add_ref)
 {
-   struct amdgpu_cs_buffer *buffer = amdgpu_lookup_buffer(cs, bo, list);
+   struct amdgpu_cs_buffer *buffer = amdgpu_lookup_buffer(csc, bo, list);
 
-   return buffer ? buffer : amdgpu_do_add_buffer(cs, bo, list, add_ref);
+   return buffer ? buffer : amdgpu_do_add_buffer(csc, bo, list, add_ref);
 }
 
 static unsigned amdgpu_cs_add_buffer(struct radeon_cmdbuf *rcs,
@@ -634,7 +649,7 @@ static unsigned amdgpu_cs_add_buffer(struct radeon_cmdbuf *rcs,
    /* Don't use the "domains" parameter. Amdgpu doesn't support changing
     * the buffer placement during command submission.
     */
-   struct amdgpu_cs_context *cs = (struct amdgpu_cs_context*)rcs->csc;
+   struct amdgpu_cs_context *csc = amdgpu_csc_get_current(amdgpu_cs(rcs));
    struct amdgpu_winsys_bo *bo = (struct amdgpu_winsys_bo*)buf;
    struct amdgpu_cs_buffer *buffer;
 
@@ -642,24 +657,24 @@ static unsigned amdgpu_cs_add_buffer(struct radeon_cmdbuf *rcs,
     * This is very effective with suballocators and linear uploaders that
     * are outside of the winsys.
     */
-   if (bo == cs->last_added_bo &&
-       (usage & cs->last_added_bo_usage) == usage)
+   if (bo == csc->last_added_bo &&
+       (usage & csc->last_added_bo_usage) == usage)
       return 0;
 
-   buffer = amdgpu_lookup_or_add_buffer(cs, bo, &cs->buffer_lists[get_buf_list_idx(bo)], true);
+   buffer = amdgpu_lookup_or_add_buffer(csc, bo, &csc->buffer_lists[get_buf_list_idx(bo)], true);
    if (!buffer)
       return 0;
 
    buffer->usage |= usage;
 
-   cs->last_added_bo_usage = buffer->usage;
-   cs->last_added_bo = bo;
+   csc->last_added_bo_usage = buffer->usage;
+   csc->last_added_bo = bo;
    return 0;
 }
 
 static bool amdgpu_ib_new_buffer(struct amdgpu_winsys *aws,
                                  struct amdgpu_ib *main_ib,
-                                 struct amdgpu_cs *cs)
+                                 struct amdgpu_cs *acs)
 {
    struct pb_buffer_lean *pb;
    uint8_t *mapped;
@@ -671,7 +686,7 @@ static bool amdgpu_ib_new_buffer(struct amdgpu_winsys *aws,
    buffer_size = util_next_power_of_two(main_ib->max_ib_bytes);
 
    /* Multiply by 4 to reduce internal fragmentation if chaining is not available.*/
-   if (!cs->has_chaining)
+   if (!acs->has_chaining)
       buffer_size *= 4;
 
    const unsigned min_size = MAX2(main_ib->max_check_space_size, 32 * 1024);
@@ -692,9 +707,9 @@ static bool amdgpu_ib_new_buffer(struct amdgpu_winsys *aws,
    unsigned flags = RADEON_FLAG_NO_INTERPROCESS_SHARING |
                     RADEON_FLAG_GL2_BYPASS;
 
-   if (cs->ip_type == AMD_IP_GFX ||
-       cs->ip_type == AMD_IP_COMPUTE ||
-       cs->ip_type == AMD_IP_SDMA) {
+   if (acs->ip_type == AMD_IP_GFX ||
+       acs->ip_type == AMD_IP_COMPUTE ||
+       acs->ip_type == AMD_IP_SDMA) {
       /* Avoids hangs with "rendercheck -t cacomposite -f a8r8g8b8" via glamor
        * on Navi 14
        */
@@ -726,9 +741,9 @@ static bool amdgpu_ib_new_buffer(struct amdgpu_winsys *aws,
 static bool amdgpu_get_new_ib(struct amdgpu_winsys *aws,
                               struct radeon_cmdbuf *rcs,
                               struct amdgpu_ib *main_ib,
-                              struct amdgpu_cs *cs)
+                              struct amdgpu_cs *acs)
 {
-   struct drm_amdgpu_cs_chunk_ib *chunk_ib = &cs->csc->chunk_ib[IB_MAIN];
+   struct drm_amdgpu_cs_chunk_ib *chunk_ib = &amdgpu_csc_get_current(acs)->chunk_ib[IB_MAIN];
    /* This is the minimum size of a contiguous IB. */
    unsigned ib_size = 16 * 1024;
 
@@ -737,7 +752,7 @@ static bool amdgpu_get_new_ib(struct amdgpu_winsys *aws,
     */
    ib_size = MAX2(ib_size, main_ib->max_check_space_size);
 
-   if (!cs->has_chaining) {
+   if (!acs->has_chaining) {
       ib_size = MAX2(ib_size, MIN2(util_next_power_of_two(main_ib->max_ib_bytes),
                                    IB_MAX_SUBMIT_BYTES));
    }
@@ -755,7 +770,7 @@ static bool amdgpu_get_new_ib(struct amdgpu_winsys *aws,
    /* Allocate a new buffer for IBs if the current buffer is all used. */
    if (!main_ib->big_buffer ||
        main_ib->used_ib_space + ib_size > main_ib->big_buffer->size) {
-      if (!amdgpu_ib_new_buffer(aws, main_ib, cs))
+      if (!amdgpu_ib_new_buffer(aws, main_ib, acs))
          return false;
    }
 
@@ -772,10 +787,10 @@ static bool amdgpu_get_new_ib(struct amdgpu_winsys *aws,
 
    rcs->current.buf = (uint32_t*)(main_ib->big_buffer_cpu_ptr + main_ib->used_ib_space);
 
-   cs->csc->ib_main_addr = rcs->current.buf;
+   amdgpu_csc_get_current(acs)->ib_main_addr = rcs->current.buf;
 
    ib_size = main_ib->big_buffer->size - main_ib->used_ib_space;
-   rcs->current.max_dw = ib_size / 4 - amdgpu_cs_epilog_dws(cs);
+   rcs->current.max_dw = ib_size / 4 - amdgpu_cs_epilog_dws(acs);
    return true;
 }
 
@@ -800,12 +815,12 @@ static void amdgpu_ib_finalize(struct amdgpu_winsys *aws, struct radeon_cmdbuf *
 }
 
 static bool amdgpu_init_cs_context(struct amdgpu_winsys *aws,
-                                   struct amdgpu_cs_context *cs,
+                                   struct amdgpu_cs_context *csc,
                                    enum amd_ip_type ip_type)
 {
-   for (unsigned i = 0; i < ARRAY_SIZE(cs->chunk_ib); i++) {
-      cs->chunk_ib[i].ip_type = ip_type;
-      cs->chunk_ib[i].flags = 0;
+   for (unsigned i = 0; i < ARRAY_SIZE(csc->chunk_ib); i++) {
+      csc->chunk_ib[i].ip_type = ip_type;
+      csc->chunk_ib[i].flags = 0;
 
       if (ip_type == AMD_IP_GFX || ip_type == AMD_IP_COMPUTE) {
          /* The kernel shouldn't invalidate L2 and vL1. The proper place for cache invalidation
@@ -815,12 +830,12 @@ static bool amdgpu_init_cs_context(struct amdgpu_winsys *aws,
           * starts drawing, and so the cache flush at the end of IBs is usually late and thus
           * useless.
           */
-         cs->chunk_ib[i].flags |= AMDGPU_IB_FLAG_TC_WB_NOT_INVALIDATE;
+         csc->chunk_ib[i].flags |= AMDGPU_IB_FLAG_TC_WB_NOT_INVALIDATE;
       }
    }
 
-   cs->chunk_ib[IB_PREAMBLE].flags |= AMDGPU_IB_FLAG_PREAMBLE;
-   cs->last_added_bo = NULL;
+   csc->chunk_ib[IB_PREAMBLE].flags |= AMDGPU_IB_FLAG_PREAMBLE;
+   csc->last_added_bo = NULL;
    return true;
 }
 
@@ -831,43 +846,43 @@ static void cleanup_fence_list(struct amdgpu_fence_list *fences)
    fences->num = 0;
 }
 
-static void amdgpu_cs_context_cleanup_buffers(struct amdgpu_winsys *aws, struct amdgpu_cs_context *cs)
+static void amdgpu_cs_context_cleanup_buffers(struct amdgpu_winsys *aws, struct amdgpu_cs_context *csc)
 {
-   for (unsigned i = 0; i < ARRAY_SIZE(cs->buffer_lists); i++) {
-      struct amdgpu_cs_buffer *buffers = cs->buffer_lists[i].buffers;
-      unsigned num_buffers = cs->buffer_lists[i].num_buffers;
+   for (unsigned i = 0; i < ARRAY_SIZE(csc->buffer_lists); i++) {
+      struct amdgpu_cs_buffer *buffers = csc->buffer_lists[i].buffers;
+      unsigned num_buffers = csc->buffer_lists[i].num_buffers;
 
       for (unsigned j = 0; j < num_buffers; j++)
          amdgpu_winsys_bo_drop_reference(aws, buffers[j].bo);
 
-      cs->buffer_lists[i].num_buffers = 0;
+      csc->buffer_lists[i].num_buffers = 0;
    }
 }
 
-static void amdgpu_cs_context_cleanup(struct amdgpu_winsys *aws, struct amdgpu_cs_context *cs)
+static void amdgpu_cs_context_cleanup(struct amdgpu_winsys *aws, struct amdgpu_cs_context *csc)
 {
-   cs->seq_no_dependencies.valid_fence_mask = 0;
-   cleanup_fence_list(&cs->syncobj_dependencies);
-   cleanup_fence_list(&cs->syncobj_to_signal);
-   amdgpu_fence_reference(&cs->fence, NULL);
-   cs->last_added_bo = NULL;
+   csc->seq_no_dependencies.valid_fence_mask = 0;
+   cleanup_fence_list(&csc->syncobj_dependencies);
+   cleanup_fence_list(&csc->syncobj_to_signal);
+   amdgpu_fence_reference(&csc->fence, NULL);
+   csc->last_added_bo = NULL;
 }
 
-static void amdgpu_destroy_cs_context(struct amdgpu_winsys *aws, struct amdgpu_cs_context *cs)
+static void amdgpu_destroy_cs_context(struct amdgpu_winsys *aws, struct amdgpu_cs_context *csc)
 {
-   amdgpu_cs_context_cleanup_buffers(aws, cs);
-   amdgpu_cs_context_cleanup(aws, cs);
-   for (unsigned i = 0; i < ARRAY_SIZE(cs->buffer_lists); i++)
-      FREE(cs->buffer_lists[i].buffers);
-   FREE(cs->syncobj_dependencies.list);
-   FREE(cs->syncobj_to_signal.list);
+   amdgpu_cs_context_cleanup_buffers(aws, csc);
+   amdgpu_cs_context_cleanup(aws, csc);
+   for (unsigned i = 0; i < ARRAY_SIZE(csc->buffer_lists); i++)
+      FREE(csc->buffer_lists[i].buffers);
+   FREE(csc->syncobj_dependencies.list);
+   FREE(csc->syncobj_to_signal.list);
 }
 
 
 static enum amd_ip_type amdgpu_cs_get_ip_type(struct radeon_cmdbuf *rcs)
 {
-   struct amdgpu_cs *cs = amdgpu_cs(rcs);
-   return cs->ip_type;
+   struct amdgpu_cs *acs = amdgpu_cs(rcs);
+   return acs->ip_type;
 }
 
 static bool ip_uses_alt_fence(enum amd_ip_type ip_type)
@@ -876,6 +891,25 @@ static bool ip_uses_alt_fence(enum amd_ip_type ip_type)
    return ip_type == AMD_IP_VCN_DEC ||
           ip_type == AMD_IP_VCN_ENC ||
           ip_type == AMD_IP_VCN_JPEG;
+}
+
+static void amdgpu_cs_destroy(struct radeon_cmdbuf *rcs)
+{
+   struct amdgpu_cs *acs = amdgpu_cs(rcs);
+
+   if (!acs)
+      return;
+
+   amdgpu_cs_sync_flush(rcs);
+   util_queue_fence_destroy(&acs->flush_completed);
+   p_atomic_dec(&acs->aws->num_cs);
+   radeon_bo_reference(&acs->aws->dummy_sws.base, &acs->preamble_ib_bo, NULL);
+   radeon_bo_reference(&acs->aws->dummy_sws.base, &acs->main_ib.big_buffer, NULL);
+   FREE(rcs->prev);
+   for (unsigned i = 0; i < ARRAY_SIZE(acs->csc); i++)
+      amdgpu_destroy_cs_context(acs->aws, &acs->csc[i]);
+   amdgpu_fence_reference(&acs->next_fence, NULL);
+   FREE(acs);
 }
 
 static bool
@@ -887,33 +921,33 @@ amdgpu_cs_create(struct radeon_cmdbuf *rcs,
                  void *flush_ctx)
 {
    struct amdgpu_ctx *ctx = (struct amdgpu_ctx*)rwctx;
-   struct amdgpu_cs *cs;
+   struct amdgpu_cs *acs;
 
-   cs = CALLOC_STRUCT(amdgpu_cs);
-   if (!cs) {
+   acs = CALLOC_STRUCT(amdgpu_cs);
+   if (!acs) {
       return false;
    }
 
-   util_queue_fence_init(&cs->flush_completed);
+   util_queue_fence_init(&acs->flush_completed);
 
-   cs->aws = ctx->aws;
-   cs->ctx = ctx;
-   cs->flush_cs = flush;
-   cs->flush_data = flush_ctx;
-   cs->ip_type = ip_type;
-   cs->noop = ctx->aws->noop_cs;
-   cs->has_chaining = ctx->aws->info.gfx_level >= GFX7 &&
-                      (ip_type == AMD_IP_GFX || ip_type == AMD_IP_COMPUTE);
+   acs->aws = ctx->aws;
+   acs->ctx = ctx;
+   acs->flush_cs = flush;
+   acs->flush_data = flush_ctx;
+   acs->ip_type = ip_type;
+   acs->noop = ctx->aws->noop_cs;
+   acs->has_chaining = ctx->aws->info.gfx_level >= GFX7 &&
+                       (ip_type == AMD_IP_GFX || ip_type == AMD_IP_COMPUTE);
 
    /* Compute the queue index by counting the IPs that have queues. */
    assert(ip_type < ARRAY_SIZE(ctx->aws->info.ip));
    assert(ctx->aws->info.ip[ip_type].num_queues);
 
    if (ip_uses_alt_fence(ip_type)) {
-      cs->queue_index = INT_MAX;
-      cs->uses_alt_fence = true;
+      acs->queue_index = INT_MAX;
+      acs->uses_alt_fence = true;
    } else {
-      cs->queue_index = 0;
+      acs->queue_index = 0;
 
       for (unsigned i = 0; i < ARRAY_SIZE(ctx->aws->info.ip); i++) {
          if (!ctx->aws->info.ip[i].num_queues || ip_uses_alt_fence((amd_ip_type)i))
@@ -922,62 +956,54 @@ amdgpu_cs_create(struct radeon_cmdbuf *rcs,
          if (i == ip_type)
             break;
 
-         cs->queue_index++;
+         acs->queue_index++;
       }
-      assert(cs->queue_index < AMDGPU_MAX_QUEUES);
+      assert(acs->queue_index < AMDGPU_MAX_QUEUES);
    }
 
-   struct amdgpu_cs_fence_info fence_info;
-   fence_info.handle = cs->ctx->user_fence_bo;
-   fence_info.offset = cs->ip_type * 4;
-   amdgpu_cs_chunk_fence_info_to_data(&fence_info,
-                                      (struct drm_amdgpu_cs_chunk_data*)&cs->fence_chunk);
+   ac_drm_cs_chunk_fence_info_to_data(acs->ctx->user_fence_bo_kms_handle, acs->ip_type * 4,
+                                      (struct drm_amdgpu_cs_chunk_data*)&acs->fence_chunk);
 
-   if (!amdgpu_init_cs_context(ctx->aws, &cs->csc1, ip_type)) {
-      FREE(cs);
-      return false;
-   }
+   memset(acs->buffer_indices_hashlist, -1, sizeof(acs->buffer_indices_hashlist));
 
-   if (!amdgpu_init_cs_context(ctx->aws, &cs->csc2, ip_type)) {
-      amdgpu_destroy_cs_context(ctx->aws, &cs->csc1);
-      FREE(cs);
-      return false;
-   }
+   for (unsigned i = 0; i < ARRAY_SIZE(acs->csc); i++) {
+      if (!amdgpu_init_cs_context(ctx->aws, &acs->csc[i], ip_type)) {
+         if (i)
+            amdgpu_destroy_cs_context(ctx->aws, &acs->csc[0]);
+         FREE(acs);
+         return false;
+      }
 
-   memset(cs->buffer_indices_hashlist, -1, sizeof(cs->buffer_indices_hashlist));
-
-   /* Set the first submission context as current. */
-   rcs->csc = cs->csc = &cs->csc1;
-   cs->cst = &cs->csc2;
-
-   /* Assign to both amdgpu_cs_context; only csc will use it. */
-   cs->csc1.buffer_indices_hashlist = cs->buffer_indices_hashlist;
-   cs->csc2.buffer_indices_hashlist = cs->buffer_indices_hashlist;
-
-   cs->csc1.aws = ctx->aws;
-   cs->csc2.aws = ctx->aws;
-
-   rcs->priv = cs;
-
-   if (!amdgpu_get_new_ib(ctx->aws, rcs, &cs->main_ib, cs)) {
-      amdgpu_destroy_cs_context(ctx->aws, &cs->csc2);
-      amdgpu_destroy_cs_context(ctx->aws, &cs->csc1);
-      FREE(cs);
-      rcs->priv = NULL;
-      return false;
+     /* only csc will use for buffer_indices_hashlist. */
+      acs->csc[i].buffer_indices_hashlist = acs->buffer_indices_hashlist;
+      acs->csc[i].aws = ctx->aws;
    }
 
    p_atomic_inc(&ctx->aws->num_cs);
+   rcs->priv = acs;
+
+   if (!amdgpu_get_new_ib(ctx->aws, rcs, &acs->main_ib, acs))
+      goto fail;
+
+   /* Currently only gfx, compute and sdma queues supports user queue. */
+   if (acs->aws->info.use_userq && ip_type <= AMD_IP_SDMA) {
+      if (!amdgpu_userq_init(acs->aws, &acs->aws->queues[acs->queue_index].userq, ip_type))
+         goto fail;
+   }
+
    return true;
+fail:
+   rcs->priv = NULL;
+   amdgpu_cs_destroy(rcs);
+   return false;
 }
 
 static bool
 amdgpu_cs_setup_preemption(struct radeon_cmdbuf *rcs, const uint32_t *preamble_ib,
                            unsigned preamble_num_dw)
 {
-   struct amdgpu_cs *cs = amdgpu_cs(rcs);
-   struct amdgpu_winsys *aws = cs->aws;
-   struct amdgpu_cs_context *csc[2] = {&cs->csc1, &cs->csc2};
+   struct amdgpu_cs *acs = amdgpu_cs(rcs);
+   struct amdgpu_winsys *aws = acs->aws;
    unsigned size = align(preamble_num_dw * 4, aws->info.ip[AMD_IP_GFX].ib_alignment);
    struct pb_buffer_lean *preamble_bo;
    uint32_t *map;
@@ -1002,20 +1028,20 @@ amdgpu_cs_setup_preemption(struct radeon_cmdbuf *rcs, const uint32_t *preamble_i
    memcpy(map, preamble_ib, preamble_num_dw * 4);
 
    /* Pad the IB. */
-   amdgpu_pad_gfx_compute_ib(aws, cs->ip_type, map, &preamble_num_dw, 0);
+   amdgpu_pad_gfx_compute_ib(aws, acs->ip_type, map, &preamble_num_dw, 0);
    amdgpu_bo_unmap(&aws->dummy_sws.base, preamble_bo);
 
-   for (unsigned i = 0; i < 2; i++) {
-      csc[i]->chunk_ib[IB_PREAMBLE].va_start = amdgpu_bo_get_va(preamble_bo);
-      csc[i]->chunk_ib[IB_PREAMBLE].ib_bytes = preamble_num_dw * 4;
+   for (unsigned i = 0; i < ARRAY_SIZE(acs->csc); i++) {
+      acs->csc[i].chunk_ib[IB_PREAMBLE].va_start = amdgpu_bo_get_va(preamble_bo);
+      acs->csc[i].chunk_ib[IB_PREAMBLE].ib_bytes = preamble_num_dw * 4;
 
-      csc[i]->chunk_ib[IB_MAIN].flags |= AMDGPU_IB_FLAG_PREEMPT;
+      acs->csc[i].chunk_ib[IB_MAIN].flags |= AMDGPU_IB_FLAG_PREEMPT;
    }
 
-   assert(!cs->preamble_ib_bo);
-   cs->preamble_ib_bo = preamble_bo;
+   assert(!acs->preamble_ib_bo);
+   acs->preamble_ib_bo = preamble_bo;
 
-   amdgpu_cs_add_buffer(rcs, cs->preamble_ib_bo,
+   amdgpu_cs_add_buffer(rcs, acs->preamble_ib_bo,
                         RADEON_USAGE_READ | RADEON_PRIO_IB, (radeon_bo_domain)0);
    return true;
 }
@@ -1027,10 +1053,11 @@ static bool amdgpu_cs_validate(struct radeon_cmdbuf *rcs)
 
 static bool amdgpu_cs_check_space(struct radeon_cmdbuf *rcs, unsigned dw)
 {
-   struct amdgpu_cs *cs = amdgpu_cs(rcs);
-   struct amdgpu_ib *main_ib = &cs->main_ib;
+   struct amdgpu_cs *acs = amdgpu_cs(rcs);
+   struct amdgpu_ib *main_ib = &acs->main_ib;
 
-   assert(rcs->current.cdw <= rcs->current.max_dw);
+   if (rcs->current.cdw > rcs->current.max_dw)
+      return false;
 
    unsigned projected_size_dw = rcs->prev_dw + rcs->current.cdw + dw;
 
@@ -1040,14 +1067,14 @@ static bool amdgpu_cs_check_space(struct radeon_cmdbuf *rcs, unsigned dw)
    if (rcs->current.max_dw - rcs->current.cdw >= dw)
       return true;
 
-   unsigned cs_epilog_dw = amdgpu_cs_epilog_dws(cs);
+   unsigned cs_epilog_dw = amdgpu_cs_epilog_dws(acs);
    unsigned need_byte_size = (dw + cs_epilog_dw) * 4;
    /* 125% of the size for IB epilog. */
    unsigned safe_byte_size = need_byte_size + need_byte_size / 4;
    main_ib->max_check_space_size = MAX2(main_ib->max_check_space_size, safe_byte_size);
    main_ib->max_ib_bytes = MAX2(main_ib->max_ib_bytes, projected_size_dw * 4);
 
-   if (!cs->has_chaining)
+   if (!acs->has_chaining)
       return false;
 
    /* Allocate a new chunk */
@@ -1065,7 +1092,7 @@ static bool amdgpu_cs_check_space(struct radeon_cmdbuf *rcs, unsigned dw)
       rcs->max_prev = new_max_prev;
    }
 
-   if (!amdgpu_ib_new_buffer(cs->aws, main_ib, cs))
+   if (!amdgpu_ib_new_buffer(acs->aws, main_ib, acs))
       return false;
 
    assert(main_ib->used_ib_space == 0);
@@ -1075,14 +1102,14 @@ static bool amdgpu_cs_check_space(struct radeon_cmdbuf *rcs, unsigned dw)
    rcs->current.max_dw += cs_epilog_dw;
 
    /* Pad with NOPs but leave 4 dwords for INDIRECT_BUFFER. */
-   amdgpu_pad_gfx_compute_ib(cs->aws, cs->ip_type, rcs->current.buf, &rcs->current.cdw, 4);
+   amdgpu_pad_gfx_compute_ib(acs->aws, acs->ip_type, rcs->current.buf, &rcs->current.cdw, 4);
 
    radeon_emit(rcs, PKT3(PKT3_INDIRECT_BUFFER, 2, 0));
    radeon_emit(rcs, va);
    radeon_emit(rcs, va >> 32);
    uint32_t *new_ptr_ib_size = &rcs->current.buf[rcs->current.cdw++];
 
-   assert((rcs->current.cdw & cs->aws->info.ip[cs->ip_type].ib_pad_dw_mask) == 0);
+   assert((rcs->current.cdw & acs->aws->info.ip[acs->ip_type].ib_pad_dw_mask) == 0);
    assert(rcs->current.cdw <= rcs->current.max_dw);
 
    amdgpu_set_ib_size(rcs, main_ib);
@@ -1107,16 +1134,16 @@ static bool amdgpu_cs_check_space(struct radeon_cmdbuf *rcs, unsigned dw)
    return true;
 }
 
-static void amdgpu_add_slab_backing_buffers(struct amdgpu_cs_context *cs)
+static void amdgpu_add_slab_backing_buffers(struct amdgpu_cs_context *csc)
 {
-   unsigned num_buffers = cs->buffer_lists[AMDGPU_BO_SLAB_ENTRY].num_buffers;
-   struct amdgpu_cs_buffer *buffers = cs->buffer_lists[AMDGPU_BO_SLAB_ENTRY].buffers;
+   unsigned num_buffers = csc->buffer_lists[AMDGPU_BO_SLAB_ENTRY].num_buffers;
+   struct amdgpu_cs_buffer *buffers = csc->buffer_lists[AMDGPU_BO_SLAB_ENTRY].buffers;
 
    for (unsigned i = 0; i < num_buffers; i++) {
       struct amdgpu_cs_buffer *slab_buffer = &buffers[i];
       struct amdgpu_cs_buffer *real_buffer =
-         amdgpu_lookup_or_add_buffer(cs, &get_slab_entry_real_bo(slab_buffer->bo)->b,
-                                     &cs->buffer_lists[AMDGPU_BO_REAL], true);
+         amdgpu_lookup_or_add_buffer(csc, &get_slab_entry_real_bo(slab_buffer->bo)->b,
+                                     &csc->buffer_lists[AMDGPU_BO_REAL], true);
 
       /* We need to set the usage because it determines the BO priority.
        *
@@ -1130,15 +1157,19 @@ static void amdgpu_add_slab_backing_buffers(struct amdgpu_cs_context *cs)
 static unsigned amdgpu_cs_get_buffer_list(struct radeon_cmdbuf *rcs,
                                           struct radeon_bo_list_item *list)
 {
-    struct amdgpu_cs_context *cs = amdgpu_cs(rcs)->csc;
+   struct amdgpu_cs_context *csc = amdgpu_csc_get_current(amdgpu_cs(rcs));
 
     /* We do this in the CS thread, but since we need to return the final usage of all buffers
      * here, do it here too. There is no harm in doing it again in the CS thread.
      */
-    amdgpu_add_slab_backing_buffers(cs);
+    amdgpu_add_slab_backing_buffers(csc);
 
-    struct amdgpu_buffer_list *real_buffers = &cs->buffer_lists[AMDGPU_BO_REAL];
+    struct amdgpu_buffer_list *real_buffers = &csc->buffer_lists[AMDGPU_BO_REAL];
     unsigned num_real_buffers = real_buffers->num_buffers;
+
+#if HAVE_AMDGPU_VIRTIO
+    assert(!csc->ws->info.is_virtio);
+#endif
 
     if (list) {
         for (unsigned i = 0; i < num_real_buffers; i++) {
@@ -1171,24 +1202,27 @@ static void amdgpu_cs_add_fence_dependency(struct radeon_cmdbuf *rcs,
                                            struct pipe_fence_handle *pfence)
 {
    struct amdgpu_cs *acs = amdgpu_cs(rcs);
-   struct amdgpu_cs_context *cs = acs->csc;
+   struct amdgpu_winsys *aws = acs->aws;
+   struct amdgpu_cs_context *csc = amdgpu_csc_get_current(acs);
    struct amdgpu_fence *fence = (struct amdgpu_fence*)pfence;
 
    util_queue_fence_wait(&fence->submitted);
 
    if (!fence->imported) {
-      /* Ignore idle fences. This will only check the user fence in memory. */
-      if (!amdgpu_fence_wait((struct pipe_fence_handle *)fence, 0, false)) {
-         add_seq_no_to_list(acs->aws, &cs->seq_no_dependencies, fence->queue_index,
-                            fence->queue_seq_no);
+      if (!aws->info.use_userq || fence->ip_type != acs->ip_type || acs->ip_type > AMD_IP_SDMA) {
+         /* Ignore idle fences. This will only check the user fence in memory. */
+         if (!amdgpu_fence_wait((struct pipe_fence_handle *)fence, 0, false)) {
+            add_seq_no_to_list(acs->aws, &csc->seq_no_dependencies, fence->queue_index,
+                               fence->queue_seq_no);
+         }
       }
+   } else {
+      add_fence_to_list(&csc->syncobj_dependencies, fence);
    }
-   else
-      add_fence_to_list(&cs->syncobj_dependencies, fence);
 }
 
 static void amdgpu_add_fences_to_dependencies(struct amdgpu_winsys *ws,
-                                              struct amdgpu_cs_context *cs,
+                                              struct amdgpu_cs_context *csc,
                                               unsigned queue_index_bit,
                                               struct amdgpu_seq_no_fences *dependencies,
                                               struct amdgpu_winsys_bo *bo, unsigned usage)
@@ -1201,7 +1235,7 @@ static void amdgpu_add_fences_to_dependencies(struct amdgpu_winsys *ws,
       }
 
       if (bo->alt_fence)
-         add_fence_to_list(&cs->syncobj_dependencies, (struct amdgpu_fence*)bo->alt_fence);
+         add_fence_to_list(&csc->syncobj_dependencies, (struct amdgpu_fence*)bo->alt_fence);
    }
 }
 
@@ -1219,37 +1253,351 @@ static void amdgpu_add_to_kernel_bo_list(struct drm_amdgpu_bo_list_entry *bo_ent
    bo_entry->bo_priority = (util_last_bit(usage & RADEON_ALL_PRIORITIES) - 1) / 2;
 }
 
-static void amdgpu_cs_add_syncobj_signal(struct radeon_cmdbuf *rws,
+static void amdgpu_cs_add_syncobj_signal(struct radeon_cmdbuf *rcs,
                                          struct pipe_fence_handle *fence)
 {
-   struct amdgpu_cs *acs = amdgpu_cs(rws);
-   struct amdgpu_cs_context *cs = acs->csc;
+   struct amdgpu_cs *acs = amdgpu_cs(rcs);
+   struct amdgpu_cs_context *csc = amdgpu_csc_get_current(acs);
 
-   add_fence_to_list(&cs->syncobj_to_signal, (struct amdgpu_fence*)fence);
+   add_fence_to_list(&csc->syncobj_to_signal, (struct amdgpu_fence*)fence);
 }
+
+static int amdgpu_cs_submit_ib_kernelq(struct amdgpu_cs *acs,
+                                       unsigned num_real_buffers,
+                                       struct drm_amdgpu_bo_list_entry *bo_list_real,
+                                       uint64_t *seq_no)
+{
+   struct amdgpu_winsys *aws = acs->aws;
+   struct amdgpu_cs_context *csc = amdgpu_csc_get_submitted(acs);
+   struct drm_amdgpu_bo_list_in bo_list_in;
+   struct drm_amdgpu_cs_chunk chunks[8];
+   unsigned num_chunks = 0;
+
+   /* BO list */
+   bo_list_in.operation = ~0;
+   bo_list_in.list_handle = ~0;
+   bo_list_in.bo_number = num_real_buffers;
+   bo_list_in.bo_info_size = sizeof(struct drm_amdgpu_bo_list_entry);
+   bo_list_in.bo_info_ptr = (uint64_t)(uintptr_t)bo_list_real;
+
+   chunks[num_chunks].chunk_id = AMDGPU_CHUNK_ID_BO_HANDLES;
+   chunks[num_chunks].length_dw = sizeof(struct drm_amdgpu_bo_list_in) / 4;
+   chunks[num_chunks].chunk_data = (uintptr_t)&bo_list_in;
+   num_chunks++;
+
+   /* Syncobj dependencies. */
+   unsigned num_syncobj_dependencies = csc->syncobj_dependencies.num;
+   if (num_syncobj_dependencies) {
+      struct drm_amdgpu_cs_chunk_sem *sem_chunk =
+         (struct drm_amdgpu_cs_chunk_sem *)
+         alloca(num_syncobj_dependencies * sizeof(sem_chunk[0]));
+
+      for (unsigned i = 0; i < num_syncobj_dependencies; i++) {
+         struct amdgpu_fence *fence =
+            (struct amdgpu_fence*)csc->syncobj_dependencies.list[i];
+
+         assert(util_queue_fence_is_signalled(&fence->submitted));
+         sem_chunk[i].handle = fence->syncobj;
+      }
+
+      chunks[num_chunks].chunk_id = AMDGPU_CHUNK_ID_SYNCOBJ_IN;
+      chunks[num_chunks].length_dw = sizeof(sem_chunk[0]) / 4 * num_syncobj_dependencies;
+      chunks[num_chunks].chunk_data = (uintptr_t)sem_chunk;
+      num_chunks++;
+   }
+
+   /* Syncobj signals. */
+   unsigned num_syncobj_to_signal = 1 + csc->syncobj_to_signal.num;
+   struct drm_amdgpu_cs_chunk_sem *sem_chunk =
+      (struct drm_amdgpu_cs_chunk_sem *)
+      alloca(num_syncobj_to_signal * sizeof(sem_chunk[0]));
+
+   for (unsigned i = 0; i < num_syncobj_to_signal - 1; i++) {
+      struct amdgpu_fence *fence =
+         (struct amdgpu_fence*)csc->syncobj_to_signal.list[i];
+
+      sem_chunk[i].handle = fence->syncobj;
+   }
+   sem_chunk[csc->syncobj_to_signal.num].handle = ((struct amdgpu_fence*)csc->fence)->syncobj;
+
+   chunks[num_chunks].chunk_id = AMDGPU_CHUNK_ID_SYNCOBJ_OUT;
+   chunks[num_chunks].length_dw = sizeof(sem_chunk[0]) / 4 * num_syncobj_to_signal;
+   chunks[num_chunks].chunk_data = (uintptr_t)sem_chunk;
+   num_chunks++;
+
+   if (aws->info.has_fw_based_shadowing && acs->mcbp_fw_shadow_chunk.shadow_va) {
+      chunks[num_chunks].chunk_id = AMDGPU_CHUNK_ID_CP_GFX_SHADOW;
+      chunks[num_chunks].length_dw = sizeof(struct drm_amdgpu_cs_chunk_cp_gfx_shadow) / 4;
+      chunks[num_chunks].chunk_data = (uintptr_t)&acs->mcbp_fw_shadow_chunk;
+      num_chunks++;
+   }
+
+   /* Fence */
+   if (amdgpu_cs_has_user_fence(acs)) {
+      chunks[num_chunks].chunk_id = AMDGPU_CHUNK_ID_FENCE;
+      chunks[num_chunks].length_dw = sizeof(struct drm_amdgpu_cs_chunk_fence) / 4;
+      chunks[num_chunks].chunk_data = (uintptr_t)&acs->fence_chunk;
+      num_chunks++;
+   }
+
+   /* IB */
+   if (csc->chunk_ib[IB_PREAMBLE].ib_bytes) {
+      chunks[num_chunks].chunk_id = AMDGPU_CHUNK_ID_IB;
+      chunks[num_chunks].length_dw = sizeof(struct drm_amdgpu_cs_chunk_ib) / 4;
+      chunks[num_chunks].chunk_data = (uintptr_t)&csc->chunk_ib[IB_PREAMBLE];
+      num_chunks++;
+   }
+
+   /* IB */
+   chunks[num_chunks].chunk_id = AMDGPU_CHUNK_ID_IB;
+   chunks[num_chunks].length_dw = sizeof(struct drm_amdgpu_cs_chunk_ib) / 4;
+   chunks[num_chunks].chunk_data = (uintptr_t)&csc->chunk_ib[IB_MAIN];
+   num_chunks++;
+
+   if (csc->secure) {
+      /* Secure submissions not supported for compute. */
+      assert(acs->ip_type != AMD_IP_COMPUTE);
+
+      csc->chunk_ib[IB_PREAMBLE].flags |= AMDGPU_IB_FLAGS_SECURE;
+      csc->chunk_ib[IB_MAIN].flags |= AMDGPU_IB_FLAGS_SECURE;
+   } else {
+      csc->chunk_ib[IB_PREAMBLE].flags &= ~AMDGPU_IB_FLAGS_SECURE;
+      csc->chunk_ib[IB_MAIN].flags &= ~AMDGPU_IB_FLAGS_SECURE;
+   }
+
+   assert(num_chunks <= 8);
+
+   /* Submit the command buffer.
+    *
+    * The kernel returns -ENOMEM with many parallel processes using GDS such as test suites
+    * quite often, but it eventually succeeds after enough attempts. This happens frequently
+    * with dEQP using NGG streamout.
+    */
+   int r = 0;
+
+   do {
+      /* Wait 1 ms and try again. */
+      if (r == -ENOMEM)
+         os_time_sleep(1000);
+
+      r = ac_drm_cs_submit_raw2(aws->dev, acs->ctx->ctx_handle, 0, num_chunks, chunks, seq_no);
+   } while (r == -ENOMEM);
+
+   return r;
+}
+
+static void amdgpu_cs_add_userq_packets(struct amdgpu_userq *userq,
+                                        struct amdgpu_cs_context *csc,
+                                        uint64_t num_fences,
+                                        struct drm_amdgpu_userq_fence_info *fence_info)
+{
+   amdgpu_pkt_begin();
+
+   if (userq->ip_type == AMD_IP_GFX || userq->ip_type == AMD_IP_COMPUTE) {
+      if (num_fences) {
+         unsigned num_fences_in_iter;
+         /* FENCE_WAIT_MULTI packet supports max 32 fenes */
+         for (unsigned i = 0; i < num_fences; i = i + 32) {
+            num_fences_in_iter = (i + 32 > num_fences) ? num_fences - i : 32;
+            amdgpu_pkt_add_dw(PKT3(PKT3_FENCE_WAIT_MULTI, num_fences_in_iter * 4, 0));
+            amdgpu_pkt_add_dw(S_D10_ENGINE_SEL(1) | S_D10_POLL_INTERVAL(4) | S_D10_PREEMPTABLE(1));
+            for (unsigned j = 0; j < num_fences_in_iter; j++) {
+               amdgpu_pkt_add_dw(fence_info[i + j].va);
+               amdgpu_pkt_add_dw(fence_info[i + j].va >> 32);
+               amdgpu_pkt_add_dw(fence_info[i + j].value);
+               amdgpu_pkt_add_dw(fence_info[i + j].value >> 32);
+            }
+         }
+      }
+
+      amdgpu_pkt_add_dw(PKT3(PKT3_HDP_FLUSH, 0, 0));
+      amdgpu_pkt_add_dw(0x0);
+
+      amdgpu_pkt_add_dw(PKT3(PKT3_INDIRECT_BUFFER, 2, 0));
+      amdgpu_pkt_add_dw(csc->chunk_ib[IB_MAIN].va_start);
+      amdgpu_pkt_add_dw(csc->chunk_ib[IB_MAIN].va_start >> 32);
+      if (userq->ip_type == AMD_IP_GFX)
+         amdgpu_pkt_add_dw((csc->chunk_ib[IB_MAIN].ib_bytes / 4) | S_3F3_INHERIT_VMID_MQD_GFX(1));
+      else
+         amdgpu_pkt_add_dw((csc->chunk_ib[IB_MAIN].ib_bytes / 4) | S_3F3_VALID_COMPUTE(1) |
+                              S_3F3_INHERIT_VMID_MQD_COMPUTE(1));
+
+      /* Add 8 for release mem packet and 2 for protected fence signal packet.
+       * Calculcating userq_fence_seq_num this way to match with kernel fence that is
+       * returned in userq_wait iotl.
+       */
+      userq->user_fence_seq_num = __next_wptr + 8 + 2;
+
+      /* add release mem for user fence */
+      amdgpu_pkt_add_dw(PKT3(PKT3_RELEASE_MEM, 6, 0));
+      amdgpu_pkt_add_dw(S_490_EVENT_TYPE(V_028A90_CACHE_FLUSH_AND_INV_TS_EVENT) |
+                           S_490_EVENT_INDEX(5) | S_490_GLM_WB(1) | S_490_GLM_INV(1) |
+                           S_490_GL2_WB(1) | S_490_SEQ(1) | S_490_CACHE_POLICY(3));
+      amdgpu_pkt_add_dw(S_030358_DATA_SEL(2));
+      amdgpu_pkt_add_dw(userq->user_fence_va);
+      amdgpu_pkt_add_dw(userq->user_fence_va >> 32);
+      amdgpu_pkt_add_dw(userq->user_fence_seq_num);
+      amdgpu_pkt_add_dw(userq->user_fence_seq_num >> 32);
+      amdgpu_pkt_add_dw(0);
+
+      /* protected signal packet. This is trusted RELEASE_MEM packet. i.e. fence buffer
+       * is only accessible from kernel through VMID 0.
+       */
+      amdgpu_pkt_add_dw(PKT3(PKT3_PROTECTED_FENCE_SIGNAL, 0, 0));
+      amdgpu_pkt_add_dw(0);
+   } else {
+      fprintf(stderr, "amdgpu: unsupported userq ip submission = %d\n", userq->ip_type);
+   }
+
+   amdgpu_pkt_end();
+}
+
+static int amdgpu_cs_submit_ib_userq(struct amdgpu_userq *userq,
+                                     struct amdgpu_cs *acs,
+                                     uint32_t *shared_buf_kms_handles_write,
+                                     unsigned num_shared_buf_write,
+                                     uint32_t *shared_buf_kms_handles_read,
+                                     unsigned num_shared_buf_read,
+                                     uint64_t *seq_no,
+                                     uint64_t vm_timeline_point)
+{
+   int r = 0;
+   struct amdgpu_winsys *aws = acs->aws;
+   struct amdgpu_cs_context *csc = amdgpu_csc_get_submitted(acs);
+
+   /* Syncobj dependencies. */
+   unsigned num_syncobj_dependencies = csc->syncobj_dependencies.num;
+   uint32_t *syncobj_dependencies_list =
+      (uint32_t*)alloca(num_syncobj_dependencies * sizeof(uint32_t));
+
+   /* Currently only 1 vm timeline syncobj can be a dependency. */
+   uint16_t num_syncobj_timeline_dependencies = 1;
+   uint32_t syncobj_timeline_dependency;
+   uint64_t syncobj_timeline_dependency_point;
+
+   if (num_syncobj_dependencies) {
+      for (unsigned i = 0; i < num_syncobj_dependencies; i++) {
+         struct amdgpu_fence *fence =
+            (struct amdgpu_fence*)csc->syncobj_dependencies.list[i];
+
+         assert(util_queue_fence_is_signalled(&fence->submitted));
+         syncobj_dependencies_list[i] = fence->syncobj;
+      }
+   }
+   syncobj_timeline_dependency = aws->vm_timeline_syncobj;
+   syncobj_timeline_dependency_point = vm_timeline_point;
+
+   /* Syncobj signals. Adding 1 for cs submission fence. */
+   unsigned num_syncobj_to_signal = csc->syncobj_to_signal.num + 1;
+   uint32_t *syncobj_signal_list =
+      (uint32_t*)alloca(num_syncobj_to_signal * sizeof(uint32_t));
+
+   for (unsigned i = 0; i < csc->syncobj_to_signal.num; i++) {
+      struct amdgpu_fence *fence =
+         (struct amdgpu_fence*)csc->syncobj_to_signal.list[i];
+
+      syncobj_signal_list[i] = fence->syncobj;
+   }
+   syncobj_signal_list[num_syncobj_to_signal - 1] = ((struct amdgpu_fence*)csc->fence)->syncobj;
+
+   struct drm_amdgpu_userq_fence_info *fence_info;
+   struct drm_amdgpu_userq_wait userq_wait_data = {
+      .syncobj_handles = (uintptr_t)syncobj_dependencies_list,
+      .syncobj_timeline_handles = (uintptr_t)&syncobj_timeline_dependency,
+      .syncobj_timeline_points = (uintptr_t)&syncobj_timeline_dependency_point,
+      .bo_read_handles = (uintptr_t)shared_buf_kms_handles_read,
+      .bo_write_handles = (uintptr_t)shared_buf_kms_handles_write,
+      .num_syncobj_timeline_handles = num_syncobj_timeline_dependencies,
+      .num_fences = 0,
+      .num_syncobj_handles = num_syncobj_dependencies,
+      .num_bo_read_handles = num_shared_buf_read,
+      .num_bo_write_handles = num_shared_buf_write,
+      .out_fences = (uintptr_t)NULL,
+   };
+
+   /*
+    * Buffers sharing synchronization follow these rules:
+    *   - read-only buffers wait for all previous writes to complete
+    *   - write-only(also read-write) buffers wait for all previous reads to complete
+    * To implement this strategy, we use amdgpu_userq_wait() before submitting
+    * a job, and amdgpu_userq_signal() after to indicate completion.
+    */
+   r = ac_drm_userq_wait(aws->dev, &userq_wait_data);
+   if (r)
+      fprintf(stderr, "amdgpu: getting wait num_fences failed\n");
+
+   fence_info = (struct drm_amdgpu_userq_fence_info*)
+      alloca(userq_wait_data.num_fences * sizeof(struct drm_amdgpu_userq_fence_info));
+   userq_wait_data.out_fences = (uintptr_t)fence_info;
+
+   r = ac_drm_userq_wait(aws->dev, &userq_wait_data);
+   if (r)
+      fprintf(stderr, "amdgpu: getting wait fences failed\n");
+
+   simple_mtx_lock(&userq->lock);
+   amdgpu_cs_add_userq_packets(userq, csc, userq_wait_data.num_fences, fence_info);
+   struct drm_amdgpu_userq_signal userq_signal_data = {
+      .queue_id = userq->userq_handle,
+      .syncobj_handles = (uintptr_t)syncobj_signal_list,
+      .num_syncobj_handles = num_syncobj_to_signal,
+      .bo_read_handles = (uintptr_t)shared_buf_kms_handles_read,
+      .bo_write_handles = (uintptr_t)shared_buf_kms_handles_write,
+      .num_bo_read_handles = num_shared_buf_read,
+      .num_bo_write_handles = num_shared_buf_write,
+   };
+
+#if DETECT_CC_GCC && (DETECT_ARCH_X86 || DETECT_ARCH_X86_64)
+   asm volatile ("mfence" : : : "memory");
+#endif
+   /* Writing to *userq->wptr_bo_map is writing into mqd data. Before writing wptr into mqd
+    * data, need to ensure that new packets added to user queue ring buffer are updated to.
+    * memory. To ensure memory is updated, mfence is used.
+    */
+   *userq->wptr_bo_map = userq->next_wptr;
+   /* Ringing the doorbell will have gpu execute new packets that were added in user queue
+    * ring buffer. Before ringing the doorbell needed to ensure that mqd data is updated to
+    * memory. To ensure memory is updated, mfence is used.
+    */
+#if DETECT_CC_GCC && (DETECT_ARCH_X86 || DETECT_ARCH_X86_64)
+   asm volatile ("mfence" : : : "memory");
+#endif
+   userq->doorbell_bo_map[AMDGPU_USERQ_DOORBELL_INDEX] = userq->next_wptr;
+   r = ac_drm_userq_signal(aws->dev, &userq_signal_data);
+
+   *seq_no = userq->user_fence_seq_num;
+   simple_mtx_unlock(&userq->lock);
+
+   return r;
+}
+
+enum queue_type {
+   KERNELQ,
+   KERNELQ_ALT_FENCE,
+   USERQ,
+};
 
 /* The template parameter determines whether the queue should skip code used by the default queue
  * system that's based on sequence numbers, and instead use and update amdgpu_winsys_bo::alt_fence
  * for all BOs.
  */
-template<bool QUEUE_USES_ALT_FENCE>
+template<enum queue_type queue_type>
 static void amdgpu_cs_submit_ib(void *job, void *gdata, int thread_index)
 {
    struct amdgpu_cs *acs = (struct amdgpu_cs*)job;
    struct amdgpu_winsys *aws = acs->aws;
-   struct amdgpu_cs_context *cs = acs->cst;
+   struct amdgpu_cs_context *csc = amdgpu_csc_get_submitted(acs);
    int r;
    uint64_t seq_no = 0;
    bool has_user_fence = amdgpu_cs_has_user_fence(acs);
-
-   assert(QUEUE_USES_ALT_FENCE == acs->uses_alt_fence);
+   /* The maximum timeline point of VM updates for all BOs used in this submit. */
+   uint64_t vm_timeline_point = 0;
 
    simple_mtx_lock(&aws->bo_fence_lock);
    unsigned queue_index;
    struct amdgpu_queue *queue;
    uint_seq_no prev_seq_no, next_seq_no;
 
-   if (!QUEUE_USES_ALT_FENCE) {
+   if (queue_type != KERNELQ_ALT_FENCE) {
       queue_index = acs->queue_index;
       queue = &aws->queues[queue_index];
       prev_seq_no = queue->latest_seq_no;
@@ -1290,9 +1638,9 @@ static void amdgpu_cs_submit_ib(void *job, void *gdata, int thread_index)
     * sequence number per queue and removes all older ones.
     */
    struct amdgpu_seq_no_fences seq_no_dependencies;
-   memcpy(&seq_no_dependencies, &cs->seq_no_dependencies, sizeof(seq_no_dependencies));
+   memcpy(&seq_no_dependencies, &csc->seq_no_dependencies, sizeof(seq_no_dependencies));
 
-   if (!QUEUE_USES_ALT_FENCE) {
+   if (queue_type == KERNELQ) {
       /* Add a fence dependency on the previous IB if the IP has multiple physical queues to
        * make it appear as if it had only 1 queue, or if the previous IB comes from a different
        * context. The reasons are:
@@ -1302,8 +1650,16 @@ static void amdgpu_cs_submit_ib(void *job, void *gdata, int thread_index)
       struct amdgpu_fence *prev_fence =
          (struct amdgpu_fence*)queue->fences[prev_seq_no % AMDGPU_FENCE_RING_SIZE];
 
-      if (prev_fence && (aws->info.ip[acs->ip_type].num_queues > 1 || queue->last_ctx != acs->ctx))
-         add_seq_no_to_list(aws, &seq_no_dependencies, queue_index, prev_seq_no);
+      /* Add a dependency on a previous fence, unless we can determine that
+       * it's useless because the execution order is guaranteed.
+       */
+      if (prev_fence) {
+         bool same_ctx = queue->last_ctx == acs->ctx;
+         bool same_queue = aws->info.ip[acs->ip_type].num_queues == 1;
+
+         if (!same_ctx || !same_queue)
+            add_seq_no_to_list(aws, &seq_no_dependencies, queue_index, prev_seq_no);
+      }
    }
 
    /* Since the kernel driver doesn't synchronize execution between different
@@ -1312,19 +1668,20 @@ static void amdgpu_cs_submit_ib(void *job, void *gdata, int thread_index)
     */
 
    /* Slab entry BOs: Add fence dependencies, update seq_no in BOs, add real buffers. */
-   struct amdgpu_cs_buffer *slab_entry_buffers = cs->buffer_lists[AMDGPU_BO_SLAB_ENTRY].buffers;
-   unsigned num_slab_entry_buffers = cs->buffer_lists[AMDGPU_BO_SLAB_ENTRY].num_buffers;
-   unsigned initial_num_real_buffers = cs->buffer_lists[AMDGPU_BO_REAL].num_buffers;
-   unsigned queue_index_bit = QUEUE_USES_ALT_FENCE ? 0 : BITFIELD_BIT(queue_index);
+   struct amdgpu_cs_buffer *slab_entry_buffers = csc->buffer_lists[AMDGPU_BO_SLAB_ENTRY].buffers;
+   unsigned num_slab_entry_buffers = csc->buffer_lists[AMDGPU_BO_SLAB_ENTRY].num_buffers;
+   unsigned initial_num_real_buffers = csc->buffer_lists[AMDGPU_BO_REAL].num_buffers;
+   unsigned queue_index_bit = (queue_type == KERNELQ_ALT_FENCE) ?
+      0 : BITFIELD_BIT(queue_index);
 
    for (unsigned i = 0; i < num_slab_entry_buffers; i++) {
       struct amdgpu_cs_buffer *buffer = &slab_entry_buffers[i];
       struct amdgpu_winsys_bo *bo = buffer->bo;
 
-      amdgpu_add_fences_to_dependencies(aws, cs, queue_index_bit, &seq_no_dependencies, bo,
+      amdgpu_add_fences_to_dependencies(aws, csc, queue_index_bit, &seq_no_dependencies, bo,
                                         buffer->usage);
-      if (QUEUE_USES_ALT_FENCE)
-         amdgpu_fence_reference(&bo->alt_fence, cs->fence);
+      if (queue_type == KERNELQ_ALT_FENCE)
+         amdgpu_fence_reference(&bo->alt_fence, csc->fence);
       else
          amdgpu_set_bo_seq_no(queue_index, bo, next_seq_no);
 
@@ -1332,27 +1689,27 @@ static void amdgpu_cs_submit_ib(void *job, void *gdata, int thread_index)
        * to the kernel. Do it now.
        */
       struct amdgpu_cs_buffer *real_buffer =
-         amdgpu_lookup_or_add_buffer(cs, &get_slab_entry_real_bo(buffer->bo)->b,
-                                     &cs->buffer_lists[AMDGPU_BO_REAL], false);
+         amdgpu_lookup_or_add_buffer(csc, &get_slab_entry_real_bo(buffer->bo)->b,
+                                     &csc->buffer_lists[AMDGPU_BO_REAL], false);
 
       /* We need to set the usage because it determines the BO priority. */
       real_buffer->usage |= buffer->usage;
    }
 
    /* Sparse BOs: Add fence dependencies, update seq_no in BOs, add real buffers. */
-   unsigned num_real_buffers_except_sparse = cs->buffer_lists[AMDGPU_BO_REAL].num_buffers;
-   struct amdgpu_cs_buffer *sparse_buffers = cs->buffer_lists[AMDGPU_BO_SPARSE].buffers;
-   unsigned num_sparse_buffers = cs->buffer_lists[AMDGPU_BO_SPARSE].num_buffers;
+   unsigned num_real_buffers_except_sparse = csc->buffer_lists[AMDGPU_BO_REAL].num_buffers;
+   struct amdgpu_cs_buffer *sparse_buffers = csc->buffer_lists[AMDGPU_BO_SPARSE].buffers;
+   unsigned num_sparse_buffers = csc->buffer_lists[AMDGPU_BO_SPARSE].num_buffers;
    bool out_of_memory = false;
 
    for (unsigned i = 0; i < num_sparse_buffers; i++) {
       struct amdgpu_cs_buffer *buffer = &sparse_buffers[i];
       struct amdgpu_winsys_bo *bo = buffer->bo;
 
-      amdgpu_add_fences_to_dependencies(aws, cs, queue_index_bit, &seq_no_dependencies, bo,
+      amdgpu_add_fences_to_dependencies(aws, csc, queue_index_bit, &seq_no_dependencies, bo,
                                         buffer->usage);
-      if (QUEUE_USES_ALT_FENCE)
-         amdgpu_fence_reference(&bo->alt_fence, cs->fence);
+      if (queue_type == KERNELQ_ALT_FENCE)
+         amdgpu_fence_reference(&bo->alt_fence, csc->fence);
       else
          amdgpu_set_bo_seq_no(queue_index, bo, next_seq_no);
 
@@ -1363,13 +1720,18 @@ static void amdgpu_cs_submit_ib(void *job, void *gdata, int thread_index)
        */
       struct amdgpu_bo_sparse *sparse_bo = get_sparse_bo(buffer->bo);
 
+      if (queue_type == USERQ) {
+         uint64_t bo_vm_point = p_atomic_read(&sparse_bo->vm_timeline_point);
+         vm_timeline_point = MAX2(vm_timeline_point, bo_vm_point);
+      }
+
       simple_mtx_lock(&sparse_bo->commit_lock);
       list_for_each_entry(struct amdgpu_sparse_backing, backing, &sparse_bo->backing, list) {
          /* We can directly add the buffer here, because we know that each
           * backing buffer occurs only once.
           */
          struct amdgpu_cs_buffer *real_buffer =
-            amdgpu_do_add_buffer(cs, &backing->bo->b, &cs->buffer_lists[AMDGPU_BO_REAL], true);
+            amdgpu_do_add_buffer(csc, &backing->bo->b, &csc->buffer_lists[AMDGPU_BO_REAL], true);
          if (!real_buffer) {
             fprintf(stderr, "%s: failed to add sparse backing buffer\n", __func__);
             simple_mtx_unlock(&sparse_bo->commit_lock);
@@ -1383,25 +1745,61 @@ static void amdgpu_cs_submit_ib(void *job, void *gdata, int thread_index)
    }
 
    /* Real BOs: Add fence dependencies, update seq_no in BOs except sparse backing BOs. */
-   unsigned num_real_buffers = cs->buffer_lists[AMDGPU_BO_REAL].num_buffers;
-   struct amdgpu_cs_buffer *real_buffers = cs->buffer_lists[AMDGPU_BO_REAL].buffers;
-   struct drm_amdgpu_bo_list_entry *bo_list =
-      (struct drm_amdgpu_bo_list_entry *)
-      alloca(num_real_buffers * sizeof(struct drm_amdgpu_bo_list_entry));
+   unsigned num_real_buffers = csc->buffer_lists[AMDGPU_BO_REAL].num_buffers;
+   struct amdgpu_cs_buffer *real_buffers = csc->buffer_lists[AMDGPU_BO_REAL].buffers;
+   struct drm_amdgpu_bo_list_entry *bo_list;
+   /* BO dependency management depends on the queue mode:
+    * - kernel queue: BO used by the submit are passed to the kernel in a
+    *   drm_amdgpu_bo_list_entry list. The inter-process synchronization is handled
+    *   automatically by the kernel; intra-process sync is handled by Mesa.
+    * - user queue: intra-process sync is similar. Inter-process sync is handled
+    *   using timeline points, amdgpu_userq_wait (before a submit) and
+    *   amdgpu_userq_signal (after a submit).
+    */
+   unsigned num_shared_buf_write;
+   unsigned num_shared_buf_read;
+   /* Store write handles in the begining and read handles at the end in shared_buf_kms_handles.
+    * If usage is read and write then store the handle in write list.
+    */
+   uint32_t *shared_buf_kms_handles;
+   if (queue_type != USERQ) {
+      bo_list = (struct drm_amdgpu_bo_list_entry *)
+         alloca(num_real_buffers * sizeof(struct drm_amdgpu_bo_list_entry));
+   } else {
+      num_shared_buf_write = 0;
+      num_shared_buf_read = 0;
+      shared_buf_kms_handles = (uint32_t*)alloca(num_real_buffers * sizeof(uint32_t));
+   }
    unsigned i;
 
    for (i = 0; i < initial_num_real_buffers; i++) {
       struct amdgpu_cs_buffer *buffer = &real_buffers[i];
       struct amdgpu_winsys_bo *bo = buffer->bo;
 
-      amdgpu_add_fences_to_dependencies(aws, cs, queue_index_bit, &seq_no_dependencies, bo,
+      amdgpu_add_fences_to_dependencies(aws, csc, queue_index_bit, &seq_no_dependencies, bo,
                                         buffer->usage);
-      if (QUEUE_USES_ALT_FENCE)
-         amdgpu_fence_reference(&bo->alt_fence, cs->fence);
+      if (queue_type == KERNELQ_ALT_FENCE)
+         amdgpu_fence_reference(&bo->alt_fence, csc->fence);
       else
          amdgpu_set_bo_seq_no(queue_index, bo, next_seq_no);
 
-      amdgpu_add_to_kernel_bo_list(&bo_list[i], bo, buffer->usage);
+      if (queue_type != USERQ) {
+         amdgpu_add_to_kernel_bo_list(&bo_list[i], bo, buffer->usage);
+      } else {
+         vm_timeline_point = MAX2(vm_timeline_point, get_real_bo(bo)->vm_timeline_point);
+
+         if (!get_real_bo(bo)->is_shared)
+            continue;
+
+         if (buffer->usage & RADEON_USAGE_WRITE) {
+            shared_buf_kms_handles[num_shared_buf_write] = get_real_bo(bo)->kms_handle;
+            num_shared_buf_write++;
+         } else {
+            num_shared_buf_read++;
+            shared_buf_kms_handles[num_real_buffers - num_shared_buf_read] =
+               get_real_bo(bo)->kms_handle;
+         }
+      }
    }
 
    /* These are backing buffers of slab entries. Don't add their fence dependencies. */
@@ -1409,19 +1807,49 @@ static void amdgpu_cs_submit_ib(void *job, void *gdata, int thread_index)
       struct amdgpu_cs_buffer *buffer = &real_buffers[i];
       struct amdgpu_winsys_bo *bo = buffer->bo;
 
-      if (QUEUE_USES_ALT_FENCE)
+      if (queue_type == KERNELQ_ALT_FENCE)
          get_real_bo_reusable_slab(bo)->b.b.slab_has_busy_alt_fences = true;
       else
          amdgpu_set_bo_seq_no(queue_index, bo, next_seq_no);
 
-      amdgpu_add_to_kernel_bo_list(&bo_list[i], bo, buffer->usage);
+      if (queue_type != USERQ) {
+         amdgpu_add_to_kernel_bo_list(&bo_list[i], bo, buffer->usage);
+      } else {
+         vm_timeline_point = MAX2(vm_timeline_point, get_real_bo(bo)->vm_timeline_point);
+
+         if (!get_real_bo(bo)->is_shared)
+            continue;
+
+         if (buffer->usage & RADEON_USAGE_WRITE) {
+            shared_buf_kms_handles[num_shared_buf_write] = get_real_bo(bo)->kms_handle;
+            num_shared_buf_write++;
+         } else {
+            num_shared_buf_read++;
+            shared_buf_kms_handles[num_real_buffers - num_shared_buf_read] =
+               get_real_bo(bo)->kms_handle;
+         }
+      }
    }
 
    /* Sparse backing BOs are last. Don't update their fences because we don't use them. */
    for (; i < num_real_buffers; ++i) {
       struct amdgpu_cs_buffer *buffer = &real_buffers[i];
 
-      amdgpu_add_to_kernel_bo_list(&bo_list[i], buffer->bo, buffer->usage);
+      if (queue_type != USERQ) {
+         amdgpu_add_to_kernel_bo_list(&bo_list[i], buffer->bo, buffer->usage);
+      } else {
+         if (!get_real_bo(buffer->bo)->is_shared)
+            continue;
+         if (buffer->usage & RADEON_USAGE_WRITE) {
+            shared_buf_kms_handles[num_shared_buf_write] =
+               get_real_bo(buffer->bo)->kms_handle;
+            num_shared_buf_write++;
+         } else {
+            num_shared_buf_read++;
+            shared_buf_kms_handles[num_real_buffers - num_shared_buf_read] =
+               get_real_bo(buffer->bo)->kms_handle;
+         }
+      }
    }
 
 #if 0 /* Debug code. */
@@ -1462,15 +1890,15 @@ static void amdgpu_cs_submit_ib(void *job, void *gdata, int thread_index)
          if (amdgpu_fence_wait(*fence, 0, false))
             amdgpu_fence_reference(fence, NULL);
          else
-            add_fence_to_list(&cs->syncobj_dependencies, (struct amdgpu_fence*)*fence);
+            add_fence_to_list(&csc->syncobj_dependencies, (struct amdgpu_fence*)*fence);
       }
    }
 
-   if (!QUEUE_USES_ALT_FENCE) {
+   if (queue_type != KERNELQ_ALT_FENCE) {
       /* Finally, add the IB fence into the fence ring of the queue. */
-      amdgpu_fence_reference(&queue->fences[next_seq_no % AMDGPU_FENCE_RING_SIZE], cs->fence);
+      amdgpu_fence_reference(&queue->fences[next_seq_no % AMDGPU_FENCE_RING_SIZE], csc->fence);
       queue->latest_seq_no = next_seq_no;
-      ((struct amdgpu_fence*)cs->fence)->queue_seq_no = next_seq_no;
+      ((struct amdgpu_fence*)csc->fence)->queue_seq_no = next_seq_no;
 
       /* Update the last used context in the queue. */
       amdgpu_ctx_reference(&queue->last_ctx, acs->ctx);
@@ -1484,14 +1912,23 @@ static void amdgpu_cs_submit_ib(void *job, void *gdata, int thread_index)
        * ensures that no buffer is missing in the BO list.
        */
       simple_mtx_lock(&aws->global_bo_list_lock);
-      bo_list = (struct drm_amdgpu_bo_list_entry *)
-                alloca(aws->num_buffers * sizeof(struct drm_amdgpu_bo_list_entry));
-      num_real_buffers = 0;
-
-      list_for_each_entry(struct amdgpu_bo_real, bo, &aws->global_bo_list, global_list_item) {
-         bo_list[num_real_buffers].bo_handle = bo->kms_handle;
-         bo_list[num_real_buffers].bo_priority = 0;
-         ++num_real_buffers;
+      if (queue_type != USERQ) {
+         bo_list = (struct drm_amdgpu_bo_list_entry *)
+                   alloca(aws->num_buffers * sizeof(struct drm_amdgpu_bo_list_entry));
+         num_real_buffers = 0;
+         list_for_each_entry(struct amdgpu_bo_real, bo, &aws->global_bo_list, global_list_item) {
+            bo_list[num_real_buffers].bo_handle = bo->kms_handle;
+            bo_list[num_real_buffers].bo_priority = 0;
+            ++num_real_buffers;
+         }
+      } else {
+         shared_buf_kms_handles = (uint32_t*)alloca(aws->num_buffers * sizeof(uint32_t));
+         num_shared_buf_write = 0;
+         num_shared_buf_read = 0;
+         list_for_each_entry(struct amdgpu_bo_real, bo, &aws->global_bo_list, global_list_item) {
+            shared_buf_kms_handles[num_shared_buf_write] = bo->kms_handle;
+            num_shared_buf_write++;
+         }
       }
       simple_mtx_unlock(&aws->global_bo_list_lock);
    }
@@ -1500,150 +1937,53 @@ static void amdgpu_cs_submit_ib(void *job, void *gdata, int thread_index)
    if (acs->ip_type == AMD_IP_GFX)
       aws->gfx_bo_list_counter += num_real_buffers;
 
-   struct drm_amdgpu_cs_chunk chunks[8];
-   unsigned num_chunks = 0;
-
-   /* BO list */
-   struct drm_amdgpu_bo_list_in bo_list_in;
-   bo_list_in.operation = ~0;
-   bo_list_in.list_handle = ~0;
-   bo_list_in.bo_number = num_real_buffers;
-   bo_list_in.bo_info_size = sizeof(struct drm_amdgpu_bo_list_entry);
-   bo_list_in.bo_info_ptr = (uint64_t)(uintptr_t)bo_list;
-
-   chunks[num_chunks].chunk_id = AMDGPU_CHUNK_ID_BO_HANDLES;
-   chunks[num_chunks].length_dw = sizeof(struct drm_amdgpu_bo_list_in) / 4;
-   chunks[num_chunks].chunk_data = (uintptr_t)&bo_list_in;
-   num_chunks++;
-
-   /* Syncobj dependencies. */
-   unsigned num_syncobj_dependencies = cs->syncobj_dependencies.num;
-   if (num_syncobj_dependencies) {
-      struct drm_amdgpu_cs_chunk_sem *sem_chunk =
-         (struct drm_amdgpu_cs_chunk_sem *)
-         alloca(num_syncobj_dependencies * sizeof(sem_chunk[0]));
-
-      for (unsigned i = 0; i < num_syncobj_dependencies; i++) {
-         struct amdgpu_fence *fence =
-            (struct amdgpu_fence*)cs->syncobj_dependencies.list[i];
-
-         assert(util_queue_fence_is_signalled(&fence->submitted));
-         sem_chunk[i].handle = fence->syncobj;
-      }
-
-      chunks[num_chunks].chunk_id = AMDGPU_CHUNK_ID_SYNCOBJ_IN;
-      chunks[num_chunks].length_dw = sizeof(sem_chunk[0]) / 4 * num_syncobj_dependencies;
-      chunks[num_chunks].chunk_data = (uintptr_t)sem_chunk;
-      num_chunks++;
-   }
-
-   /* Syncobj signals. */
-   unsigned num_syncobj_to_signal = 1 + cs->syncobj_to_signal.num;
-   struct drm_amdgpu_cs_chunk_sem *sem_chunk =
-      (struct drm_amdgpu_cs_chunk_sem *)
-      alloca(num_syncobj_to_signal * sizeof(sem_chunk[0]));
-
-   for (unsigned i = 0; i < num_syncobj_to_signal - 1; i++) {
-      struct amdgpu_fence *fence =
-         (struct amdgpu_fence*)cs->syncobj_to_signal.list[i];
-
-      sem_chunk[i].handle = fence->syncobj;
-   }
-   sem_chunk[cs->syncobj_to_signal.num].handle = ((struct amdgpu_fence*)cs->fence)->syncobj;
-
-   chunks[num_chunks].chunk_id = AMDGPU_CHUNK_ID_SYNCOBJ_OUT;
-   chunks[num_chunks].length_dw = sizeof(sem_chunk[0]) / 4 * num_syncobj_to_signal;
-   chunks[num_chunks].chunk_data = (uintptr_t)sem_chunk;
-   num_chunks++;
-
-   if (aws->info.has_fw_based_shadowing && acs->mcbp_fw_shadow_chunk.shadow_va) {
-      chunks[num_chunks].chunk_id = AMDGPU_CHUNK_ID_CP_GFX_SHADOW;
-      chunks[num_chunks].length_dw = sizeof(struct drm_amdgpu_cs_chunk_cp_gfx_shadow) / 4;
-      chunks[num_chunks].chunk_data = (uintptr_t)&acs->mcbp_fw_shadow_chunk;
-      num_chunks++;
-   }
-
-   /* Fence */
-   if (has_user_fence) {
-      chunks[num_chunks].chunk_id = AMDGPU_CHUNK_ID_FENCE;
-      chunks[num_chunks].length_dw = sizeof(struct drm_amdgpu_cs_chunk_fence) / 4;
-      chunks[num_chunks].chunk_data = (uintptr_t)&acs->fence_chunk;
-      num_chunks++;
-   }
-
-   /* IB */
-   if (cs->chunk_ib[IB_PREAMBLE].ib_bytes) {
-      chunks[num_chunks].chunk_id = AMDGPU_CHUNK_ID_IB;
-      chunks[num_chunks].length_dw = sizeof(struct drm_amdgpu_cs_chunk_ib) / 4;
-      chunks[num_chunks].chunk_data = (uintptr_t)&cs->chunk_ib[IB_PREAMBLE];
-      num_chunks++;
-   }
-
-   /* IB */
-   cs->chunk_ib[IB_MAIN].ib_bytes *= 4; /* Convert from dwords to bytes. */
-   chunks[num_chunks].chunk_id = AMDGPU_CHUNK_ID_IB;
-   chunks[num_chunks].length_dw = sizeof(struct drm_amdgpu_cs_chunk_ib) / 4;
-   chunks[num_chunks].chunk_data = (uintptr_t)&cs->chunk_ib[IB_MAIN];
-   num_chunks++;
-
-   if (cs->secure) {
-      cs->chunk_ib[IB_PREAMBLE].flags |= AMDGPU_IB_FLAGS_SECURE;
-      cs->chunk_ib[IB_MAIN].flags |= AMDGPU_IB_FLAGS_SECURE;
-   } else {
-      cs->chunk_ib[IB_PREAMBLE].flags &= ~AMDGPU_IB_FLAGS_SECURE;
-      cs->chunk_ib[IB_MAIN].flags &= ~AMDGPU_IB_FLAGS_SECURE;
-   }
-
-   bool noop = acs->noop;
-
-   if (noop && acs->ip_type == AMD_IP_GFX) {
-      /* Reduce the IB size and fill it with NOP to make it like an empty IB. */
-      unsigned noop_dw_size = aws->info.ip[AMD_IP_GFX].ib_pad_dw_mask + 1;
-      assert(cs->chunk_ib[IB_MAIN].ib_bytes / 4 >= noop_dw_size);
-
-      cs->ib_main_addr[0] = PKT3(PKT3_NOP, noop_dw_size - 2, 0);
-      cs->chunk_ib[IB_MAIN].ib_bytes = noop_dw_size * 4;
-      noop = false;
-   }
-
-   assert(num_chunks <= ARRAY_SIZE(chunks));
-
    if (out_of_memory) {
       r = -ENOMEM;
    } else if (unlikely(acs->ctx->sw_status != PIPE_NO_RESET)) {
       r = -ECANCELED;
-   } else if (unlikely(noop)) {
+   } else if (unlikely(acs->noop) && acs->ip_type != AMD_IP_GFX) {
       r = 0;
    } else {
-      /* Submit the command buffer.
-       *
-       * The kernel returns -ENOMEM with many parallel processes using GDS such as test suites
-       * quite often, but it eventually succeeds after enough attempts. This happens frequently
-       * with dEQP using NGG streamout.
-       */
-      r = 0;
-
-      do {
-         /* Wait 1 ms and try again. */
-         if (r == -ENOMEM)
-            os_time_sleep(1000);
-
-         r = amdgpu_cs_submit_raw2(aws->dev, acs->ctx->ctx, 0, num_chunks, chunks, &seq_no);
-      } while (r == -ENOMEM);
-
-      if (!r) {
-         /* Success. */
-         uint64_t *user_fence = NULL;
-
-         /* Need to reserve 4 QWORD for user fence:
-          *   QWORD[0]: completed fence
-          *   QWORD[1]: preempted fence
-          *   QWORD[2]: reset fence
-          *   QWORD[3]: preempted then reset
+      if (queue_type != USERQ) {
+         /* Submit the command buffer.
+          *
+          * The kernel returns -ENOMEM with many parallel processes using GDS such as test suites
+          * quite often, but it eventually succeeds after enough attempts. This happens frequently
+          * with dEQP using NGG streamout.
           */
-         if (has_user_fence)
-            user_fence = acs->ctx->user_fence_cpu_address_base + acs->ip_type * 4;
-         amdgpu_fence_submitted(cs->fence, seq_no, user_fence);
+         r = 0;
+
+         do {
+            /* Wait 1 ms and try again. */
+            if (r == -ENOMEM)
+               os_time_sleep(1000);
+
+            r = amdgpu_cs_submit_ib_kernelq(acs, num_real_buffers, bo_list, &seq_no);
+         } while (r == -ENOMEM);
+
+         if (!r) {
+            /* Success. */
+            uint64_t *user_fence = NULL;
+
+            /* Need to reserve 4 QWORD for user fence:
+             *   QWORD[0]: completed fence
+             *   QWORD[1]: preempted fence
+             *   QWORD[2]: reset fence
+             *   QWORD[3]: preempted then reset
+             */
+            if (has_user_fence)
+               user_fence = acs->ctx->user_fence_cpu_address_base + acs->ip_type * 4;
+            amdgpu_fence_submitted(csc->fence, seq_no, user_fence);
+         }
+      } else {
+         struct amdgpu_userq *userq = &queue->userq;
+         r = amdgpu_cs_submit_ib_userq(userq, acs, shared_buf_kms_handles, num_shared_buf_write,
+                                       &shared_buf_kms_handles[num_real_buffers - num_shared_buf_read],
+                                       num_shared_buf_read, &seq_no, vm_timeline_point);
+         if (!r) {
+            /* Success. */
+            amdgpu_fence_submitted(csc->fence, seq_no, userq->user_fence_ptr);
+         }
       }
    }
 
@@ -1668,18 +2008,18 @@ static void amdgpu_cs_submit_ib(void *job, void *gdata, int thread_index)
 
    /* If there was an error, signal the fence, because it won't be signalled
     * by the hardware. */
-   if (r || noop)
-      amdgpu_fence_signalled(cs->fence);
+   if (r || (unlikely(acs->noop) && acs->ip_type != AMD_IP_GFX))
+      amdgpu_fence_signalled(csc->fence);
 
    if (unlikely(aws->info.has_fw_based_shadowing && acs->mcbp_fw_shadow_chunk.flags && r == 0))
       acs->mcbp_fw_shadow_chunk.flags = 0;
 
-   cs->error_code = r;
+   csc->error_code = r;
 
    /* Clear the buffer lists. */
-   for (unsigned list = 0; list < ARRAY_SIZE(cs->buffer_lists); list++) {
-      struct amdgpu_cs_buffer *buffers = cs->buffer_lists[list].buffers;
-      unsigned num_buffers = cs->buffer_lists[list].num_buffers;
+   for (unsigned list = 0; list < ARRAY_SIZE(csc->buffer_lists); list++) {
+      struct amdgpu_cs_buffer *buffers = csc->buffer_lists[list].buffers;
+      unsigned num_buffers = csc->buffer_lists[list].num_buffers;
 
       if (list == AMDGPU_BO_REAL) {
          /* Only decrement num_active_ioctls and unref where we incremented them.
@@ -1704,34 +2044,35 @@ static void amdgpu_cs_submit_ib(void *job, void *gdata, int thread_index)
          }
       }
 
-      cs->buffer_lists[list].num_buffers = 0;
+      csc->buffer_lists[list].num_buffers = 0;
    }
 
-   amdgpu_cs_context_cleanup(aws, cs);
+   amdgpu_cs_context_cleanup(aws, csc);
 }
 
 /* Make sure the previous submission is completed. */
 void amdgpu_cs_sync_flush(struct radeon_cmdbuf *rcs)
 {
-   struct amdgpu_cs *cs = amdgpu_cs(rcs);
+   struct amdgpu_cs *acs = amdgpu_cs(rcs);
 
    /* Wait for any pending ioctl of this CS to complete. */
-   util_queue_fence_wait(&cs->flush_completed);
+   util_queue_fence_wait(&acs->flush_completed);
 }
 
 static int amdgpu_cs_flush(struct radeon_cmdbuf *rcs,
                            unsigned flags,
                            struct pipe_fence_handle **fence)
 {
-   struct amdgpu_cs *cs = amdgpu_cs(rcs);
-   struct amdgpu_winsys *aws = cs->aws;
+   struct amdgpu_cs *acs = amdgpu_cs(rcs);
+   struct amdgpu_winsys *aws = acs->aws;
+   struct amdgpu_cs_context *csc_current = amdgpu_csc_get_current(acs);
    int error_code = 0;
-   uint32_t ib_pad_dw_mask = aws->info.ip[cs->ip_type].ib_pad_dw_mask;
+   uint32_t ib_pad_dw_mask = aws->info.ip[acs->ip_type].ib_pad_dw_mask;
 
-   rcs->current.max_dw += amdgpu_cs_epilog_dws(cs);
+   rcs->current.max_dw += amdgpu_cs_epilog_dws(acs);
 
    /* Pad the IB according to the mask. */
-   switch (cs->ip_type) {
+   switch (acs->ip_type) {
    case AMD_IP_SDMA:
       if (aws->info.gfx_level <= GFX6) {
          while (rcs->current.cdw & ib_pad_dw_mask)
@@ -1743,8 +2084,8 @@ static int amdgpu_cs_flush(struct radeon_cmdbuf *rcs,
       break;
    case AMD_IP_GFX:
    case AMD_IP_COMPUTE:
-      amdgpu_pad_gfx_compute_ib(aws, cs->ip_type, rcs->current.buf, &rcs->current.cdw, 0);
-      if (cs->ip_type == AMD_IP_GFX)
+      amdgpu_pad_gfx_compute_ib(aws, acs->ip_type, rcs->current.buf, &rcs->current.cdw, 0);
+      if (acs->ip_type == AMD_IP_GFX)
          aws->gfx_ib_size_counter += (rcs->prev_dw + rcs->current.cdw) * 4;
       break;
    case AMD_IP_UVD:
@@ -1769,33 +2110,36 @@ static int amdgpu_cs_flush(struct radeon_cmdbuf *rcs,
    }
 
    if (rcs->current.cdw > rcs->current.max_dw) {
-      fprintf(stderr, "amdgpu: command stream overflowed\n");
+      amdgpu_ctx_set_sw_reset_status(
+         (struct radeon_winsys_ctx*)acs->ctx, PIPE_UNKNOWN_CONTEXT_RESET,
+         "amdgpu: command stream overflowed (current: %d, max: %d)\n",
+         rcs->current.cdw, rcs->current.max_dw);
+      return -1;
    }
 
    /* If the CS is not empty or overflowed.... */
    if (likely(radeon_emitted(rcs, 0) &&
        rcs->current.cdw <= rcs->current.max_dw &&
        !(flags & RADEON_FLUSH_NOOP))) {
-      struct amdgpu_cs_context *cur = cs->csc;
 
       /* Set IB sizes. */
-      amdgpu_ib_finalize(aws, rcs, &cs->main_ib, cs->ip_type);
+      amdgpu_ib_finalize(aws, rcs, &acs->main_ib, acs->ip_type);
 
       /* Create a fence. */
-      amdgpu_fence_reference(&cur->fence, NULL);
-      if (cs->next_fence) {
+      amdgpu_fence_reference(&csc_current->fence, NULL);
+      if (acs->next_fence) {
          /* just move the reference */
-         cur->fence = cs->next_fence;
-         cs->next_fence = NULL;
+         csc_current->fence = acs->next_fence;
+         acs->next_fence = NULL;
       } else {
-         cur->fence = amdgpu_fence_create(cs);
+         csc_current->fence = amdgpu_fence_create(acs);
       }
       if (fence)
-         amdgpu_fence_reference(fence, cur->fence);
+         amdgpu_fence_reference(fence, csc_current->fence);
 
-      for (unsigned i = 0; i < ARRAY_SIZE(cur->buffer_lists); i++) {
-         unsigned num_buffers = cur->buffer_lists[i].num_buffers;
-         struct amdgpu_cs_buffer *buffers = cur->buffer_lists[i].buffers;
+      for (unsigned i = 0; i < ARRAY_SIZE(csc_current->buffer_lists); i++) {
+         unsigned num_buffers = csc_current->buffer_lists[i].num_buffers;
+         struct amdgpu_cs_buffer *buffers = csc_current->buffer_lists[i].buffers;
 
          for (unsigned j = 0; j < num_buffers; j++)
             p_atomic_inc(&buffers[j].bo->num_active_ioctls);
@@ -1803,86 +2147,84 @@ static int amdgpu_cs_flush(struct radeon_cmdbuf *rcs,
 
       amdgpu_cs_sync_flush(rcs);
 
-      /* Swap command streams. "cst" is going to be submitted. */
-      rcs->csc = cs->csc = cs->cst;
-      cs->cst = cur;
+      csc_current->chunk_ib[IB_MAIN].ib_bytes *= 4; /* Convert from dwords to bytes. */
+      if (acs->noop && acs->ip_type == AMD_IP_GFX) {
+         /* Reduce the IB size and fill it with NOP to make it like an empty IB. */
+         unsigned noop_dw_size = aws->info.ip[AMD_IP_GFX].ib_pad_dw_mask + 1;
+         assert(csc_current->chunk_ib[IB_MAIN].ib_bytes / 4 >= noop_dw_size);
 
-      /* Submit. */
-      util_queue_add_job(&aws->cs_queue, cs, &cs->flush_completed,
-                         cs->uses_alt_fence ? amdgpu_cs_submit_ib<true>
-                                            : amdgpu_cs_submit_ib<false>, NULL, 0);
+         csc_current->ib_main_addr[0] = PKT3(PKT3_NOP, noop_dw_size - 2, 0);
+         csc_current->chunk_ib[IB_MAIN].ib_bytes = noop_dw_size * 4;
+      }
+
+      amdgpu_csc_swap(acs);
+      csc_current = amdgpu_csc_get_current(acs);
+      struct amdgpu_cs_context *csc_submitted = amdgpu_csc_get_submitted(acs);
+
+      /* only gfx, compute and sdma queues are supported in userqueues. */
+      if (aws->info.use_userq && acs->ip_type <= AMD_IP_SDMA) {
+         util_queue_add_job(&aws->cs_queue, acs, &acs->flush_completed,
+                            amdgpu_cs_submit_ib<USERQ>, NULL, 0);
+      } else {
+         util_queue_add_job(&aws->cs_queue, acs, &acs->flush_completed,
+                            acs->uses_alt_fence ?
+                               amdgpu_cs_submit_ib<KERNELQ_ALT_FENCE>
+                               : amdgpu_cs_submit_ib<KERNELQ>,
+                            NULL, 0);
+      }
 
       if (flags & RADEON_FLUSH_TOGGLE_SECURE_SUBMISSION)
-         cs->csc->secure = !cs->cst->secure;
+         csc_current->secure = !csc_submitted->secure;
       else
-         cs->csc->secure = cs->cst->secure;
+         csc_current->secure = csc_submitted->secure;
 
       if (!(flags & PIPE_FLUSH_ASYNC)) {
          amdgpu_cs_sync_flush(rcs);
-         error_code = cur->error_code;
+         error_code = csc_submitted->error_code;
       }
    } else {
       if (flags & RADEON_FLUSH_TOGGLE_SECURE_SUBMISSION)
-         cs->csc->secure = !cs->csc->secure;
+         csc_current->secure = !csc_current->secure;
 
-      amdgpu_cs_context_cleanup_buffers(aws, cs->csc);
-      amdgpu_cs_context_cleanup(aws, cs->csc);
+      amdgpu_cs_context_cleanup_buffers(aws, csc_current);
+      amdgpu_cs_context_cleanup(aws, csc_current);
    }
 
-   memset(cs->csc->buffer_indices_hashlist, -1, sizeof(cs->buffer_indices_hashlist));
+   memset(csc_current->buffer_indices_hashlist, -1, sizeof(acs->buffer_indices_hashlist));
 
-   amdgpu_get_new_ib(aws, rcs, &cs->main_ib, cs);
+   amdgpu_get_new_ib(aws, rcs, &acs->main_ib, acs);
 
-   if (cs->preamble_ib_bo) {
-      amdgpu_cs_add_buffer(rcs, cs->preamble_ib_bo,
+   if (acs->preamble_ib_bo) {
+      amdgpu_cs_add_buffer(rcs, acs->preamble_ib_bo,
                            RADEON_USAGE_READ | RADEON_PRIO_IB, (radeon_bo_domain)0);
    }
 
-   if (cs->ip_type == AMD_IP_GFX)
+   if (acs->ip_type == AMD_IP_GFX)
       aws->num_gfx_IBs++;
-   else if (cs->ip_type == AMD_IP_SDMA)
+   else if (acs->ip_type == AMD_IP_SDMA)
       aws->num_sdma_IBs++;
 
    return error_code;
-}
-
-static void amdgpu_cs_destroy(struct radeon_cmdbuf *rcs)
-{
-   struct amdgpu_cs *cs = amdgpu_cs(rcs);
-
-   if (!cs)
-      return;
-
-   amdgpu_cs_sync_flush(rcs);
-   util_queue_fence_destroy(&cs->flush_completed);
-   p_atomic_dec(&cs->aws->num_cs);
-   radeon_bo_reference(&cs->aws->dummy_sws.base, &cs->preamble_ib_bo, NULL);
-   radeon_bo_reference(&cs->aws->dummy_sws.base, &cs->main_ib.big_buffer, NULL);
-   FREE(rcs->prev);
-   amdgpu_destroy_cs_context(cs->aws, &cs->csc1);
-   amdgpu_destroy_cs_context(cs->aws, &cs->csc2);
-   amdgpu_fence_reference(&cs->next_fence, NULL);
-   FREE(cs);
 }
 
 static bool amdgpu_bo_is_referenced(struct radeon_cmdbuf *rcs,
                                     struct pb_buffer_lean *_buf,
                                     unsigned usage)
 {
-   struct amdgpu_cs *cs = amdgpu_cs(rcs);
+   struct amdgpu_cs *acs = amdgpu_cs(rcs);
    struct amdgpu_winsys_bo *bo = (struct amdgpu_winsys_bo*)_buf;
 
-   return amdgpu_bo_is_referenced_by_cs_with_usage(cs, bo, usage);
+   return amdgpu_bo_is_referenced_by_cs_with_usage(acs, bo, usage);
 }
 
 static void amdgpu_cs_set_mcbp_reg_shadowing_va(struct radeon_cmdbuf *rcs,uint64_t regs_va,
                                                                    uint64_t csa_va)
 {
-   struct amdgpu_cs *cs = amdgpu_cs(rcs);
-   cs->mcbp_fw_shadow_chunk.shadow_va = regs_va;
-   cs->mcbp_fw_shadow_chunk.csa_va = csa_va;
-   cs->mcbp_fw_shadow_chunk.gds_va = 0;
-   cs->mcbp_fw_shadow_chunk.flags = AMDGPU_CS_CHUNK_CP_GFX_SHADOW_FLAGS_INIT_SHADOW;
+   struct amdgpu_cs *acs = amdgpu_cs(rcs);
+   acs->mcbp_fw_shadow_chunk.shadow_va = regs_va;
+   acs->mcbp_fw_shadow_chunk.csa_va = csa_va;
+   acs->mcbp_fw_shadow_chunk.gds_va = 0;
+   acs->mcbp_fw_shadow_chunk.flags = AMDGPU_CS_CHUNK_CP_GFX_SHADOW_FLAGS_INIT_SHADOW;
 }
 
 static void amdgpu_winsys_fence_reference(struct radeon_winsys *rws,

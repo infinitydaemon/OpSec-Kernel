@@ -1,30 +1,13 @@
 /*
  * Copyright © 2020 Google, Inc.
- *
- * Permission is hereby granted, free of charge, to any person obtaining a
- * copy of this software and associated documentation files (the "Software"),
- * to deal in the Software without restriction, including without limitation
- * the rights to use, copy, modify, merge, publish, distribute, sublicense,
- * and/or sell copies of the Software, and to permit persons to whom the
- * Software is furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice (including the next
- * paragraph) shall be included in all copies or substantial portions of the
- * Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
- * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
- * SOFTWARE.
+ * SPDX-License-Identifier: MIT
  */
 
 #include <stdlib.h>
 
 #include "util/ralloc.h"
 
+#include "instr-a3xx.h"
 #include "ir3.h"
 #include "ir3_compiler.h"
 
@@ -44,9 +27,10 @@ struct ir3_validate_ctx {
 };
 
 static void
-validate_error(struct ir3_validate_ctx *ctx, const char *condstr)
+validate_error(struct ir3_validate_ctx *ctx, const char *condstr,
+               const char *file, unsigned line)
 {
-   fprintf(stderr, "validation fail: %s\n", condstr);
+   fprintf(stderr, "validation fail at %s:%u: %s\n", file, line, condstr);
    if (ctx->current_instr) {
       fprintf(stderr, "  -> for instruction: ");
       ir3_print_instr(ctx->current_instr);
@@ -59,7 +43,7 @@ validate_error(struct ir3_validate_ctx *ctx, const char *condstr)
 #define validate_assert(ctx, cond)                                             \
    do {                                                                        \
       if (!(cond)) {                                                           \
-         validate_error(ctx, #cond);                                           \
+         validate_error(ctx, #cond, __FILE__, __LINE__);                       \
       }                                                                        \
    } while (0)
 
@@ -82,8 +66,23 @@ static void
 validate_src(struct ir3_validate_ctx *ctx, struct ir3_instruction *instr,
              struct ir3_register *reg)
 {
-   if (reg->flags & IR3_REG_IMMED)
+   if ((reg->flags & IR3_REG_IMMED) && !(reg->flags & IR3_REG_ALIAS))
       validate_assert(ctx, ir3_valid_immediate(instr, reg->iim_val));
+
+   if (reg->flags & IR3_REG_FIRST_ALIAS)
+      validate_assert(ctx, reg->flags & IR3_REG_ALIAS);
+
+   if (reg->flags & IR3_REG_ALIAS) {
+      unsigned valid_flags = IR3_REG_ALIAS | IR3_REG_FIRST_ALIAS |
+                             IR3_REG_HALF | IR3_REG_CONST | IR3_REG_IMMED |
+                             IR3_REG_SSA | IR3_REG_KILL | IR3_REG_FIRST_KILL;
+      validate_assert(ctx, !(reg->flags & ~valid_flags));
+   }
+
+   if (instr->opc == OPC_ALIAS && instr->cat7.alias_scope == ALIAS_RT) {
+      unsigned valid_flags = IR3_REG_HALF | IR3_REG_CONST | IR3_REG_IMMED;
+      validate_assert(ctx, !(reg->flags & ~valid_flags));
+   }
 
    if (!(reg->flags & IR3_REG_SSA) || !reg->def)
       return;
@@ -94,7 +93,15 @@ validate_src(struct ir3_validate_ctx *ctx, struct ir3_instruction *instr,
    struct ir3_register *src = reg->def;
 
    validate_assert(ctx, _mesa_set_search(ctx->defs, src->instr));
-   validate_assert(ctx, src->wrmask == reg->wrmask);
+
+   if (src->instr->opc == OPC_META_COLLECT) {
+      /* We only support reading a subset of written components from collects.
+       */
+      validate_assert(ctx, !(reg->wrmask & ~src->wrmask));
+   } else {
+      validate_assert(ctx, src->wrmask == reg->wrmask);
+   }
+
    validate_assert(ctx, reg_class_flags(src) == reg_class_flags(reg));
 
    if (src->flags & IR3_REG_CONST)
@@ -150,6 +157,13 @@ static void
 validate_dst(struct ir3_validate_ctx *ctx, struct ir3_instruction *instr,
              struct ir3_register *reg)
 {
+   if (reg->flags & IR3_REG_RT) {
+      validate_assert(ctx, instr->opc == OPC_ALIAS);
+      validate_assert(ctx, instr->cat7.alias_scope == ALIAS_RT);
+      validate_assert(ctx, !(reg->flags & ~IR3_REG_RT));
+      validate_assert(ctx, !reg->tied);
+   }
+
    if (reg->tied) {
       validate_assert(ctx, reg->tied->tied == reg);
       validate_assert(ctx, reg_class_flags(reg->tied) == reg_class_flags(reg));
@@ -182,12 +196,50 @@ validate_dst(struct ir3_validate_ctx *ctx, struct ir3_instruction *instr,
    validate_assert(                                                            \
       ctx, (type_size(type) <= 16) == !!((reg)->flags & IR3_REG_HALF))
 
+static bool
+block_contains(struct ir3_block *block, struct ir3_instruction *instr)
+{
+   foreach_instr (block_instr, &block->instr_list) {
+      if (block_instr == instr)
+         return true;
+   }
+
+   return false;
+}
+
+static void
+validate_rpt(struct ir3_validate_ctx *ctx, struct ir3_instruction *instr)
+{
+   if (ir3_instr_is_first_rpt(instr)) {
+      /* All instructions in a repeat group should be in the same block as the
+       * first one.
+       */
+      foreach_instr_rpt (rpt, instr) {
+         validate_assert(ctx, rpt->block == instr->block);
+
+         /* Validate that the block actually contains the repeat. This would
+          * fail if, for example, list_delinit is called instead of
+          * ir3_instr_remove.
+          */
+         validate_assert(ctx, block_contains(instr->block, rpt));
+      }
+   } else if (instr->repeat) {
+      validate_assert(ctx, ir3_supports_rpt(ctx->ir->compiler, instr->opc));
+      validate_assert(ctx, !instr->nop);
+   }
+}
+
 static void
 validate_instr(struct ir3_validate_ctx *ctx, struct ir3_instruction *instr)
 {
    struct ir3_register *last_reg = NULL;
 
-   foreach_src_n (reg, n, instr) {
+   validate_rpt(ctx, instr);
+
+   /* Use alias-group-aware iterator to make sure the src number will be the
+    * same with and without alias groups.
+    */
+   foreach_src_with_alias_n (reg, n, _, instr) {
       if (reg->flags & IR3_REG_RELATIV)
          validate_assert(ctx, instr->address);
 
@@ -223,6 +275,7 @@ validate_instr(struct ir3_validate_ctx *ctx, struct ir3_instruction *instr)
           */
       } else if (instr->opc == OPC_ANY_MACRO || instr->opc == OPC_ALL_MACRO ||
                  instr->opc == OPC_READ_FIRST_MACRO ||
+                 instr->opc == OPC_READ_GETLAST_MACRO ||
                  instr->opc == OPC_READ_COND_MACRO) {
          /* nothing yet */
       } else if (n > 0) {
@@ -265,6 +318,7 @@ validate_instr(struct ir3_validate_ctx *ctx, struct ir3_instruction *instr)
             ctx, util_is_power_of_two_or_zero(instr->dsts[0]->wrmask + 1));
       } else if (instr->opc == OPC_ANY_MACRO || instr->opc == OPC_ALL_MACRO ||
                  instr->opc == OPC_READ_FIRST_MACRO ||
+                 instr->opc == OPC_READ_GETLAST_MACRO ||
                  instr->opc == OPC_READ_COND_MACRO) {
          /* nothing yet */
       } else if (instr->opc == OPC_ELECT_MACRO || instr->opc == OPC_SHPS_MACRO) {
@@ -330,6 +384,15 @@ validate_instr(struct ir3_validate_ctx *ctx, struct ir3_instruction *instr)
 
       break;
    case 3:
+      switch (instr->opc) {
+      case OPC_MAD_S24:
+      case OPC_MAD_U24:
+         validate_assert(ctx, !(instr->dsts[0]->flags & IR3_REG_HALF));
+         validate_assert(ctx, !(instr->srcs[0]->flags & IR3_REG_HALF));
+         break;
+      default:
+         break;
+      }
       /* Validate that cat3 opc matches the src type.  We've already checked
        * that all the src regs are same type
        */
@@ -411,11 +474,80 @@ validate_instr(struct ir3_validate_ctx *ctx, struct ir3_instruction *instr)
          validate_assert(ctx, !(instr->srcs[0]->flags & IR3_REG_HALF));
          validate_assert(ctx, !(instr->srcs[1]->flags & IR3_REG_HALF));
          break;
+      case OPC_LDP:
+         validate_assert(ctx, !(instr->srcs[0]->flags & IR3_REG_HALF));
+         validate_assert(ctx, !(instr->srcs[1]->flags & IR3_REG_HALF));
+         validate_assert(ctx, !(instr->srcs[2]->flags & IR3_REG_HALF));
+         validate_reg_size(ctx, instr->dsts[0], instr->cat6.type);
+	 break;
+      case OPC_ATOMIC_B_CMPXCHG:
+         if (instr->cat6.type == TYPE_ATOMIC_U64) {
+            validate_assert(ctx, !(instr->dsts[0]->flags & IR3_REG_HALF));
+            validate_assert(ctx, instr->dsts[0]->wrmask == 0x3f);
+         } else {
+            validate_reg_size(ctx, instr->dsts[0], instr->cat6.type);
+         }
+         validate_assert(ctx, !(instr->srcs[0]->flags & IR3_REG_HALF));
+         validate_assert(ctx, !(instr->srcs[1]->flags & IR3_REG_HALF));
+         break;
+      case OPC_ATOMIC_B_XCHG:
+         if (instr->cat6.type == TYPE_ATOMIC_U64) {
+            validate_assert(ctx, !(instr->dsts[0]->flags & IR3_REG_HALF));
+            validate_assert(ctx, instr->dsts[0]->wrmask == 0xf);
+         } else {
+            validate_reg_size(ctx, instr->dsts[0], instr->cat6.type);
+         }
+         validate_assert(ctx, !(instr->srcs[0]->flags & IR3_REG_HALF));
+         validate_assert(ctx, !(instr->srcs[1]->flags & IR3_REG_HALF));
+         break;
+      case OPC_ATOMIC_G_CMPXCHG:
+      case OPC_ATOMIC_G_XCHG:
+         if (instr->cat6.type == TYPE_ATOMIC_U64) {
+            validate_assert(ctx, !(instr->dsts[0]->flags & IR3_REG_HALF));
+            validate_assert(ctx, instr->dsts[0]->wrmask == 0x3);
+         } else {
+            validate_reg_size(ctx, instr->dsts[0], instr->cat6.type);
+         }
+         validate_assert(ctx, !(instr->srcs[0]->flags & IR3_REG_HALF));
+         validate_assert(ctx, !(instr->srcs[1]->flags & IR3_REG_HALF));
+         break;
+      case OPC_SHFL:
+         validate_reg_size(ctx, instr->srcs[0], instr->cat6.type);
+         validate_assert(ctx, !(instr->srcs[1]->flags & IR3_REG_HALF));
+         validate_reg_size(ctx, instr->dsts[0], instr->cat6.type);
+         break;
+      case OPC_RAY_INTERSECTION:
+         validate_assert(ctx, !(instr->srcs[0]->flags & IR3_REG_HALF));
+         validate_assert(ctx, !(instr->srcs[1]->flags & IR3_REG_HALF));
+         validate_assert(ctx, !(instr->srcs[2]->flags & IR3_REG_HALF));
+         validate_assert(ctx, !(instr->srcs[3]->flags & IR3_REG_HALF));
+         validate_assert(ctx, !(instr->srcs[4]->flags & IR3_REG_HALF));
+         validate_assert(ctx, !(instr->dsts[0]->flags & IR3_REG_HALF));
+         break;
       default:
          validate_reg_size(ctx, instr->dsts[0], instr->cat6.type);
          validate_assert(ctx, !(instr->srcs[0]->flags & IR3_REG_HALF));
          if (instr->srcs_count > 1)
             validate_assert(ctx, !(instr->srcs[1]->flags & IR3_REG_HALF));
+         break;
+      }
+      break;
+   case 7:
+      switch (instr->opc) {
+      case OPC_ALIAS:
+         switch (instr->cat7.alias_scope) {
+         case ALIAS_RT:
+            validate_assert(ctx, instr->dsts[0]->flags & IR3_REG_RT);
+            validate_assert(ctx, instr->cat7.alias_table_size_minus_one == 0);
+            break;
+         case ALIAS_TEX:
+            validate_assert(ctx, instr->cat7.alias_table_size_minus_one < 16);
+            break;
+         case ALIAS_MEM:
+            break;
+         }
+         break;
+      default:
          break;
       }
    }

@@ -812,6 +812,9 @@ wsi_GetDisplayPlaneCapabilities2KHR(VkPhysicalDevice physicalDevice,
                                     const VkDisplayPlaneInfo2KHR *pDisplayPlaneInfo,
                                     VkDisplayPlaneCapabilities2KHR *pCapabilities)
 {
+   VK_FROM_HANDLE(vk_physical_device, pdevice, physicalDevice);
+   struct wsi_device *wsi_device = pdevice->wsi_device;
+
    assert(pCapabilities->sType ==
           VK_STRUCTURE_TYPE_DISPLAY_PLANE_CAPABILITIES_2_KHR);
 
@@ -825,7 +828,8 @@ wsi_GetDisplayPlaneCapabilities2KHR(VkPhysicalDevice physicalDevice,
       switch (ext->sType) {
       case VK_STRUCTURE_TYPE_SURFACE_PROTECTED_CAPABILITIES_KHR: {
          VkSurfaceProtectedCapabilitiesKHR *protected = (void *)ext;
-         protected->supportsProtected = VK_FALSE;
+         protected->supportsProtected =
+            wsi_device->supports_protected[VK_ICD_WSI_PLATFORM_DISPLAY];
          break;
       }
 
@@ -1100,7 +1104,7 @@ wsi_display_surface_get_present_rectangles(VkIcdSurfaceBase *surface_base,
    wsi_display_mode *mode = wsi_display_mode_from_handle(surface->displayMode);
    VK_OUTARRAY_MAKE_TYPED(VkRect2D, out, pRects, pRectCount);
 
-   if (wsi_device_matches_drm_fd(wsi_device, mode->connector->wsi->fd)) {
+   if (wsi_device->can_present_on_device(wsi_device->pdevice, mode->connector->wsi->fd)) {
       vk_outarray_append_typed(VkRect2D, &out, rect) {
          *rect = (VkRect2D) {
             .offset = { 0, 0 },
@@ -1962,6 +1966,27 @@ _wsi_display_queue_next(struct wsi_swapchain *drv_chain)
             if (ret != 0) {
                wsi_display_debug("failed to hide cursor err %d %s\n", ret, strerror(-ret));
             }
+
+            /* unset some properties another drm master might've set
+             * which can mess up the image
+             */
+            drmModeObjectPropertiesPtr properties =
+               drmModeObjectGetProperties(wsi->fd,
+                                          connector->crtc_id,
+                                          DRM_MODE_OBJECT_CRTC);
+            for (uint32_t i = 0; i < properties->count_props; i++) {
+               drmModePropertyPtr prop =
+                  drmModeGetProperty(wsi->fd, properties->props[i]);
+               if (strcmp(prop->name, "GAMMA_LUT") == 0 ||
+                   strcmp(prop->name, "CTM") == 0 ||
+                   strcmp(prop->name, "DEGAMMA_LUT") == 0) {
+                  drmModeObjectSetProperty(wsi->fd, connector->crtc_id,
+                                           DRM_MODE_OBJECT_CRTC,
+                                           properties->props[i], 0);
+               }
+               drmModeFreeProperty(prop);
+            }
+            drmModeFreeObjectProperties(properties);
 
             /* Assume that the mode set is synchronous and that any
              * previous image is now idle.
@@ -2825,7 +2850,7 @@ wsi_AcquireXlibDisplayEXT(VkPhysicalDevice physicalDevice,
    if (!crtc)
       return VK_ERROR_INITIALIZATION_FAILED;
 
-#ifdef HAVE_DRI3_MODIFIERS
+#ifdef HAVE_X11_DRM
    xcb_randr_lease_t lease = xcb_generate_id(connection);
    xcb_randr_create_lease_cookie_t cl_c =
       xcb_randr_create_lease(connection, root, lease, 1, 1,
@@ -3114,7 +3139,7 @@ wsi_AcquireDrmDisplayEXT(VkPhysicalDevice physicalDevice,
    VK_FROM_HANDLE(vk_physical_device, pdevice, physicalDevice);
    struct wsi_device *wsi_device = pdevice->wsi_device;
 
-   if (!wsi_device_matches_drm_fd(wsi_device, drmFd))
+   if (!wsi_device->can_present_on_device(wsi_device->pdevice, drmFd))
       return VK_ERROR_UNKNOWN;
 
    struct wsi_display *wsi =
@@ -3148,7 +3173,7 @@ wsi_GetDrmDisplayEXT(VkPhysicalDevice physicalDevice,
    VK_FROM_HANDLE(vk_physical_device, pdevice, physicalDevice);
    struct wsi_device *wsi_device = pdevice->wsi_device;
 
-   if (!wsi_device_matches_drm_fd(wsi_device, drmFd)) {
+   if (!wsi_device->can_present_on_device(wsi_device->pdevice, drmFd)) {
       *pDisplay = VK_NULL_HANDLE;
       return VK_ERROR_UNKNOWN;
    }

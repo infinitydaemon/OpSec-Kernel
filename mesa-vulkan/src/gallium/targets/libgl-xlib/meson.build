@@ -27,7 +27,7 @@ libgl = shared_library(
   gnu_symbol_visibility : 'hidden',
   link_args : [ld_args_bsymbolic, ld_args_gc_sections, gallium_xlib_ld_args],
   link_depends : gallium_xlib_link_depends,
-  link_whole : [libxlib, libglapi_static],
+  link_whole : [libxlib, (with_shared_glapi ? libglapi_bridge : libglapi_static)],
   link_with : [
     libgalliumvl_stub, libws_xlib,
     libgallium, libmesa, gallium_xlib_link_with,
@@ -37,3 +37,5 @@ libgl = shared_library(
   version : '1.5.0',
   darwin_versions: '4.0.0',
 )
+
+shared_glapi_lib = libgl

@@ -41,6 +41,7 @@
 #define RDECODE_IB_PARAM_UMD_COPY_MEMORY                             (0x00000008)
 #define RDECODE_IB_PARAM_UMD_WRITE_MEMORY                            (0x00000009)
 #define RDECODE_IB_PARAM_FEEDBACK_BUFFER                             (0x0000000A)
+#define RDECODE_IB_PARAM_DYNAMIC_REFLIST_BUFFER                      (0x0000000C)
 
 #define RDECODE_CMDBUF_FLAGS_MSG_BUFFER                              (0x00000001)
 #define RDECODE_CMDBUF_FLAGS_DPB_BUFFER                              (0x00000002)
@@ -63,6 +64,7 @@
 #define RDECODE_CMDBUF_FLAGS_RESERVED_SIZE_INFO_BUFFER               (0x00040000)
 #define RDECODE_CMDBUF_FLAGS_LUMA_HIST_BUFFER                        (0x00080000)
 #define RDECODE_CMDBUF_FLAGS_SESSION_CONTEXT_BUFFER                  (0x00100000)
+#define RDECODE_CMDBUF_FLAGS_REF_BUFFER                              (0x00200000)
 
 #define RDECODE_CMD_MSG_BUFFER                              0x00000000
 #define RDECODE_CMD_DPB_BUFFER                              0x00000001
@@ -73,6 +75,7 @@
 #define RDECODE_CMD_BITSTREAM_BUFFER                        0x00000100
 #define RDECODE_CMD_IT_SCALING_TABLE_BUFFER                 0x00000204
 #define RDECODE_CMD_CONTEXT_BUFFER                          0x00000206
+#define RDECODE_CMD_WRITE_MEMORY                            0x00000800
 
 #define RDECODE_MSG_CREATE                                  0x00000000
 #define RDECODE_MSG_DECODE                                  0x00000001
@@ -126,6 +129,11 @@
 /* for VCN5 */
 #define RDECODE_VCN5_256B_D                                 0x00000001
 
+#define RDECODE_TILE_LINEAR                                 0x00000000
+#define RDECODE_TILE_8X4                                    0x00000001
+#define RDECODE_TILE_8X8                                    0x00000002
+#define RDECODE_TILE_32AS8                                  0x00000003
+
 #define RDECODE_MESSAGE_NOT_SUPPORTED                       0x00000000
 #define RDECODE_MESSAGE_CREATE                              0x00000001
 #define RDECODE_MESSAGE_DECODE                              0x00000002
@@ -149,6 +157,7 @@
 #define RDECODE_FLAGS_USE_DYNAMIC_DPB_MASK                  0x00000001
 #define RDECODE_FLAGS_USE_PAL_MASK                          0x00000008
 #define RDECODE_FLAGS_DPB_RESIZE_MASK                       0x00000100
+#define RDECODE_FLAGS_UNIFIED_DT_MASK                       0x00000200
 
 #define mmUVD_JPEG_CNTL                                     0x0200
 #define mmUVD_JPEG_CNTL_BASE_IDX                            1
@@ -427,6 +436,7 @@
 
 #define RDECODE_AV1_VER_0  0
 #define RDECODE_AV1_VER_1  1
+#define RDECODE_AV1_VER_2  2
 
 typedef struct rvcn_decode_buffer_s {
    unsigned int valid_buf_flag;
@@ -585,6 +595,33 @@ typedef struct rvcn_dec_message_dynamic_dpb_t2_s {
     unsigned int dpbAddrLo[16];
     unsigned int dpbAddrHi[16];
 } rvcn_dec_message_dynamic_dpb_t2_t;
+
+typedef struct rvcn_dec_ref_buffer_s
+{
+    unsigned int index;
+    unsigned int y_pitch;
+    unsigned int y_aligned_height;
+    unsigned int y_aligned_size;
+    unsigned int y_ref_buffer_address_hi;
+    unsigned int y_ref_buffer_address_lo;
+    unsigned int uv_pitch;
+    unsigned int uv_aligned_height;
+    unsigned int uv_aligned_size;
+    unsigned int uv_ref_buffer_address_hi;
+    unsigned int uv_ref_buffer_address_lo;
+    unsigned int v_pitch;
+    unsigned int v_aligned_height;
+    unsigned int v_aligned_size;
+    unsigned int v_ref_buffer_address_hi;
+    unsigned int v_ref_buffer_address_lo;
+} rvcn_dec_ref_buffer_t;
+
+typedef struct rvcn_dec_ref_buffers_header_s
+{
+    unsigned int size;
+    unsigned int num_bufs;
+    rvcn_dec_ref_buffer_t pBufs[];
+} rvcn_dec_ref_buffers_header_t;
 
 typedef struct rvcn_dec_message_hevc_direct_ref_list_s {
    unsigned int num_direct_reflist;
@@ -1181,6 +1218,8 @@ struct jpeg_params {
    unsigned dt_luma_top_offset;
    unsigned dt_chroma_top_offset;
    unsigned dt_chromav_top_offset;
+   unsigned dt_addr_mode;
+   unsigned dt_swizzle_mode;
    uint16_t crop_x;
    uint16_t crop_y;
    uint16_t crop_width;
@@ -1192,20 +1231,22 @@ struct jpeg_params {
 #define RDECODE_VCN1_GPCOM_VCPU_DATA1 0x20714
 #define RDECODE_VCN1_ENGINE_CNTL      0x20718
 
-#define RDECODE_VCN2_GPCOM_VCPU_CMD   (0x503 << 2)
-#define RDECODE_VCN2_GPCOM_VCPU_DATA0 (0x504 << 2)
-#define RDECODE_VCN2_GPCOM_VCPU_DATA1 (0x505 << 2)
-#define RDECODE_VCN2_ENGINE_CNTL      (0x506 << 2)
+#define RDECODE_VCN2_GPCOM_VCPU_CMD       (0x503 << 2)
+#define RDECODE_VCN2_GPCOM_VCPU_DATA0     (0x504 << 2)
+#define RDECODE_VCN2_GPCOM_VCPU_DATA1     (0x505 << 2)
+#define RDECODE_VCN2_GPCOM_VCPU_DATA2     (0x54C << 2)
+#define RDECODE_VCN2_ENGINE_CNTL          (0x506 << 2)
 
-#define RDECODE_VCN2_5_GPCOM_VCPU_CMD   0x3c
-#define RDECODE_VCN2_5_GPCOM_VCPU_DATA0 0x40
-#define RDECODE_VCN2_5_GPCOM_VCPU_DATA1 0x44
-#define RDECODE_VCN2_5_ENGINE_CNTL      0x9b4
+#define RDECODE_VCN2_5_GPCOM_VCPU_CMD       0x3c
+#define RDECODE_VCN2_5_GPCOM_VCPU_DATA0     0x40
+#define RDECODE_VCN2_5_GPCOM_VCPU_DATA1     0x44
+#define RDECODE_VCN2_5_GPCOM_VCPU_DATA2     0x1A0
+#define RDECODE_VCN2_5_ENGINE_CNTL          0x9b4
 
 #define RDECODE_SESSION_CONTEXT_SIZE (128 * 1024)
 
 unsigned ac_vcn_dec_calc_ctx_size_av1(unsigned av1_version);
 void ac_vcn_av1_init_probs(unsigned av1_version, uint8_t *prob);
-void ac_vcn_av1_init_film_grain_buffer(rvcn_dec_film_grain_params_t *fg_params, rvcn_dec_av1_fg_init_buf_t *fg_buf);
+void ac_vcn_av1_init_film_grain_buffer(unsigned av1_version, rvcn_dec_film_grain_params_t *fg_params, rvcn_dec_av1_fg_init_buf_t *fg_buf);
 
 #endif

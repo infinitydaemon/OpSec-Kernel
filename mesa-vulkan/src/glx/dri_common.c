@@ -43,51 +43,8 @@
 #include "loader.h"
 #include <X11/Xlib-xcb.h>
 #include <xcb/xproto.h>
-
-#ifndef RTLD_NOW
-#define RTLD_NOW 0
-#endif
-#ifndef RTLD_GLOBAL
-#define RTLD_GLOBAL 0
-#endif
-
-#ifndef GL_LIB_NAME
-#define GL_LIB_NAME "libGL.so.1"
-#endif
-
-const __DRIextension **
-dri_loader_get_extensions(const char *driver_name);
-
-/**
- * Try to \c dlopen the named driver.
- *
- * \param driverName - a name like "i965", "radeon", "nouveau", etc.
- * \param out_driver_handle - Address to return the resulting dlopen() handle.
- *
- * \returns
- * The __DRIextension entrypoint table for the driver, or \c NULL if driver
- * file not found.
- */
-_X_HIDDEN const __DRIextension **
-driOpenDriver(const char *driverName, bool driver_name_is_inferred)
-{
-   void *glhandle;
-
-   /* Attempt to make sure libGL symbols will be visible to the driver */
-   glhandle = dlopen(GL_LIB_NAME, RTLD_NOW | RTLD_GLOBAL);
-
-   const __DRIextension **extensions = dri_loader_get_extensions(driverName);
-
-   if (!extensions && driver_name_is_inferred) {
-      glx_message(_LOADER_WARNING,
-           "MESA-LOADER: glx: failed to open %s: driver not built!\n", driverName);
-   }
-
-   if (glhandle)
-      dlclose(glhandle);
-
-   return extensions;
-}
+#include "dri_util.h"
+#include "pipe-loader/pipe_loader.h"
 
 #define __ATTRIB(attrib, field) \
     { attrib, offsetof(struct glx_config, field) }
@@ -135,14 +92,13 @@ scalarEqual(struct glx_config *mode, unsigned int attrib, unsigned int value)
 }
 
 static int
-driConfigEqual(const __DRIcoreExtension *core,
-               struct glx_config *config, const __DRIconfig *driConfig)
+driConfigEqual(struct glx_config *config, const struct dri_config *driConfig)
 {
    unsigned int attrib, value, glxValue;
    int i;
 
    i = 0;
-   while (core->indexConfigAttrib(driConfig, i++, &attrib, &value)) {
+   while (driIndexConfigAttrib(driConfig, i++, &attrib, &value)) {
       switch (attrib) {
       case __DRI_ATTRIB_RENDER_TYPE:
          glxValue = 0;
@@ -230,14 +186,13 @@ driConfigEqual(const __DRIcoreExtension *core,
 }
 
 static struct glx_config *
-createDriMode(const __DRIcoreExtension * core,
-         struct glx_config *config, const __DRIconfig **driConfigs)
+createDriMode(struct glx_config *config, const struct dri_config **driConfigs)
 {
    __GLXDRIconfigPrivate *driConfig;
    int i;
 
    for (i = 0; driConfigs[i]; i++) {
-      if (driConfigEqual(core, config, driConfigs[i]))
+      if (driConfigEqual(config, driConfigs[i]))
          break;
    }
 
@@ -254,16 +209,15 @@ createDriMode(const __DRIcoreExtension * core,
    return &driConfig->base;
 }
 
-_X_HIDDEN struct glx_config *
-driConvertConfigs(const __DRIcoreExtension * core,
-                  struct glx_config *configs, const __DRIconfig **driConfigs)
+struct glx_config *
+driConvertConfigs(struct glx_config *configs, const struct dri_config **driConfigs)
 {
    struct glx_config head, *tail, *m;
 
    tail = &head;
    head.next = NULL;
    for (m = configs; m; m = m->next) {
-      tail->next = createDriMode(core, m, driConfigs);
+      tail->next = createDriMode(m, driConfigs);
       if (tail->next == NULL) {
          /* no matching dri config for m */
          continue;
@@ -276,13 +230,13 @@ driConvertConfigs(const __DRIcoreExtension * core,
    return head.next;
 }
 
-_X_HIDDEN void
-driDestroyConfigs(const __DRIconfig **configs)
+void
+driDestroyConfigs(const struct dri_config **configs)
 {
    int i;
 
    for (i = 0; configs[i]; i++)
-      free((__DRIconfig *) configs[i]);
+      free((struct dri_config *) configs[i]);
    free(configs);
 }
 
@@ -319,7 +273,7 @@ driInferDrawableConfig(struct glx_screen *psc, GLXDrawable draw)
    return NULL;
 }
 
-_X_HIDDEN __GLXDRIdrawable *
+__GLXDRIdrawable *
 driFetchDrawable(struct glx_context *gc, GLXDrawable glxDrawable)
 {
    Display *dpy = gc->psc->dpy;
@@ -387,7 +341,7 @@ driFetchDrawable(struct glx_context *gc, GLXDrawable glxDrawable)
       type = GLX_PBUFFER_BIT | GLX_WINDOW_BIT;
    }
 
-   pdraw = psc->driScreen->createDrawable(psc, glxDrawable, glxDrawable,
+   pdraw = psc->driScreen.createDrawable(psc, glxDrawable, glxDrawable,
                                           type, config);
 
    if (pdraw == NULL) {
@@ -470,7 +424,7 @@ releaseDrawable(const struct glx_display *priv, GLXDrawable drawable)
    }
 }
 
-_X_HIDDEN void
+void
 driReleaseDrawables(struct glx_context *gc)
 {
    const struct glx_display *priv = gc->psc->display;
@@ -483,7 +437,7 @@ driReleaseDrawables(struct glx_context *gc)
 
 }
 
-_X_HIDDEN int
+int
 dri_convert_glx_attribs(unsigned num_attribs, const uint32_t *attribs,
                         struct dri_ctx_attribs *dca)
 {
@@ -528,7 +482,7 @@ dri_convert_glx_attribs(unsigned num_attribs, const uint32_t *attribs,
             dca->reset = __DRI_CTX_RESET_LOSE_CONTEXT;
             break;
          default:
-            return BadValue;
+            return BadMatch;
          }
          break;
       case GLX_CONTEXT_RELEASE_BEHAVIOR_ARB:
@@ -570,14 +524,14 @@ dri_convert_glx_attribs(unsigned num_attribs, const uint32_t *attribs,
       dca->api = __DRI_API_OPENGL;
       break;
    case GLX_CONTEXT_ES_PROFILE_BIT_EXT:
-      if (dca->major_ver >= 3)
+      if (dca->major_ver == 3  && dca->minor_ver <= 2)
          dca->api = __DRI_API_GLES3;
       else if (dca->major_ver == 2 && dca->minor_ver == 0)
          dca->api = __DRI_API_GLES2;
       else if (dca->major_ver == 1 && dca->minor_ver < 2)
          dca->api = __DRI_API_GLES;
       else {
-         return BadValue;
+         return GLXBadProfileARB;
       }
       break;
    default:
@@ -736,29 +690,6 @@ clear_driver_config_cache()
    }
 }
 
-static char *
-get_driver_config(const char *driverName)
-{
-   char *config = NULL;
-   const __DRIextension **extensions = driOpenDriver(driverName, false);
-   if (extensions) {
-      for (int i = 0; extensions[i]; i++) {
-         if (strcmp(extensions[i]->name, __DRI_CONFIG_OPTIONS) != 0)
-            continue;
-
-         __DRIconfigOptionsExtension *ext =
-            (__DRIconfigOptionsExtension *)extensions[i];
-
-         if (ext->base.version >= 2)
-            config = ext->getXml(driverName);
-
-         break;
-      }
-   }
-
-   return config;
-}
-
 /*
  * Exported function for obtaining a driver's option list (UTF-8 encoded XML).
  *
@@ -784,7 +715,7 @@ glXGetDriverConfig(const char *driverName)
    if (!e)
       goto out;
 
-   e->config = get_driver_config(driverName);
+   e->config = pipe_loader_get_driinfo_xml(driverName);
    e->driverName = strdup(driverName);
    if (!e->config || !e->driverName) {
       free(e->config);
@@ -831,8 +762,268 @@ const __DRIbackgroundCallableExtension driBackgroundCallable = {
    .isThreadSafe            = driIsThreadSafe,
 };
 
-const __DRIuseInvalidateExtension dri2UseInvalidate = {
-   .base = { __DRI_USE_INVALIDATE, 1 }
+Bool
+dri_bind_context(struct glx_context *context, GLXDrawable draw, GLXDrawable read)
+{
+   __GLXDRIdrawable *pdraw, *pread;
+   struct dri_drawable *dri_draw = NULL, *dri_read = NULL;
+
+   pdraw = driFetchDrawable(context, draw);
+   pread = driFetchDrawable(context, read);
+
+   driReleaseDrawables(context);
+
+   if (pdraw)
+      dri_draw = pdraw->dri_drawable;
+   else if (draw != None)
+      return GLXBadDrawable;
+
+   if (pread)
+      dri_read = pread->dri_drawable;
+   else if (read != None)
+      return GLXBadDrawable;
+
+   if (!driBindContext(context->driContext, dri_draw, dri_read))
+      return GLXBadContext;
+
+   if (context->psc->display->driver == GLX_DRIVER_DRI3 ||
+       context->psc->display->driver == GLX_DRIVER_ZINK_YES) {
+      if (dri_draw)
+         dri_invalidate_drawable(dri_draw);
+      if (dri_read && dri_read != dri_draw)
+         dri_invalidate_drawable(dri_read);
+   }
+
+   return Success;
+}
+
+void
+dri_unbind_context(struct glx_context *context)
+{
+   driUnbindContext(context->driContext);
+}
+
+void
+dri_destroy_context(struct glx_context *context)
+{
+   driReleaseDrawables(context);
+ 
+   free((char *) context->extensions);
+ 
+   driDestroyContext(context->driContext);
+ 
+   free(context);
+}
+
+struct glx_context *
+dri_create_context_attribs(struct glx_screen *base,
+                           struct glx_config *config_base,
+                           struct glx_context *shareList,
+                           unsigned num_attribs,
+                           const uint32_t *attribs,
+                           unsigned *error)
+{
+   struct glx_context *pcp = NULL;
+   __GLXDRIconfigPrivate *config = (__GLXDRIconfigPrivate *) config_base;
+   struct dri_context *shared = NULL;
+
+   struct dri_ctx_attribs dca;
+   uint32_t ctx_attribs[2 * 6];
+   unsigned num_ctx_attribs = 0;
+
+   *error = dri_convert_glx_attribs(num_attribs, attribs, &dca);
+   if (*error != __DRI_CTX_ERROR_SUCCESS)
+      goto error_exit;
+
+   /* Check the renderType value */
+   if (!validate_renderType_against_config(config_base, dca.render_type)) {
+      *error = BadValue;
+      goto error_exit;
+   }
+
+   if (shareList) {
+      /* We can't share with an indirect context */
+      if (!shareList->isDirect)
+         return NULL;
+
+      /* The GLX_ARB_create_context_no_error specs say:
+       *
+       *    BadMatch is generated if the value of GLX_CONTEXT_OPENGL_NO_ERROR_ARB
+       *    used to create <share_context> does not match the value of
+       *    GLX_CONTEXT_OPENGL_NO_ERROR_ARB for the context being created.
+       */
+      if (!!shareList->noError != !!dca.no_error) {
+         *error = BadMatch;
+         return NULL;
+      }
+
+      shared = shareList->driContext;
+   }
+
+   pcp = calloc(1, sizeof *pcp);
+   if (pcp == NULL) {
+      *error = BadAlloc;
+      goto error_exit;
+   }
+
+   if (!glx_context_init(pcp, base, config_base))
+      goto error_exit;
+
+   ctx_attribs[num_ctx_attribs++] = __DRI_CTX_ATTRIB_MAJOR_VERSION;
+   ctx_attribs[num_ctx_attribs++] = dca.major_ver;
+   ctx_attribs[num_ctx_attribs++] = __DRI_CTX_ATTRIB_MINOR_VERSION;
+   ctx_attribs[num_ctx_attribs++] = dca.minor_ver;
+
+   /* Only send a value when the non-default value is requested.  By doing
+    * this we don't have to check the driver's DRI3 version before sending the
+    * default value.
+    */
+   if (dca.reset != __DRI_CTX_RESET_NO_NOTIFICATION) {
+      ctx_attribs[num_ctx_attribs++] = __DRI_CTX_ATTRIB_RESET_STRATEGY;
+      ctx_attribs[num_ctx_attribs++] = dca.reset;
+   }
+
+   if (dca.release != __DRI_CTX_RELEASE_BEHAVIOR_FLUSH) {
+      ctx_attribs[num_ctx_attribs++] = __DRI_CTX_ATTRIB_RELEASE_BEHAVIOR;
+      ctx_attribs[num_ctx_attribs++] = dca.release;
+   }
+
+   if (dca.no_error) {
+      ctx_attribs[num_ctx_attribs++] = __DRI_CTX_ATTRIB_NO_ERROR;
+      ctx_attribs[num_ctx_attribs++] = dca.no_error;
+      pcp->noError = GL_TRUE;
+   }
+
+   if (dca.flags != 0) {
+      ctx_attribs[num_ctx_attribs++] = __DRI_CTX_ATTRIB_FLAGS;
+      ctx_attribs[num_ctx_attribs++] = dca.flags;
+   }
+
+   /* The renderType is retrieved from attribs, or set to default
+    *  of GLX_RGBA_TYPE.
+    */
+   pcp->renderType = dca.render_type;
+
+   pcp->driContext =
+      driCreateContextAttribs(base->frontend_screen,
+                              dca.api,
+                              config ? config->driConfig : NULL,
+                              shared,
+                              num_ctx_attribs / 2,
+                              ctx_attribs,
+                              error,
+                              pcp);
+
+   *error = dri_context_error_to_glx_error(*error);
+
+   if (pcp->driContext == NULL)
+      goto error_exit;
+
+   pcp->vtable = base->context_vtable;
+
+   return pcp;
+
+error_exit:
+   free(pcp);
+
+   return NULL;
+}
+
+char *
+dri_get_driver_name(struct glx_screen *glx_screen)
+{
+    return strdup(glx_screen->driverName);
+}
+
+const struct glx_screen_vtable dri_screen_vtable = {
+   .create_context         = dri_common_create_context,
+   .create_context_attribs = dri_create_context_attribs,
+   .query_renderer_integer = glx_dri_query_renderer_integer,
+   .query_renderer_string  = glx_dri_query_renderer_string,
+   .get_driver_name        = dri_get_driver_name,
 };
 
+void
+dri_bind_tex_image(__GLXDRIdrawable *base, int buffer, const int *attrib_list)
+{
+   struct glx_context *gc = __glXGetCurrentContext();
+
+   if (!base)
+      return;
+
+   if (base->psc->display->driver == GLX_DRIVER_DRI3) {
+      dri_invalidate_drawable(base->dri_drawable);
+
+      XSync(gc->currentDpy, false);
+   }
+
+   dri_set_tex_buffer2(gc->driContext,
+                        base->textureTarget,
+                        base->textureFormat,
+                        base->dri_drawable);
+}
+
+bool
+dri_screen_init(struct glx_screen *psc, struct glx_display *priv, int screen, int fd, const __DRIextension **loader_extensions, bool driver_name_is_inferred)
+{
+   const struct dri_config **driver_configs;
+   struct glx_config *configs = NULL, *visuals = NULL;
+
+   if (!glx_screen_init(psc, screen, priv))
+      return false;
+
+   enum dri_screen_type type;
+   switch (psc->display->driver) {
+   case GLX_DRIVER_DRI3:
+   case GLX_DRIVER_DRI2:
+      type = DRI_SCREEN_DRI3;
+      break;
+   case GLX_DRIVER_ZINK_YES:
+      type = DRI_SCREEN_KOPPER;
+      break;
+   case GLX_DRIVER_SW:
+      type = DRI_SCREEN_SWRAST;
+      break;
+   default:
+      unreachable("unknown glx driver type");
+   }
+
+   psc->frontend_screen = driCreateNewScreen3(screen, fd,
+                                                 loader_extensions,
+                                                 type,
+                                                 &driver_configs, driver_name_is_inferred,
+                                                 psc->display->has_multibuffer, psc);
+
+   if (psc->frontend_screen == NULL) {
+      goto handle_error;
+   }
+
+   configs = driConvertConfigs(psc->configs, driver_configs);
+   visuals = driConvertConfigs(psc->visuals, driver_configs);
+
+   if (!configs || !visuals) {
+       ErrorMessageF("No matching fbConfigs or visuals found\n");
+       goto handle_error;
+   }
+
+   glx_config_destroy_list(psc->configs);
+   psc->configs = configs;
+   glx_config_destroy_list(psc->visuals);
+   psc->visuals = visuals;
+
+   psc->driver_configs = driver_configs;
+
+   psc->vtable = &dri_screen_vtable;
+   psc->driScreen.bindTexImage = dri_bind_tex_image;
+
+   return true;
+
+handle_error:
+   if (configs)
+       glx_config_destroy_list(configs);
+   if (visuals)
+       glx_config_destroy_list(visuals);
+
+   return false;
+}
 #endif /* GLX_DIRECT_RENDERING */

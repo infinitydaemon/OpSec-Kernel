@@ -23,6 +23,7 @@ files_libradeonsi = files(
   'driinfo_radeonsi.h',
   'gfx10_shader_ngg.c',
   'gfx11_query.c',
+  'si_barrier.c',
   'si_blit.c',
   'si_buffer.c',
   'si_build_pm4.h',
@@ -31,6 +32,7 @@ files_libradeonsi = files(
   'si_compute_blit.c',
   'si_cp_dma.c',
   'si_cp_reg_shadowing.c',
+  'si_cp_utils.c',
   'si_debug.c',
   'si_descriptors.c',
   'si_fence.c',
@@ -75,7 +77,6 @@ files_libradeonsi = files(
   'si_vpe.c',
   'si_vpe.h',
   'pspdecryptionparam.h',
-  'radeon_temporal.h',
   'radeon_uvd.c',
   'radeon_uvd.h',
   'radeon_uvd_enc.c',
@@ -83,8 +84,6 @@ files_libradeonsi = files(
   'radeon_uvd_enc_1_1.c',
   'radeon_vce.c',
   'radeon_vce.h',
-  'radeon_vce_40_2_2.c',
-  'radeon_vce_50.c',
   'radeon_vce_52.c',
   'radeon_vcn.h',
   'radeon_vcn.c',
@@ -100,11 +99,13 @@ files_libradeonsi = files(
   'radeon_vcn_enc_5_0.c',
   'radeon_video.c',
   'radeon_video.h',
+  'radeon_bitstream.h',
+  'radeon_bitstream.c',
 )
 
 radeonsi_include_dirs = [inc_src, inc_include, inc_gallium, inc_gallium_aux, inc_amd_common,
-                         inc_amd_common_llvm, inc_gallium_drivers, inc_compiler, inc_amd, inc_amd_vpe]
-radeonsi_deps = [dep_llvm, dep_clock, dep_libdrm_radeon, idep_nir_headers, idep_amdgfxregs_h, idep_mesautil, idep_aco, idep_u_tracepoints, idep_si_tracepoints]
+                         inc_amd_common_llvm, inc_gallium_drivers, inc_compiler, inc_amd, inc_amd_vpe, inc_virtio_gpu]
+radeonsi_deps = [dep_llvm, dep_clock, dep_libdrm, idep_nir_headers, idep_amdgfxregs_h, idep_mesautil, idep_aco, idep_u_tracepoints, idep_si_tracepoints]
 
 if with_perfetto
   radeonsi_deps += dep_perfetto
@@ -140,18 +141,24 @@ foreach ver : ['6', '7', '8', '9', '10', '103', '11', '115', '12']
   )
 endforeach
 
+libradeonsi_cflags = []
+if with_amdgpu_virtio
+  libradeonsi_cflags += ['-DHAVE_AMDGPU_VIRTIO']
+endif
+
 libradeonsi = static_library(
   'radeonsi',
   [files_libradeonsi, sid_tables_h],
+  c_args : libradeonsi_cflags,
   include_directories : radeonsi_include_dirs,
   gnu_symbol_visibility : 'hidden',
   dependencies : radeonsi_deps,
 )
 
 driver_radeonsi = declare_dependency(
-  compile_args : '-DGALLIUM_RADEONSI',
+  compile_args : ['-DGALLIUM_RADEONSI'] + libradeonsi_cflags,
   link_with : radeonsi_gfx_libs + [
-    libradeonsi, libradeonwinsys, libamdgpuwinsys, libamd_common, libamd_common_llvm, libvpe
+    libradeonsi, libradeonwinsys, libamdgpuwinsys, libamd_common, libamd_common_llvm, libvpe, libgm
   ],
   dependencies : idep_nir,
 )

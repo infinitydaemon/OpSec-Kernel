@@ -21,7 +21,7 @@
       when: on_success
 
 .etnaviv-manual-rules:
-  stage: etnaviv
+  stage: etnaviv-postmerge
   extends: .no-auto-retry
   rules:
     - !reference [.test, rules]
@@ -31,71 +31,97 @@
         *etnaviv_file_list
       when: manual
 
-# 1 devices (2023-12-16)
 .austriancoder-imx6q-cubox-i:arm32:
   variables:
-    BM_CMDLINE: "ip=dhcp console=ttymxc0,115200n8 root=/dev/nfs rw nfsrootdebug init=/init $BM_KERNELARGS"
-    BM_DTB: imx6q-cubox-i
-    BM_KERNEL: zImage
-    DEQP_EXPECTED_RENDERER: GC2000
-    GPU_VERSION: "etnaviv-gc2000"
-  script:
-    - ./install/bare-metal/fastboot.sh
-  tags:
-    - etnaviv-gc2000
+    RUNNER_FARM_LOCATION: austriancoder
+    B2C_TIMEOUT_FIRST_CONSOLE_ACTIVITY_SECONDS: 30
+    B2C_TIMEOUT_FIRST_CONSOLE_ACTIVITY_RETRIES: 3
+    B2C_IMAGESTORE_PLATFORM: linux/arm/v7
+    B2C_MARS_SETUP_TAGS: "vivante:model:2000,vivante:revision:5108"
+    GPU_VERSION: "etnaviv-gc2000-r5108"
 
-# 1 devices (2023-12-16)
+# 1 device (2025-01-30)
+.austriancoder-imx6q-cubox-i-2cores:arm32:
+  extends:
+    - .austriancoder-imx6q-cubox-i:arm32
+  variables:
+    FDO_CI_CONCURRENT: 2
+  tags:
+    - farm:$RUNNER_FARM_LOCATION
+    - cpu:cores:2
+    - $B2C_MARS_SETUP_TAGS
+
+# 4 devices (2025-01-30)
+.austriancoder-imx6q-cubox-i-4cores:arm32:
+  extends:
+    - .austriancoder-imx6q-cubox-i:arm32
+  variables:
+    FDO_CI_CONCURRENT: 4
+  tags:
+    - farm:$RUNNER_FARM_LOCATION
+    - cpu:cores:4
+    - $B2C_MARS_SETUP_TAGS
+
+
+# 1 devices (2025-02-26)
 .austriancoder-imx8mq-nitrogen:arm64:
   variables:
-    BM_CMDLINE: "ip=dhcp console=ttymxc0,115200n8 root=/dev/nfs rw nfsrootdebug init=/init $BM_KERNELARGS"
-    BM_DTB: imx8mq-nitrogen
-    BM_KERNEL: Image
-    DEQP_EXPECTED_RENDERER: GC7000
-    GPU_VERSION: "etnaviv-gc7000"
-  script:
-    - ./install/bare-metal/fastboot.sh
+    FDO_CI_CONCURRENT: 4
+    RUNNER_FARM_LOCATION: austriancoder
+    B2C_TIMEOUT_FIRST_CONSOLE_ACTIVITY_SECONDS: 30
+    B2C_TIMEOUT_FIRST_CONSOLE_ACTIVITY_RETRIES: 3
+    B2C_IMAGESTORE_PLATFORM: linux/arm64/v8
+    B2C_MARS_SETUP_TAGS: "vivante:model:7000,vivante:revision:6214"
+    GPU_VERSION: "etnaviv-gc7000-r6214"
   tags:
-    - austriancoder-etnaviv-imx8mq-nitrogen
+    - farm:$RUNNER_FARM_LOCATION
+    - $B2C_MARS_SETUP_TAGS
 
-
-gc2000_gles2:
+gc2000-gles2:
   extends:
-    - .baremetal-test-arm32
-    - .austriancoder-imx6q-cubox-i:arm32
+    - .b2c-arm32-test-gl
+    - .austriancoder-imx6q-cubox-i-4cores:arm32
     - .etnaviv-manual-rules
   variables:
-    FLAKES_CHANNEL: "#etnaviv-ci"
+    DEQP_SUITE: etnaviv-gc2000
+    # Disable reporting, since DUTs don't have internet access
+    FLAKES_CHANNEL: ""
     HWCI_TEST_SCRIPT: "/install/deqp-runner.sh"
-    DEQP_VER: gles2
-  timeout: 20m
+    B2C_TIMEOUT_OVERALL_MINUTES: 28
+  timeout: 30m
 
-gc2000_gles2_asan:
+# Disabled until the 168 fails get addressed
+.gc2000-gles2-asan:
   extends:
-    - gc2000_gles2
-    - .baremetal-arm32-asan-test
+    - .b2c-arm32-test-asan-gl
+    - .austriancoder-imx6q-cubox-i-2cores:arm32
+    - .etnaviv-manual-rules
   variables:
+    DEQP_SUITE: etnaviv-gc2000
+    FLAKES_CHANNEL: ""
     DEQP_FRACTION: 100
     FDO_CI_CONCURRENT: 1
+    HWCI_TEST_SCRIPT: "/install/deqp-runner.sh"
+    B2C_TIMEOUT_OVERALL_MINUTES: 28
+  timeout: 30m
 
-gc2000_piglit:
+gc2000-piglit:
   extends:
-    - .baremetal-deqp-test
-    - .baremetal-test-arm32
-    - .austriancoder-imx6q-cubox-i:arm32
-    - .etnaviv-manual-rules
+    - gc2000-gles2
   variables:
     DEQP_SUITE: etnaviv-gc2000-piglit
-    FLAKES_CHANNEL: "#etnaviv-ci"
-    TEST_PHASE_TIMEOUT: 40
-  timeout: 40m
+    B2C_TIMEOUT_OVERALL_MINUTES: 25
+  parallel: 2
+  timeout: 30m
 
-gc7000_gles2:
+gc7000-gles2:
   extends:
-    - .baremetal-test-arm64
+    - .b2c-arm64-test-gl
     - .austriancoder-imx8mq-nitrogen:arm64
     - .etnaviv-manual-rules
   variables:
-    FLAKES_CHANNEL: "#etnaviv-ci"
+    DEQP_SUITE: etnaviv-gc7000
+    FLAKES_CHANNEL: ""
     HWCI_TEST_SCRIPT: "/install/deqp-runner.sh"
-    DEQP_VER: gles2
-  timeout: 20m
+    B2C_TIMEOUT_OVERALL_MINUTES: 28
+  timeout: 30m

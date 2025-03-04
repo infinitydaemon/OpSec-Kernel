@@ -21,8 +21,7 @@
  * IN THE SOFTWARE.
  */
 
-#ifndef ELK_NIR_H
-#define ELK_NIR_H
+#pragma once
 
 #include "compiler/nir/nir.h"
 #include "elk_compiler.h"
@@ -248,13 +247,6 @@ void elk_nir_apply_key(nir_shader *nir,
 unsigned elk_nir_api_subgroup_size(const nir_shader *nir,
                                    unsigned hw_subgroup_size);
 
-bool elk_nir_should_vectorize_mem(unsigned align_mul, unsigned align_offset,
-                                  unsigned bit_size,
-                                  unsigned num_components,
-                                  nir_intrinsic_instr *low,
-                                  nir_intrinsic_instr *high,
-                                  void *data);
-
 void elk_nir_analyze_ubo_ranges(const struct elk_compiler *compiler,
                                 nir_shader *nir,
                                 struct elk_ubo_range out_ranges[4]);
@@ -282,8 +274,9 @@ const struct glsl_type *elk_nir_get_var_type(const struct nir_shader *nir,
 
 void elk_nir_adjust_payload(nir_shader *shader);
 
+nir_shader *
+elk_nir_from_spirv(void *mem_ctx, const uint32_t *spirv, size_t spirv_size);
+
 #ifdef __cplusplus
 }
 #endif
-
-#endif /* ELK_NIR_H */

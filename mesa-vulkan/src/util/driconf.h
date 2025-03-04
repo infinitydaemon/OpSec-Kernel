@@ -269,8 +269,8 @@
    DRI_CONF_OPT_I(override_vram_size, -1, -1, 2147483647, \
                   "Override the VRAM size advertised to the application in MiB (-1 = default)")
 
-#define DRI_CONF_FORCE_GL_NAMES_REUSE(def) \
-   DRI_CONF_OPT_B(force_gl_names_reuse, def, "Force GL names reuse")
+#define DRI_CONF_FORCE_GL_NAMES_REUSE() \
+   DRI_CONF_OPT_I(reuse_gl_names, -1, -1, 1, "GL names reuse: 1=enable, 0=disable, -1=default")
 
 #define DRI_CONF_FORCE_GL_MAP_BUFFER_SYNCHRONIZED(def) \
    DRI_CONF_OPT_B(force_gl_map_buffer_synchronized, def, "Override GL_MAP_UNSYNCHRONIZED_BIT.")
@@ -280,6 +280,9 @@
 
 #define DRI_CONF_TRANSCODE_ASTC(def) \
    DRI_CONF_OPT_B(transcode_astc, def, "Transcode ASTC formats to DXTC if unsupported")
+
+#define DRI_CONF_ALLOW_COMPRESSED_FALLBACK(def) \
+   DRI_CONF_OPT_B(allow_compressed_fallback, def, "Allow fallback to uncompressed formats for unsupported compressed formats")
 
 #define DRI_CONF_MESA_EXTENSION_OVERRIDE() \
    DRI_CONF_OPT_S_NODEF(mesa_extension_override, \
@@ -323,6 +326,15 @@
 #define DRI_CONF_FAKE_SPARSE(def) \
    DRI_CONF_OPT_B(fake_sparse, def, \
                   "Advertise support for sparse binding of textures regardless of real support")
+
+#define DRI_CONFIG_INTEL_TBIMR(def) \
+   DRI_CONF_OPT_B(intel_tbimr, def, "Enable TBIMR tiled rendering")
+
+#define DRI_CONFIG_INTEL_VF_DISTRIBUTION(def) \
+   DRI_CONF_OPT_B(intel_vf_distribution, def, "Enable geometry distribution")
+
+#define DRI_CONFIG_INTEL_TE_DISTRIBUTION(def) \
+   DRI_CONF_OPT_B(intel_te_distribution, def, "Enable tesselation distribution")
 
 #define DRI_CONF_INTEL_ENABLE_WA_14018912822(def) \
    DRI_CONF_OPT_B(intel_enable_wa_14018912822, def, \
@@ -489,9 +501,17 @@
    DRI_CONF_OPT_B(allow_multisampled_copyteximage, def, \
                   "Allow CopyTexSubImage and other to copy sampled framebuffer")
 
+#define DRI_CONF_CUSTOM_BORDER_COLORS_WITHOUT_FORMAT(def) \
+   DRI_CONF_OPT_B(custom_border_colors_without_format, def, \
+                  "Enable custom border colors without format")
+
 #define DRI_CONF_NO_FP16(def) \
    DRI_CONF_OPT_B(no_fp16, def, \
                   "Disable 16-bit float support")
+
+#define DRI_CONF_VK_ZERO_VRAM(def) \
+   DRI_CONF_OPT_B(vk_zero_vram, def, \
+                  "Initialize to zero all VRAM allocations")
 
 /**
  * \brief Initialization configuration options
@@ -559,6 +579,18 @@
                   "Report the non-MSAA-only texture size limit")
 
 /**
+ * \brief wgl specific configuration options
+ */
+
+#define DRI_CONF_WGL_FRAME_LATENCY(def) \
+   DRI_CONF_OPT_I(wgl_frame_latency, def, 1, 16, \
+                  "Override default maximum frame latency")
+
+#define DRI_CONF_WGL_SWAP_INTERVAL(def) \
+   DRI_CONF_OPT_I(wgl_swap_interval, def, 1, 4, \
+                  "Override default swap interval")
+
+/**
  * \brief virgl specific configuration options
  */
 
@@ -601,6 +633,26 @@
 #define DRI_CONF_TU_ALLOW_OOB_INDIRECT_UBO_LOADS(def) \
    DRI_CONF_OPT_B(tu_allow_oob_indirect_ubo_loads, def, \
                   "Some D3D11 games rely on out-of-bounds indirect UBO loads to return real values from underlying bound descriptor, this prevents us from lowering indirectly accessed UBOs to consts")
+
+#define DRI_CONF_TU_DISABLE_D24S8_BORDER_COLOR_WORKAROUND(def) \
+   DRI_CONF_OPT_B(tu_disable_d24s8_border_color_workaround, def, \
+                  "Use UBWC for D24S8 images with VK_IMAGE_USAGE_SAMPLED_BIT when customBorderColorWithoutFormat is enabled")
+
+/**
+ * \brief Honeykrisp specific configuration options
+ */
+
+#define DRI_CONF_HK_DISABLE_BORDER_EMULATION(def) \
+   DRI_CONF_OPT_B(hk_disable_border_emulation, def, \
+                  "Disable custom border colour emulation")
+
+#define DRI_CONF_HK_DISABLE_RGBA4_BORDER_COLOR_WORKAROUND(def) \
+   DRI_CONF_OPT_B(hk_disable_rgba4_border_color_workaround, def, \
+                  "Use hardware opaque_black, breaking certain RGBA4 formats")
+
+#define DRI_CONF_HK_FAKE_MINMAX(def) \
+   DRI_CONF_OPT_B(hk_fake_minmax, def, \
+                  "Fake support for min/max filtering")
 
 /**
  * \brief venus specific configuration options
@@ -657,6 +709,18 @@
    DRI_CONF_OPT_B(radv_disable_dcc, def, \
                   "Disable DCC for color images")
 
+#define DRI_CONF_RADV_DISABLE_DCC_MIPS(def) \
+   DRI_CONF_OPT_B(radv_disable_dcc_mips, def, \
+                  "Disable DCC for color images with mips")
+
+#define DRI_CONF_RADV_DISABLE_DCC_STORES(def) \
+   DRI_CONF_OPT_B(radv_disable_dcc_stores, def, \
+                  "Disable DCC for color storage images")
+
+#define DRI_CONF_RADV_LOWER_TERMINATE_TO_DISCARD(def) \
+   DRI_CONF_OPT_B(radv_lower_terminate_to_discard, def, \
+                  "Lower terminate to discard (which is implicitly demote)")
+
 #define DRI_CONF_RADV_DISABLE_ANISO_SINGLE_LEVEL(def) \
   DRI_CONF_OPT_B(radv_disable_aniso_single_level, def, \
                  "Disable anisotropic filtering for single level images")
@@ -669,9 +733,9 @@
    DRI_CONF_OPT_B(radv_disable_sinking_load_input_fs, def, \
                   "Disable sinking load inputs for fragment shaders")
 
-#define DRI_CONF_RADV_DGC(def) \
-   DRI_CONF_OPT_B(radv_dgc, def, \
-                  "Expose an experimental implementation of VK_NV_device_generated_commands")
+#define DRI_CONF_RADV_DISABLE_DEPTH_STORAGE(def) \
+  DRI_CONF_OPT_B(radv_disable_depth_storage, def, \
+                 "Hides support for storage access to depth formats")
 
 #define DRI_CONF_RADV_FLUSH_BEFORE_QUERY_COPY(def) \
   DRI_CONF_OPT_B( \
@@ -698,9 +762,9 @@
    DRI_CONF_OPT_B(radv_rt_wave64, def, \
                   "Force wave64 in RT shaders")
 
-#define DRI_CONF_RADV_LEGACY_SPARSE_BINDING(def) \
-   DRI_CONF_OPT_B(radv_legacy_sparse_binding, def, \
-                  "Enable legacy sparse binding (with implicit synchronization) on the graphics and compute queue")
+#define DRI_CONF_RADV_DISABLE_DEDICATED_SPARSE_QUEUE(def) \
+   DRI_CONF_OPT_B(radv_disable_dedicated_sparse_queue, def, \
+                  "Disables the dedicated sparse queue. This replaces radv_legacy_sparse_binding as a compatible drirc workaround for games that might not expect a separate SPARSE queue")
 
 #define DRI_CONF_RADV_FORCE_PSTATE_PEAK_GFX11_DGPU(def) \
    DRI_CONF_OPT_B(radv_force_pstate_peak_gfx11_dgpu, def, \
@@ -738,6 +802,10 @@
 #define DRI_CONF_ANV_ASSUME_FULL_SUBGROUPS(def) \
    DRI_CONF_OPT_I(anv_assume_full_subgroups, def, 0, 32, \
                   "Allow assuming full subgroups requirement even when it's not specified explicitly and set the given size")
+
+#define DRI_CONF_ANV_ASSUME_FULL_SUBGROUPS_WITH_BARRIER(def) \
+   DRI_CONF_OPT_B(anv_assume_full_subgroups_with_barrier, def, \
+                  "Assume full subgroups requirement for compute shaders that use control barriers")
 
 #define DRI_CONF_ANV_SAMPLE_MASK_OUT_OPENGL_BEHAVIOUR(def) \
    DRI_CONF_OPT_B(anv_sample_mask_out_opengl_behaviour, def, \
@@ -784,6 +852,10 @@
    DRI_CONF_OPT_B(anv_disable_fcv, def, \
                   "Disable FCV optimization")
 
+#define DRI_CONF_ANV_ENABLE_BUFFER_COMP(def) \
+   DRI_CONF_OPT_B(anv_enable_buffer_comp, def, \
+                  "Enable CCS on buffers where possible")
+
 #define DRI_CONF_ANV_EXTERNAL_MEMORY_IMPLICIT_SYNC(def) \
    DRI_CONF_OPT_B(anv_external_memory_implicit_sync, def, "Implicit sync on external BOs")
 
@@ -793,6 +865,14 @@
 #define DRI_CONF_ANV_FAKE_NONLOCAL_MEMORY(def) \
    DRI_CONF_OPT_B(anv_fake_nonlocal_memory, def, \
                   "Present host-visible device-local memory types as non device-local")
+
+#define DRI_CONF_ANV_UPPER_BOUND_DESCRIPTOR_POOL_SAMPLER(def) \
+   DRI_CONF_OPT_B(anv_upper_bound_descriptor_pool_sampler, def, \
+                  "Overallocate samplers in descriptor pools to workaround app bug")
+
+#define DRI_CONF_ANV_VF_COMPONENT_PACKING(def) \
+   DRI_CONF_OPT_B(anv_vf_component_packing, def, \
+                  "Vertex fetching component packing")
 
 /**
  * \brief HASVK specific configuration options

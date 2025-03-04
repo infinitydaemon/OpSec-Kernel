@@ -29,7 +29,7 @@
 #include <stdint.h>
 
 #include "entry.h"
-#include "u_current.h"
+#include "glapi/glapi.h"
 #include "util/u_endian.h"
 #include "util/u_thread.h"
 
@@ -44,12 +44,6 @@
 #elif defined(USE_PPC64LE_ASM) && UTIL_ARCH_LITTLE_ENDIAN && defined(REALLY_INITIAL_EXEC)
 #include "entry_ppc64le_tls.h"
 #else
-
-static inline const struct _glapi_table *
-entry_current_get(void)
-{
-   return GET_DISPATCH();
-}
 
 /* C version of the public entries */
 #define MAPI_TMP_DEFINES

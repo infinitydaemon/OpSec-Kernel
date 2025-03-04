@@ -6,12 +6,9 @@
 
 #include "lvp_private.h"
 #include "lvp_acceleration_structure.h"
-#include "lvp_nir_ray_tracing.h"
+#include "nir/lvp_nir.h"
 
 #include "vk_pipeline.h"
-
-#include "nir.h"
-#include "nir_builder.h"
 
 #include "spirv/spirv.h"
 
@@ -133,12 +130,7 @@ lvp_lower_ray_tracing_derefs(nir_shader *shader)
       }
    }
 
-   if (progress)
-      nir_metadata_preserve(impl, nir_metadata_control_flow);
-   else
-      nir_metadata_preserve(impl, nir_metadata_all);
-
-   return progress;
+   return nir_progress(progress, impl, nir_metadata_control_flow);
 }
 
 static bool
@@ -169,7 +161,7 @@ lvp_compile_ray_tracing_stages(struct lvp_pipeline *pipeline,
    uint32_t i = 0;
    for (; i < create_info->stageCount; i++) {
       nir_shader *nir;
-      result = lvp_spirv_to_nir(pipeline, create_info->pStages + i, &nir);
+      result = lvp_spirv_to_nir(pipeline, create_info->pNext, create_info->pStages + i, &nir);
       if (result != VK_SUCCESS)
          return result;
 
@@ -196,6 +188,8 @@ lvp_compile_ray_tracing_stages(struct lvp_pipeline *pipeline,
          ralloc_free(nir);
          return result;
       }
+      if (pipeline->layout)
+         pipeline->shaders[nir->info.stage].push_constant_size = pipeline->layout->push_constant_size;
    }
 
    if (!create_info->pLibraryInfo)
@@ -502,7 +496,9 @@ lvp_lower_isec_intrinsic(nir_builder *b, nir_intrinsic_instr *instr, void *data)
    nir_variable *commit = nir_local_variable_create(b->impl, glsl_bool_type(), "commit");
    nir_store_var(b, commit, nir_imm_false(b), 0x1);
 
-   nir_push_if(b, nir_iand(b, nir_fge(b, t, nir_load_var(b, state->tmin)), nir_fge(b, nir_load_var(b, state->tmax), t)));
+   nir_def *in_range = nir_iand(b, nir_fge(b, t, nir_load_var(b, state->tmin)), nir_fge(b, nir_load_var(b, state->tmax), t));
+   nir_def *terminated = nir_iand(b, nir_load_var(b, state->terminate), nir_load_var(b, state->accept));
+   nir_push_if(b, nir_iand(b, in_range, nir_inot(b, terminated)));
    {
       nir_store_var(b, state->accept, nir_imm_true(b), 0x1);
 
@@ -723,17 +719,9 @@ lvp_trace_ray(nir_builder *b, struct lvp_ray_tracing_pipeline_compiler *compiler
 
    nir_store_var(b, state->shader_call_data_offset, nir_iadd_imm(b, payload, -stack_size), 0x1);
 
-   nir_def *bvh_base = accel_struct;
-   if (bvh_base->bit_size != 64) {
-      assert(bvh_base->num_components >= 2);
-      bvh_base = nir_load_ubo(
-         b, 1, 64, nir_channel(b, accel_struct, 0),
-         nir_imul_imm(b, nir_channel(b, accel_struct, 1), sizeof(struct lp_descriptor)), .range = ~0);
-   }
-
    lvp_ray_traversal_state_init(b->impl, &state->traversal);
 
-   nir_store_var(b, state->bvh_base, bvh_base, 0x1);
+   nir_store_var(b, state->bvh_base, accel_struct, 0x1);
    nir_store_var(b, state->flags, flags, 0x1);
    nir_store_var(b, state->cull_mask, cull_mask, 0x1);
    nir_store_var(b, state->sbt_offset, sbt_offset, 0x1);
@@ -744,7 +732,7 @@ lvp_trace_ray(nir_builder *b, struct lvp_ray_tracing_pipeline_compiler *compiler
    nir_store_var(b, state->dir, dir, 0x7);
    nir_store_var(b, state->tmax, tmax, 0x1);
 
-   nir_store_var(b, state->traversal.bvh_base, bvh_base, 0x1);
+   nir_store_var(b, state->traversal.bvh_base, accel_struct, 0x1);
    nir_store_var(b, state->traversal.origin, origin, 0x7);
    nir_store_var(b, state->traversal.dir, dir, 0x7);
    nir_store_var(b, state->traversal.inv_dir, nir_frcp(b, dir), 0x7);
@@ -769,7 +757,7 @@ lvp_trace_ray(nir_builder *b, struct lvp_ray_tracing_pipeline_compiler *compiler
    };
 
    struct lvp_ray_traversal_args args = {
-      .root_bvh_base = bvh_base,
+      .root_bvh_base = accel_struct,
       .flags = flags,
       .cull_mask = nir_ishl_imm(b, cull_mask, 24),
       .origin = origin,
@@ -783,7 +771,7 @@ lvp_trace_ray(nir_builder *b, struct lvp_ray_tracing_pipeline_compiler *compiler
       .data = compiler,
    };
 
-   nir_push_if(b, nir_ine_imm(b, bvh_base, 0));
+   nir_push_if(b, nir_ine_imm(b, accel_struct, 0));
    lvp_build_ray_traversal(b, &args);
    nir_pop_if(b, NULL);
 
@@ -1133,6 +1121,7 @@ lvp_create_ray_tracing_pipeline(VkDevice _device, const VkAllocationCallbacks *a
    pipeline->device = device;
    pipeline->layout = layout;
    pipeline->type = LVP_PIPELINE_RAY_TRACING;
+   pipeline->flags = vk_rt_pipeline_create_flags(create_info);
 
    pipeline->rt.stage_count = create_info->stageCount;
    pipeline->rt.group_count = create_info->groupCount;
@@ -1157,8 +1146,7 @@ lvp_create_ray_tracing_pipeline(VkDevice _device, const VkAllocationCallbacks *a
 
    lvp_init_ray_tracing_groups(pipeline, create_info);
 
-   VkPipelineCreateFlags2KHR create_flags = vk_rt_pipeline_create_flags(create_info);
-   if (!(create_flags & VK_PIPELINE_CREATE_2_LIBRARY_BIT_KHR)) {
+   if (!(pipeline->flags & VK_PIPELINE_CREATE_2_LIBRARY_BIT_KHR)) {
       lvp_compile_ray_tracing_pipeline(pipeline, create_info);
    }
 

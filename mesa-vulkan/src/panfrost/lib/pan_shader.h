@@ -31,7 +31,7 @@
 #include "panfrost/midgard/disassemble.h"
 #include "panfrost/util/pan_ir.h"
 #include "panfrost/util/pan_lower_framebuffer.h"
-
+#include "panfrost/lib/pan_props.h"
 #include "genxml/gen_macros.h"
 
 void bifrost_preprocess_nir(nir_shader *nir, unsigned gpu_id);
@@ -241,7 +241,7 @@ pan_shader_prepare_bifrost_rsd(const struct pan_shader_info *info,
 
 static inline void
 pan_shader_prepare_rsd(const struct pan_shader_info *shader_info,
-                       mali_ptr shader_ptr, struct MALI_RENDERER_STATE *rsd)
+                       uint64_t shader_ptr, struct MALI_RENDERER_STATE *rsd)
 {
 #if PAN_ARCH <= 5
    shader_ptr |= shader_info->midgard.first_tag;

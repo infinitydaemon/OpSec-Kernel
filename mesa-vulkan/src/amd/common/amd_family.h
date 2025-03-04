@@ -107,6 +107,7 @@ enum radeon_family
    CHIP_NAVI10,         /* Radeon 5600, 5700 */
    CHIP_NAVI12,         /* Radeon Pro 5600M */
    CHIP_NAVI14,         /* Radeon 5300, 5500 */
+   CHIP_GFX1013,        /* AMD BC-250 */
    /* GFX10.3 (RDNA 2) */
    CHIP_NAVI21,         /* Radeon 6800, 6900 (formerly "Sienna Cichlid") */
    CHIP_NAVI22,         /* Radeon 6700 (formerly "Navy Flounder") */
@@ -119,11 +120,14 @@ enum radeon_family
    CHIP_NAVI31,         /* Radeon 7900 */
    CHIP_NAVI32,         /* Radeon 7800, 7700 */
    CHIP_NAVI33,         /* Radeon 7600, 7700S (mobile) */
-   CHIP_GFX1103_R1,
-   CHIP_GFX1103_R2,
+   CHIP_PHOENIX,        /* Ryzen Z1 Extreme, Ryzen 7040, Ryzen 8040 */
+   CHIP_PHOENIX2,       /* Ryzen Z1, Ryzen 8040 */
+   /* GFX11.5 (RDNA 3.5) */
    CHIP_GFX1150,
    CHIP_GFX1151,
    CHIP_GFX1152,
+   CHIP_GFX1153,
+   /* GFX12 (RDNA 4) */
    CHIP_GFX1200,
    CHIP_GFX1201,
    CHIP_LAST,
@@ -211,6 +215,7 @@ enum vcn_version{
    VCN_4_0_6,
 
    VCN_5_0_0,
+   VCN_5_0_1,
 };
 
 #define SDMA_VERSION_VALUE(major, minor) (((major) << 8) | (minor))
@@ -252,7 +257,6 @@ enum sdma_version {
 
 const char *ac_get_family_name(enum radeon_family family);
 enum amd_gfx_level ac_get_gfx_level(enum radeon_family family);
-unsigned ac_get_family_id(enum radeon_family family);
 const char *ac_get_llvm_processor_name(enum radeon_family family);
 const char *ac_get_ip_type_string(const struct radeon_info *info, enum amd_ip_type ip_type);
 

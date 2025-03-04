@@ -2,11 +2,12 @@
 /*
  * Copyright (C) The Asahi Linux Contributors
  *
- * Based on asahi_drm.h which is
+ * Based on panfrost_drm.h which is
  *
  * Copyright © 2014-2018 Broadcom
  * Copyright © 2019 Collabora ltd.
  */
+/* clang-format off */
 #ifndef _ASAHI_DRM_H_
 #define _ASAHI_DRM_H_
 
@@ -33,61 +34,109 @@ extern "C" {
 #define DRM_ASAHI_QUEUE_DESTROY			0x07
 #define DRM_ASAHI_SUBMIT			0x08
 #define DRM_ASAHI_GET_TIME			0x09
+/* TODO: Maybe merge with DRM_ASAHI_GEM_BIND? (Becomes IOWR) */
+#define DRM_ASAHI_GEM_BIND_OBJECT		0x0a
 
+/* TODO: Bump to 64, just in case? */
 #define DRM_ASAHI_MAX_CLUSTERS	32
 
 struct drm_asahi_params_global {
 	__u32 unstable_uabi_version;
 	__u32 pad0;
 
+	/** @feat_compat: Compatible feature bits, from drm_asahi_feat_compat */
 	__u64 feat_compat;
+	/** @feat_incompat: Incompatible feature bits, from drm_asahi_feat_incompat */
 	__u64 feat_incompat;
 
+	/** @gpu_generation: GPU generation, e.g. 13 for G13G */
 	__u32 gpu_generation;
+	/** @gpu_variant: GPU variant as a character, e.g. 'G' for G13G */
 	__u32 gpu_variant;
+	/** @gpu_revision: GPU revision in BCD, e.g. 0x00 for 'A0', 0x21 for 'C1' */
 	__u32 gpu_revision;
+	/** @chip_id: Chip ID in BCD, e.g. 0x8103 for T8103 */
 	__u32 chip_id;
 
+	/** @num_dies: Number of dies in the SoC */
 	__u32 num_dies;
+	/** @num_clusters_total: Number of GPU clusters (across all dies) */
 	__u32 num_clusters_total;
+	/** @num_cores_per_cluster: Number of logical cores per cluster
+	 *  (including inactive/nonexistent) */
 	__u32 num_cores_per_cluster;
+	/** @num_frags_per_cluster: Number of frags per cluster */
 	__u32 num_frags_per_cluster;
+	/** @num_gps_per_cluster: Number of GPs per cluster */
 	__u32 num_gps_per_cluster;
+	/** @num_cores_total_active: Total number of active cores (total bit weight of core_masks) */
 	__u32 num_cores_total_active;
+	/** @core_masks: Bitmask of present/enabled cores per cluster */
 	__u64 core_masks[DRM_ASAHI_MAX_CLUSTERS];
 
+	/** @vm_page_size: GPU VM page size */
 	__u32 vm_page_size;
+	/** @pad1: Padding, MBZ */
 	__u32 pad1;
+	/** @vm_user_start: VM user range start VMA */
 	__u64 vm_user_start;
+	/** @vm_user_end: VM user range end VMA */
 	__u64 vm_user_end;
-	__u64 vm_shader_start;
-	__u64 vm_shader_end;
+	/** @vm_usc_start: VM USC region start VMA (zero if flexible) */
+	__u64 vm_usc_start;
+	/** @vm_usc_end: VM USC region end VMA (zero if flexible) */
+	__u64 vm_usc_end;
+	/** @vm_kernel_min_size: Minimum kernel VMA window size within user range */
+	__u64 vm_kernel_min_size;
 
+	/** @max_syncs_per_submission: Maximum number of supported sync objects per submission */
 	__u32 max_syncs_per_submission;
+	/** @max_commands_per_submission: Maximum number of supported commands per submission */
 	__u32 max_commands_per_submission;
+	/** @max_commands_in_flight: Maximum number of commands simultaneously in flight per queue */
+	/* TODO: Remove? */
 	__u32 max_commands_in_flight;
+	/** @max_attachments: Maximum number of attachments per command */
 	__u32 max_attachments;
 
+	/** @timer_frequency_hz: Clock frequency for timestamps */
+	/* TODO: Switch to u64 */
 	__u32 timer_frequency_hz;
+	/** @min_frequency_khz: Minimum GPU core clock frequency */
 	__u32 min_frequency_khz;
+	/** @max_frequency_khz: Maximum GPU core clock frequency */
 	__u32 max_frequency_khz;
+	/** @max_power_mw: Maximum GPU power consumption */
 	__u32 max_power_mw;
 
+	/** @result_render_size: Result structure size for render commands */
 	__u32 result_render_size;
+	/** @result_compute_size: Result structure size for compute commands */
 	__u32 result_compute_size;
 
+	/** @firmware_version: GPU firmware version, as 4 integers */
+	/* TODO: Do something to distinguish iOS */
 	__u32 firmware_version[4];
+
+	/** @user_timestamp_frequency_hz: Timebase frequency for user timestamps */
+	__u64 user_timestamp_frequency_hz;
 };
 
-/*
+/** Compatible feature bits */
 enum drm_asahi_feat_compat {
+	/** GPU has soft faults enabled (for USC and texture sampling) */
+	DRM_ASAHI_FEAT_SOFT_FAULTS = (1UL) << 0,
+	DRM_ASAHI_FEAT_GETTIME = (1UL) << 1, /* Remove for upstream */
+	DRM_ASAHI_FEAT_USER_TIMESTAMPS = (1UL) << 2,
 };
-*/
 
+/** Incompatible feature bits */
 enum drm_asahi_feat_incompat {
+	/** GPU requires compression for Z/S buffers */
 	DRM_ASAHI_FEAT_MANDATORY_ZS_COMPRESSION = (1UL) << 0,
 };
 
+/** Get driver/GPU parameters */
 struct drm_asahi_get_params {
 	/** @extensions: Pointer to the first extension struct, if any */
 	__u64 extensions;
@@ -105,9 +154,16 @@ struct drm_asahi_get_params {
 	__u64 size;
 };
 
+/** Create a GPU VM address space */
 struct drm_asahi_vm_create {
 	/** @extensions: Pointer to the first extension struct, if any */
 	__u64 extensions;
+
+	/** @kernel_start: Start of the kernel-reserved address range */
+	__u64 kernel_start;
+
+	/** @kernel_end: End of the kernel-reserved address range */
+	__u64 kernel_end;
 
 	/** @value: Returned VM ID */
 	__u32 vm_id;
@@ -116,6 +172,7 @@ struct drm_asahi_vm_create {
 	__u32 pad;
 };
 
+/** Destroy a GPU VM address space */
 struct drm_asahi_vm_destroy {
 	/** @extensions: Pointer to the first extension struct, if any */
 	__u64 extensions;
@@ -126,10 +183,12 @@ struct drm_asahi_vm_destroy {
 	/** @pad: MBZ */
 	__u32 pad;
 };
-
+/** BO should be CPU-mapped as writeback, not write-combine (optimize for CPU reads) */
 #define ASAHI_GEM_WRITEBACK	(1L << 0)
+/** BO is private to this GPU VM (no exports) */
 #define ASAHI_GEM_VM_PRIVATE	(1L << 1)
 
+/** Destroy a GPU VM address space */
 struct drm_asahi_gem_create {
 	/** @extensions: Pointer to the first extension struct, if any */
 	__u64 extensions;
@@ -145,8 +204,12 @@ struct drm_asahi_gem_create {
 
 	/** @handle: Returned GEM handle for the BO */
 	__u32 handle;
+
+	/** @pad: MBZ */
+	__u32 pad;
 };
 
+/** Get BO mmap offset */
 struct drm_asahi_gem_mmap_offset {
 	/** @extensions: Pointer to the first extension struct, if any */
 	__u64 extensions;
@@ -161,54 +224,111 @@ struct drm_asahi_gem_mmap_offset {
 	__u64 offset;
 };
 
+/** VM_BIND operations */
 enum drm_asahi_bind_op {
+	/** Bind a BO to a GPU VMA range */
 	ASAHI_BIND_OP_BIND = 0,
+	/** Unbind a GPU VMA range */
 	ASAHI_BIND_OP_UNBIND = 1,
+	/** Unbind all mappings of a given BO */
 	ASAHI_BIND_OP_UNBIND_ALL = 2,
 };
 
+/** Map BO with GPU read permission */
 #define ASAHI_BIND_READ		(1L << 0)
+/** Map BO with GPU write permission */
 #define ASAHI_BIND_WRITE	(1L << 1)
 
+/** BO VM_BIND operations */
 struct drm_asahi_gem_bind {
 	/** @extensions: Pointer to the first extension struct, if any */
 	__u64 extensions;
 
-	/** @obj: Bind operation */
+	/** @obj: Bind operation (enum drm_asahi_bind_op) */
 	__u32 op;
 
-	/** @flags: One or more of ASAHI_BIND_* */
+	/** @flags: One or more of ASAHI_BIND_* (BIND only) */
 	__u32 flags;
 
-	/** @obj: GEM object to bind */
+	/** @obj: GEM object to bind/unbind (BIND or UNBIND_ALL) */
 	__u32 handle;
 
-	/** @vm_id: The ID of the VM to bind to */
+	/** @vm_id: The ID of the VM to operate on */
 	__u32 vm_id;
 
-	/** @offset: Offset into the object */
+	/** @offset: Offset into the object (BIND only) */
 	__u64 offset;
 
-	/** @range: Number of bytes from the object to bind to addr */
+	/** @range: Number of bytes to bind/unbind to addr (BIND or UNBIND only) */
 	__u64 range;
 
-	/** @addr: Address to bind to */
+	/** @addr: Address to bind to (BIND or UNBIND only) */
 	__u64 addr;
 };
 
+/** VM_BIND operations */
+enum drm_asahi_bind_object_op {
+	/** Bind a BO as a special GPU object */
+	ASAHI_BIND_OBJECT_OP_BIND = 0,
+	/** Unbind a special GPU object */
+	ASAHI_BIND_OBJECT_OP_UNBIND = 1,
+};
+
+/** Map a BO as a timestamp buffer */
+#define ASAHI_BIND_OBJECT_USAGE_TIMESTAMPS	(1L << 0)
+
+/** BO special object operations */
+struct drm_asahi_gem_bind_object {
+	/** @extensions: Pointer to the first extension struct, if any */
+	__u64 extensions;
+
+	/** @obj: Bind operation (enum drm_asahi_bind_object_op) */
+	__u32 op;
+
+	/** @flags: One or more of ASAHI_BIND_OBJECT_* */
+	__u32 flags;
+
+	/** @obj: GEM object to bind/unbind (BIND) */
+	__u32 handle;
+
+	/** @vm_id: The ID of the VM to operate on (MBZ currently) */
+	__u32 vm_id;
+
+	/** @offset: Offset into the object (BIND only) */
+	__u64 offset;
+
+	/** @range: Number of bytes to bind/unbind (BIND only) */
+	__u64 range;
+
+	/** @addr: Object handle (out for BIND, in for UNBIND) */
+	__u32 object_handle;
+
+	/** @pad: MBZ */
+	__u32 pad;
+};
+
+/** Command type */
 enum drm_asahi_cmd_type {
+	/** Render command (Render subqueue, Vert+Frag) */
 	DRM_ASAHI_CMD_RENDER = 0,
+	/** Blit command (Render subqueue, Frag only, not yet supported) */
 	DRM_ASAHI_CMD_BLIT = 1,
+	/** Compute command (Compute subqueue) */
 	DRM_ASAHI_CMD_COMPUTE = 2,
 };
 
+/** Queue capabilities */
 /* Note: this is an enum so that it can be resolved by Rust bindgen. */
 enum drm_asahi_queue_cap {
+	/** Supports render commands */
 	DRM_ASAHI_QUEUE_CAP_RENDER	= (1UL << DRM_ASAHI_CMD_RENDER),
+	/** Supports blit commands */
 	DRM_ASAHI_QUEUE_CAP_BLIT	= (1UL << DRM_ASAHI_CMD_BLIT),
+	/** Supports compute commands */
 	DRM_ASAHI_QUEUE_CAP_COMPUTE	= (1UL << DRM_ASAHI_CMD_COMPUTE),
 };
 
+/** Create a queue */
 struct drm_asahi_queue_create {
 	/** @extensions: Pointer to the first extension struct, if any */
 	__u64 extensions;
@@ -227,21 +347,32 @@ struct drm_asahi_queue_create {
 
 	/** @queue_id: The returned queue ID */
 	__u32 queue_id;
+
+	/** @pad: MBZ */
+	__u32 pad;
 };
 
+/** Destroy a queue */
 struct drm_asahi_queue_destroy {
 	/** @extensions: Pointer to the first extension struct, if any */
 	__u64 extensions;
 
 	/** @queue_id: The queue ID to be destroyed */
 	__u32 queue_id;
+
+	/** @pad: MBZ */
+	__u32 pad;
 };
 
+/** Sync item types */
 enum drm_asahi_sync_type {
+	/** Simple sync object */
 	DRM_ASAHI_SYNC_SYNCOBJ = 0,
+	/** Timeline sync object */
 	DRM_ASAHI_SYNC_TIMELINE_SYNCOBJ = 1,
 };
 
+/** Sync item */
 struct drm_asahi_sync {
 	/** @extensions: Pointer to the first extension struct, if any */
 	__u64 extensions;
@@ -256,14 +387,20 @@ struct drm_asahi_sync {
 	__u64 timeline_value;
 };
 
+/** Sub-queues within a queue */
 enum drm_asahi_subqueue {
-	DRM_ASAHI_SUBQUEUE_RENDER = 0, /* Also blit */
+	/** Render subqueue (also blit) */
+	DRM_ASAHI_SUBQUEUE_RENDER = 0,
+	/** Compute subqueue */
 	DRM_ASAHI_SUBQUEUE_COMPUTE = 1,
+	/** Queue count, must remain multiple of 2 for struct alignment */
 	DRM_ASAHI_SUBQUEUE_COUNT = 2,
 };
 
+/** Command index for no barrier */
 #define DRM_ASAHI_BARRIER_NONE ~(0U)
 
+/** Top level command structure */
 struct drm_asahi_command {
 	/** @extensions: Pointer to the first extension struct, if any */
 	__u64 extensions;
@@ -290,6 +427,7 @@ struct drm_asahi_command {
 	__u32 barriers[DRM_ASAHI_SUBQUEUE_COUNT];
 };
 
+/** Submit an array of commands to a queue */
 struct drm_asahi_submit {
 	/** @extensions: Pointer to the first extension struct, if any */
 	__u64 extensions;
@@ -322,6 +460,7 @@ struct drm_asahi_submit {
 	__u32 command_count;
 };
 
+/** An attachment definition for a shader stage */
 struct drm_asahi_attachment {
 	/** @pointer: Base address of the attachment */
 	__u64 pointer;
@@ -333,22 +472,32 @@ struct drm_asahi_attachment {
 	__u32 flags;
 };
 
+/** XXX investigate real meaning */
 #define ASAHI_RENDER_NO_CLEAR_PIPELINE_TEXTURES (1UL << 0)
+/** XXX investigate real meaning */
 #define ASAHI_RENDER_SET_WHEN_RELOADING_Z_OR_S (1UL << 1)
+/** Vertex stage shader spills */
 #define ASAHI_RENDER_VERTEX_SPILLS (1UL << 2)
+/** Process empty tiles through the fragment load/store */
 #define ASAHI_RENDER_PROCESS_EMPTY_TILES (1UL << 3)
+/** Run vertex stage on a single cluster (on multicluster GPUs) */
 #define ASAHI_RENDER_NO_VERTEX_CLUSTERING (1UL << 4)
+/** Enable MSAA for Z/S */
 #define ASAHI_RENDER_MSAA_ZS (1UL << 5)
-/* XXX check */
+/** Disable preemption (XXX check) */
 #define ASAHI_RENDER_NO_PREEMPTION (1UL << 6)
 
+/** Render command submission data */
 struct drm_asahi_cmd_render {
 	/** @extensions: Pointer to the first extension struct, if any */
 	__u64 extensions;
 
+	/** @flags: Zero or more of ASAHI_RENDER_* */
 	__u64 flags;
 
 	__u64 encoder_ptr;
+	__u64 vertex_usc_base;
+	__u64 fragment_usc_base;
 
 	__u64 vertex_attachments;
 	__u64 fragment_attachments;
@@ -504,14 +653,54 @@ struct drm_asahi_cmd_render_unknowns {
 	__u64 vtx_unk_mask;
 };
 
+#define ASAHI_RENDER_EXT_TIMESTAMPS	0x0001
+
+/** User timestamp buffers for render commands */
+struct drm_asahi_cmd_render_user_timestamps {
+	/** @type: Type ID of this extension */
+	__u32 type;
+	/** @pad: MBZ */
+	__u32 pad;
+	/** @next: Pointer to the next extension struct, if any */
+	__u64 next;
+
+	/** @vtx_start_handle: Handle of the timestamp buffer for the vertex start ts */
+	__u32 vtx_start_handle;
+	/** @vtx_start_offset: Offset into the timestamp buffer of the vertex start ts */
+	__u32 vtx_start_offset;
+
+	/** @vtx_end_handle: Handle of the timestamp buffer for the vertex end ts */
+	__u32 vtx_end_handle;
+	/** @vtx_end_offset: Offset into the timestamp buffer of the vertex end ts */
+	__u32 vtx_end_offset;
+
+	/** @frg_start_handle: Handle of the timestamp buffer for the fragment start ts */
+	__u32 frg_start_handle;
+	/** @frg_start_offset: Offset into the timestamp buffer of the fragment start ts */
+	__u32 frg_start_offset;
+
+	/** @frg_end_handle: Handle of the timestamp buffer for the fragment end ts */
+	__u32 frg_end_handle;
+	/** @frg_end_offset: Offset into the timestamp buffer of the fragment end ts */
+	__u32 frg_end_offset;
+};
+
 /* XXX check */
 #define ASAHI_COMPUTE_NO_PREEMPTION (1UL << 0)
 
+/** Compute command submission data */
 struct drm_asahi_cmd_compute {
+	/* TODO: remove guards on next bump */
+#if DRM_ASAHI_UNSTABLE_UABI_VERSION > 10011
+	/** @extensions: Pointer to the first extension struct, if any */
+	__u64 extensions;
+#endif
+
 	__u64 flags;
 
 	__u64 encoder_ptr;
 	__u64 encoder_end;
+	__u64 usc_base;
 
 	__u64 attachments;
 	__u32 attachment_count;
@@ -530,8 +719,37 @@ struct drm_asahi_cmd_compute {
 
 	__u32 iogpu_unk_40;
 	__u32 unk_mask;
+
+#if DRM_ASAHI_UNSTABLE_UABI_VERSION <= 10011
+	/* We forgot the extension pointer in <=10011... */
+	__u64 extensions;
+#endif
 };
 
+#define ASAHI_COMPUTE_EXT_TIMESTAMPS	0x0001
+
+/** User timestamp buffers for compute commands */
+struct drm_asahi_cmd_compute_user_timestamps {
+	/** @type: Type ID of this extension */
+	__u32 type;
+	/** @pad: MBZ */
+	__u32 pad;
+	/** @next: Pointer to the next extension struct, if any */
+	__u64 next;
+
+	/** @start_handle: Handle of the timestamp buffer for the start ts */
+	__u32 start_handle;
+	/** @start_offset: Offset into the timestamp buffer of the start ts */
+	__u32 start_offset;
+
+	/** @end_handle: Handle of the timestamp buffer for the end ts */
+	__u32 end_handle;
+	/** @end_offset: Offset into the timestamp buffer of the end ts */
+	__u32 end_offset;
+
+};
+
+/** Command completion status */
 enum drm_asahi_status {
 	DRM_ASAHI_STATUS_PENDING = 0,
 	DRM_ASAHI_STATUS_COMPLETE,
@@ -540,8 +758,10 @@ enum drm_asahi_status {
 	DRM_ASAHI_STATUS_FAULT,
 	DRM_ASAHI_STATUS_KILLED,
 	DRM_ASAHI_STATUS_NO_DEVICE,
+	DRM_ASAHI_STATUS_CHANNEL_ERROR,
 };
 
+/** GPU fault information */
 enum drm_asahi_fault {
 	DRM_ASAHI_FAULT_NONE = 0,
 	DRM_ASAHI_FAULT_UNKNOWN,
@@ -552,6 +772,7 @@ enum drm_asahi_fault {
 	DRM_ASAHI_FAULT_NO_ACCESS,
 };
 
+/** Common command completion result information */
 struct drm_asahi_result_info {
 	/** @status: One of enum drm_asahi_status */
 	__u32 status;
@@ -585,6 +806,7 @@ struct drm_asahi_result_info {
 #define DRM_ASAHI_RESULT_RENDER_TVB_GROW_MIN (1UL << 1)
 #define DRM_ASAHI_RESULT_RENDER_TVB_OVERFLOWED (1UL << 2)
 
+/** Render command completion result information */
 struct drm_asahi_result_render {
 	/** @address: Common result information */
 	struct drm_asahi_result_info info;
@@ -612,8 +834,12 @@ struct drm_asahi_result_render {
 
 	/** @num_tvb_overflows: Number of TVB overflows that occurred for this render */
 	__u32 num_tvb_overflows;
+
+	/** @pad: MBZ */
+	__u32 pad;
 };
 
+/** Compute command completion result information */
 struct drm_asahi_result_compute {
 	/** @address: Common result information */
 	struct drm_asahi_result_info info;
@@ -628,6 +854,7 @@ struct drm_asahi_result_compute {
 	__u64 ts_end;
 };
 
+/** Fetch the current GPU timestamp time */
 struct drm_asahi_get_time {
 	/** @extensions: Pointer to the first extension struct, if any */
 	__u64 extensions;
@@ -635,13 +862,7 @@ struct drm_asahi_get_time {
 	/** @flags: MBZ. */
 	__u64 flags;
 
-	/** @tv_sec: On return, seconds part of a point in time */
-	__s64 tv_sec;
-
-	/** @tv_nsec: On return, nanoseconds part of a point in time */
-	__s64 tv_nsec;
-
-	/** @gpu_timestamp: On return, the GPU timestamp at that point in time */
+	/** @gpu_timestamp: On return, the current GPU timestamp */
 	__u64 gpu_timestamp;
 };
 
@@ -657,6 +878,7 @@ enum {
    DRM_IOCTL_ASAHI_QUEUE_DESTROY    = DRM_IOW(DRM_COMMAND_BASE + DRM_ASAHI_QUEUE_DESTROY, struct drm_asahi_queue_destroy),
    DRM_IOCTL_ASAHI_SUBMIT           = DRM_IOW(DRM_COMMAND_BASE + DRM_ASAHI_SUBMIT, struct drm_asahi_submit),
    DRM_IOCTL_ASAHI_GET_TIME         = DRM_IOWR(DRM_COMMAND_BASE + DRM_ASAHI_GET_TIME, struct drm_asahi_get_time),
+   DRM_IOCTL_ASAHI_GEM_BIND_OBJECT  = DRM_IOWR(DRM_COMMAND_BASE + DRM_ASAHI_GEM_BIND_OBJECT, struct drm_asahi_gem_bind_object),
 };
 
 #if defined(__cplusplus)

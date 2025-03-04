@@ -35,11 +35,12 @@
 #include "util/bitset.h"
 #include "util/list.h"
 #include "util/sparse_array.h"
+#include "util/timespec.h"
 #include "util/u_dynarray.h"
 
 #include "panfrost/util/pan_ir.h"
 #include "pan_blend.h"
-#include "pan_blitter.h"
+#include "pan_fb_preload.h"
 #include "pan_indirect_dispatch.h"
 #include "pan_pool.h"
 #include "pan_props.h"
@@ -62,11 +63,9 @@ extern "C" {
 /* Driver limits */
 #define PAN_MAX_CONST_BUFFERS 16
 
-/* Mali hardware can texture up to 65536 x 65536 x 65536 and render up to 16384
- * x 16384, but 8192 x 8192 should be enough for anyone.  The OpenGL game
- * "Cathedral" requires a texture of width 8192 to start.
- */
-#define PAN_MAX_MIP_LEVELS 14
+/* TODO: Mali hardware can texture up to 64k textures, but the
+ * Gallium interface limits us to 32k at the moment */
+#define PAN_MAX_MIP_LEVELS 16
 
 #define PAN_MAX_TEXEL_BUFFER_ELEMENTS 65536
 
@@ -79,6 +78,8 @@ extern "C" {
 
 /* Fencepost problem, hence the off-by-one */
 #define NR_BO_CACHE_BUCKETS (MAX_BO_CACHE_BUCKET - MIN_BO_CACHE_BUCKET + 1)
+
+struct panfrost_precomp_cache;
 
 struct panfrost_device {
    /* For ralloc */
@@ -151,7 +152,7 @@ struct panfrost_device {
       struct list_head buckets[NR_BO_CACHE_BUCKETS];
    } bo_cache;
 
-   struct pan_blitter_cache blitter;
+   struct pan_fb_preload_cache fb_preload_cache;
    struct pan_blend_shader_cache blend_shaders;
    struct pan_indirect_dispatch_meta indirect_dispatch;
 
@@ -176,6 +177,8 @@ struct panfrost_device {
     * unconditionally on Bifrost, and useful for sharing with Midgard */
 
    struct panfrost_bo *sample_positions;
+
+   struct panfrost_precomp_cache *precomp_cache;
 };
 
 static inline int
@@ -208,12 +211,12 @@ panfrost_device_kmod_version_minor(const struct panfrost_device *dev)
    return dev->kmod.dev->driver.version.minor;
 }
 
-void panfrost_open_device(void *memctx, int fd, struct panfrost_device *dev);
+int panfrost_open_device(void *memctx, int fd, struct panfrost_device *dev);
 
 void panfrost_close_device(struct panfrost_device *dev);
 
 bool panfrost_supports_compressed_format(struct panfrost_device *dev,
-                                         unsigned fmt);
+                                         unsigned texfeat_bit);
 
 static inline struct panfrost_bo *
 pan_lookup_bo(struct panfrost_device *dev, uint32_t gem_handle)
@@ -225,6 +228,13 @@ static inline bool
 pan_is_bifrost(const struct panfrost_device *dev)
 {
    return dev->arch >= 6 && dev->arch <= 7;
+}
+
+static inline uint64_t
+pan_gpu_time_to_ns(struct panfrost_device *dev, uint64_t gpu_time)
+{
+   assert(dev->kmod.props.timestamp_frequency > 0);
+   return (gpu_time * NSEC_PER_SEC) / dev->kmod.props.timestamp_frequency;
 }
 
 #if defined(__cplusplus)

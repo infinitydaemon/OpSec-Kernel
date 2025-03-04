@@ -51,7 +51,6 @@
 #include "compiler/shader_info.h"
 #include "main/formats.h"       /* MESA_FORMAT_COUNT */
 #include "compiler/glsl/list.h"
-#include "compiler/glsl/ir_uniform.h"
 #include "util/u_idalloc.h"
 #include "util/simple_mtx.h"
 #include "util/u_dynarray.h"
@@ -972,6 +971,9 @@ struct gl_texture_object
    /** GL_EXT_texture_storage_compression */
    GLint CompressionRate; /**< Fixed-rate compression bitrate */
 
+   /** GL_EXT_texture_compression_astc_decode_mode */
+   GLenum16 AstcDecodePrecision; /**< ASTC decoding precision */
+
    /* The texture must include at levels [0..lastLevel] once validated:
     */
    GLuint lastLevel;
@@ -1056,6 +1058,8 @@ struct gl_texture_object
      * the pipe_resource *pt above.
      */
     bool needs_validation;
+
+    GLboolean IsProtected;
 };
 
 
@@ -1850,6 +1854,17 @@ struct gl_transform_feedback_object
    GLboolean EverBound; /**< Has this object been bound? */
 
    /**
+    * Primitive mode from glBeginTransformFeedback.
+    *
+    * The spec doesn't list the primitive mode as part of transform feedback
+    * objects, but it has to be because when transform feedback is resumed,
+    * all draws must be validated against the primitive type that transform
+    * feedback began with instead of whatever last transform feedback object
+    * happened to be used.
+    */
+   GLenum16 Mode;
+
+   /**
     * GLES: if Active is true, remaining number of primitives which can be
     * rendered without overflow.  This is necessary to track because GLES
     * requires us to generate INVALID_OPERATION if a call to glDrawArrays or
@@ -2379,6 +2394,9 @@ struct gl_shared_state
    GLint RefCount;			   /**< Reference count */
    bool DisplayListsAffectGLThread;
 
+   /* Whether the next glGen returns the lowest unused GL ID. */
+   bool ReuseGLNames;
+
    struct _mesa_HashTable DisplayList;	   /**< Display lists hash table */
    struct _mesa_HashTable TexObjects;	   /**< Texture objects hash table */
 
@@ -2553,6 +2571,7 @@ struct gl_renderbuffer
    unsigned rtt_face, rtt_slice;
    bool rtt_layered; /**< whether glFramebufferTexture was called */
    unsigned rtt_nr_samples; /**< from FramebufferTexture2DMultisampleEXT */
+   unsigned rtt_numviews;
 };
 
 
@@ -2582,6 +2601,7 @@ struct gl_renderbuffer_attachment
    GLuint Zoffset;      /**< Slice for 3D textures,  or layer for both 1D
                          * and 2D array textures */
    GLboolean Layered;
+   GLsizei NumViews;
 };
 
 

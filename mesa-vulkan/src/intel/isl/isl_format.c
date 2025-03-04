@@ -600,6 +600,9 @@ isl_format_for_pipe_format(enum pipe_format pf)
       [PIPE_FORMAT_R32G32B32_SINT]          = ISL_FORMAT_R32G32B32_SINT,
       [PIPE_FORMAT_R32G32B32A32_SINT]       = ISL_FORMAT_R32G32B32A32_SINT,
 
+      [PIPE_FORMAT_R64_UINT]                = ISL_FORMAT_R64_PASSTHRU,
+      [PIPE_FORMAT_R64_SINT]                = ISL_FORMAT_R64_PASSTHRU,
+
       [PIPE_FORMAT_B10G10R10A2_UINT]        = ISL_FORMAT_B10G10R10A2_UINT,
 
       [PIPE_FORMAT_ETC1_RGB8]               = ISL_FORMAT_ETC1_RGB8,
@@ -1294,7 +1297,7 @@ pack_channel(const union isl_color_value *value, unsigned i,
       packed = MIN(value->u32[i], u_uintN_max(layout->bits));
       break;
    case ISL_SINT:
-      packed = CLAMP(value->u32[i], u_intN_min(layout->bits),
+      packed = CLAMP(value->i32[i], u_intN_min(layout->bits),
                      u_intN_max(layout->bits));
       break;
 

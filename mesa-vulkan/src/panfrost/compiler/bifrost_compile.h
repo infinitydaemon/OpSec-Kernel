@@ -24,9 +24,62 @@
 #ifndef __BIFROST_PUBLIC_H_
 #define __BIFROST_PUBLIC_H_
 
+#include <stdint.h>
+#include <string.h>
 #include "compiler/nir/nir.h"
 #include "panfrost/util/pan_ir.h"
 #include "util/u_dynarray.h"
+
+struct bifrost_precompiled_kernel_sysvals {
+   struct {
+      unsigned x, y, z;
+   } num_workgroups;
+   uint64_t printf_buffer_address;
+} __attribute__((aligned(8)));
+;
+
+#define BIFROST_PRECOMPILED_KERNEL_SYSVALS_SIZE                                \
+   sizeof(struct bifrost_precompiled_kernel_sysvals)
+#define BIFROST_PRECOMPILED_KERNEL_SYSVALS_OFFSET (0)
+#define BIFROST_PRECOMPILED_KERNEL_ARGS_OFFSET                                 \
+   (BIFROST_PRECOMPILED_KERNEL_SYSVALS_OFFSET +                                \
+    BIFROST_PRECOMPILED_KERNEL_SYSVALS_SIZE)
+#define BIFROST_PRECOMPILED_KERNEL_ARGS_SIZE                                   \
+   (512 - BIFROST_PRECOMPILED_KERNEL_ARGS_OFFSET)
+
+struct bifrost_precompiled_kernel_info {
+   struct pan_shader_info info;
+   unsigned local_size_x;
+   unsigned local_size_y;
+   unsigned local_size_z;
+   unsigned binary_size;
+};
+
+static inline struct bifrost_precompiled_kernel_info
+bifrost_precompiled_pack_kernel_info(nir_shader *nir,
+                                     struct pan_shader_info *info,
+                                     struct util_dynarray *binary)
+{
+   return (struct bifrost_precompiled_kernel_info){
+      .info = *info,
+      .local_size_x = nir->info.workgroup_size[0],
+      .local_size_y = nir->info.workgroup_size[1],
+      .local_size_z = nir->info.workgroup_size[2],
+      .binary_size = binary->size,
+   };
+}
+
+static inline void
+bifrost_precompiled_kernel_prepare_push_uniforms(
+   void *dst, const void *user_data, size_t user_data_size,
+   const struct bifrost_precompiled_kernel_sysvals *sysvals)
+{
+   assert(user_data_size <= BIFROST_PRECOMPILED_KERNEL_ARGS_SIZE);
+
+   memcpy(dst, sysvals, sizeof(*sysvals));
+   memcpy(((uint8_t *)dst + BIFROST_PRECOMPILED_KERNEL_ARGS_OFFSET), user_data,
+          user_data_size);
+}
 
 void bifrost_preprocess_nir(nir_shader *nir, unsigned gpu_id);
 
@@ -56,12 +109,6 @@ void bifrost_compile_shader_nir(nir_shader *nir,
       .lower_bitfield_extract = true,                                          \
       .lower_insert_byte = true,                                               \
                                                                                \
-      /* Vertex ID is zero based in the traditional geometry flows, but not in \
-       * the memory-allocated IDVS flow introduced and used exclusively in     \
-       * Valhall. So this is a machine property for us.                        \
-       */                                                                      \
-      .vertex_id_zero_based = (arch <= 7),                                     \
-                                                                               \
       .lower_pack_64_4x16 = true,                                              \
       .lower_pack_half_2x16 = true,                                            \
       .lower_pack_unorm_2x16 = true,                                           \
@@ -84,12 +131,10 @@ void bifrost_compile_shader_nir(nir_shader *nir,
       .lower_usub_borrow = true,                                               \
                                                                                \
       .has_isub = true,                                                        \
-      .vectorize_io = true,                                                    \
       .vectorize_vec2_16bit = true,                                            \
       .fuse_ffma16 = true,                                                     \
       .fuse_ffma32 = true,                                                     \
       .fuse_ffma64 = true,                                                     \
-      .use_interpolated_input_intrinsics = true,                               \
                                                                                \
       .lower_uniforms_to_ubo = true,                                           \
                                                                                \
@@ -100,9 +145,13 @@ void bifrost_compile_shader_nir(nir_shader *nir,
       .force_indirect_unrolling =                                              \
          (nir_var_shader_in | nir_var_shader_out | nir_var_function_temp),     \
       .force_indirect_unrolling_sampler = true,                                \
+      .scalarize_ddx = true,                                                   \
+      .support_indirect_inputs = (uint8_t)BITFIELD_MASK(PIPE_SHADER_TYPES),    \
+      .lower_hadd = arch >= 11,                                                \
    };
 
 DEFINE_OPTIONS(6);
 DEFINE_OPTIONS(9);
+DEFINE_OPTIONS(11);
 
 #endif

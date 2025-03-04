@@ -210,6 +210,7 @@ destroy_cmd_buffer(struct anv_cmd_buffer *cmd_buffer)
 
    while (u_vector_length(&cmd_buffer->dynamic_bos) > 0) {
       struct anv_bo **bo = u_vector_remove(&cmd_buffer->dynamic_bos);
+      ANV_DMR_BO_FREE(&cmd_buffer->vk.base, *bo);
       anv_bo_pool_free((*bo)->map != NULL ?
                        &cmd_buffer->device->batch_bo_pool :
                        &cmd_buffer->device->bvh_bo_pool, *bo);
@@ -344,20 +345,21 @@ void
 anv_cmd_buffer_mark_image_fast_cleared(struct anv_cmd_buffer *cmd_buffer,
                                        const struct anv_image *image,
                                        const enum isl_format format,
+                                       const struct isl_swizzle swizzle,
                                        union isl_color_value clear_color)
 {
    const struct intel_device_info *devinfo = cmd_buffer->device->info;
-   anv_genX(devinfo, set_fast_clear_state)(cmd_buffer, image, format,
+   anv_genX(devinfo, set_fast_clear_state)(cmd_buffer, image, format, swizzle,
                                            clear_color);
 }
 
 void
-anv_cmd_buffer_load_clear_color_from_image(struct anv_cmd_buffer *cmd_buffer,
-                                           struct anv_state state,
-                                           const struct anv_image *image)
+anv_cmd_buffer_load_clear_color(struct anv_cmd_buffer *cmd_buffer,
+                                struct anv_state state,
+                                const struct anv_image_view *iview)
 {
    const struct intel_device_info *devinfo = cmd_buffer->device->info;
-   anv_genX(devinfo, load_image_clear_color)(cmd_buffer, state, image);
+   anv_genX(devinfo, cmd_buffer_load_clear_color)(cmd_buffer, state, iview);
 }
 
 void
@@ -436,6 +438,7 @@ anv_cmd_buffer_set_ray_query_buffer(struct anv_cmd_buffer *cmd_buffer,
                                     VkShaderStageFlags stages)
 {
    struct anv_device *device = cmd_buffer->device;
+   uint8_t idx = anv_get_ray_query_bo_index(cmd_buffer);
 
    uint64_t ray_shadow_size =
       align64(brw_rt_ray_queries_shadow_stacks_size(device->info,
@@ -446,9 +449,9 @@ anv_cmd_buffer_set_ray_query_buffer(struct anv_cmd_buffer *cmd_buffer,
         cmd_buffer->state.ray_query_shadow_bo->size < ray_shadow_size)) {
       unsigned shadow_size_log2 = MAX2(util_logbase2_ceil(ray_shadow_size), 16);
       unsigned bucket = shadow_size_log2 - 16;
-      assert(bucket < ARRAY_SIZE(device->ray_query_shadow_bos));
+      assert(bucket < ARRAY_SIZE(device->ray_query_shadow_bos[0]));
 
-      struct anv_bo *bo = p_atomic_read(&device->ray_query_shadow_bos[bucket]);
+      struct anv_bo *bo = p_atomic_read(&device->ray_query_shadow_bos[idx][bucket]);
       if (bo == NULL) {
          struct anv_bo *new_bo;
          VkResult result = anv_device_alloc_bo(device, "RT queries shadow",
@@ -456,14 +459,16 @@ anv_cmd_buffer_set_ray_query_buffer(struct anv_cmd_buffer *cmd_buffer,
                                                ANV_BO_ALLOC_INTERNAL, /* alloc_flags */
                                                0, /* explicit_address */
                                                &new_bo);
+         ANV_DMR_BO_ALLOC(&cmd_buffer->vk.base, new_bo, result);
          if (result != VK_SUCCESS) {
             anv_batch_set_error(&cmd_buffer->batch, result);
             return;
          }
 
-         bo = p_atomic_cmpxchg(&device->ray_query_shadow_bos[bucket], NULL, new_bo);
+         bo = p_atomic_cmpxchg(&device->ray_query_shadow_bos[idx][bucket], NULL, new_bo);
          if (bo != NULL) {
-            anv_device_release_bo(device, bo);
+            ANV_DMR_BO_FREE(&device->vk.base, new_bo);
+            anv_device_release_bo(device, new_bo);
          } else {
             bo = new_bo;
          }
@@ -476,8 +481,9 @@ anv_cmd_buffer_set_ray_query_buffer(struct anv_cmd_buffer *cmd_buffer,
    }
 
    /* Add the HW buffer to the list of BO used. */
+   assert(device->ray_query_bo[idx]);
    anv_reloc_list_add_bo(cmd_buffer->batch.relocs,
-                         device->ray_query_bo);
+                         device->ray_query_bo[idx]);
 
    /* Fill the push constants & mark them dirty. */
    struct anv_address ray_query_globals_addr =
@@ -548,6 +554,7 @@ anv_cmd_buffer_flush_pipeline_state(struct anv_cmd_buffer *cmd_buffer,
    diff_fix_state(VF_SGVS,                  final.vf_sgvs);
    if (cmd_buffer->device->info->ver >= 11)
       diff_fix_state(VF_SGVS_2,             final.vf_sgvs_2);
+   diff_fix_state(VF_COMPONENT_PACKING,     final.vf_component_packing);
    if (cmd_buffer->device->info->ver >= 12)
       diff_fix_state(PRIMITIVE_REPLICATION, final.primitive_replication);
    diff_fix_state(SBE,                      final.sbe);
@@ -558,8 +565,6 @@ anv_cmd_buffer_flush_pipeline_state(struct anv_cmd_buffer *cmd_buffer,
 
    diff_fix_state(CLIP,                     partial.clip);
    diff_fix_state(SF,                       partial.sf);
-   diff_fix_state(RASTER,                   partial.raster);
-   diff_fix_state(MULTISAMPLE,              partial.ms);
    diff_fix_state(WM,                       partial.wm);
    diff_fix_state(STREAMOUT,                partial.so);
    diff_fix_state(GS,                       partial.gs);
@@ -587,11 +592,6 @@ anv_cmd_buffer_flush_pipeline_state(struct anv_cmd_buffer *cmd_buffer,
       assert_empty(final.clip_mesh);
       assert_empty(final.sbe_mesh);
    }
-
-   /* States that should never vary between pipelines, but can be affected by
-    * blorp etc...
-    */
-   assert_identical(VF_STATISTICS,            final.vf_statistics);
 
    /* States that can vary in length */
    diff_var_state(VF_SGVS_INSTANCING,       final.vf_sgvs_instancing);
@@ -746,12 +746,7 @@ anv_cmd_buffer_get_pipeline_layout_state(struct anv_cmd_buffer *cmd_buffer,
       return &cmd_buffer->state.compute.base;
 
    case VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR:
-      *out_stages &= VK_SHADER_STAGE_RAYGEN_BIT_KHR |
-         VK_SHADER_STAGE_ANY_HIT_BIT_KHR |
-         VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR |
-         VK_SHADER_STAGE_MISS_BIT_KHR |
-         VK_SHADER_STAGE_INTERSECTION_BIT_KHR |
-         VK_SHADER_STAGE_CALLABLE_BIT_KHR;
+      *out_stages &= ANV_RT_STAGE_BITS;
       return &cmd_buffer->state.rt.base;
 
    default:
@@ -792,7 +787,7 @@ anv_cmd_buffer_bind_descriptor_set(struct anv_cmd_buffer *cmd_buffer,
    assert(!set->pool || !set->pool->host_only);
 
    struct anv_descriptor_set_layout *set_layout =
-      layout->set[set_index].layout;
+      layout ? layout->set[set_index].layout: set->layout;
 
    anv_cmd_buffer_maybe_dirty_descriptor_mode(
       cmd_buffer,
@@ -841,12 +836,7 @@ anv_cmd_buffer_bind_descriptor_set(struct anv_cmd_buffer *cmd_buffer,
             !cmd_buffer->device->physical->indirect_descriptors ||
             (stages & (VK_SHADER_STAGE_TASK_BIT_EXT |
                        VK_SHADER_STAGE_MESH_BIT_EXT |
-                       VK_SHADER_STAGE_RAYGEN_BIT_KHR |
-                       VK_SHADER_STAGE_ANY_HIT_BIT_KHR |
-                       VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR |
-                       VK_SHADER_STAGE_MISS_BIT_KHR |
-                       VK_SHADER_STAGE_INTERSECTION_BIT_KHR |
-                       VK_SHADER_STAGE_CALLABLE_BIT_KHR));
+                       ANV_RT_STAGE_BITS));
 
          if (update_desc_sets) {
             struct anv_push_constants *push = &pipe_state->push_constants;
@@ -873,6 +863,7 @@ anv_cmd_buffer_bind_descriptor_set(struct anv_cmd_buffer *cmd_buffer,
    if (dynamic_offsets) {
       if (set_layout->dynamic_offset_count > 0) {
          struct anv_push_constants *push = &pipe_state->push_constants;
+         assert(layout != NULL);
          uint32_t dynamic_offset_start =
             layout->set[set_index].dynamic_offset_start;
          uint32_t *push_offsets =
@@ -917,14 +908,6 @@ anv_cmd_buffer_bind_descriptor_set(struct anv_cmd_buffer *cmd_buffer,
    (VK_SHADER_STAGE_ALL_GRAPHICS | \
     VK_SHADER_STAGE_MESH_BIT_EXT | \
     VK_SHADER_STAGE_TASK_BIT_EXT)
-
-#define ANV_RT_STAGE_BITS \
-   (VK_SHADER_STAGE_RAYGEN_BIT_KHR | \
-    VK_SHADER_STAGE_ANY_HIT_BIT_KHR | \
-    VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR | \
-    VK_SHADER_STAGE_MISS_BIT_KHR | \
-    VK_SHADER_STAGE_INTERSECTION_BIT_KHR | \
-    VK_SHADER_STAGE_CALLABLE_BIT_KHR)
 
 void anv_CmdBindDescriptorSets2KHR(
     VkCommandBuffer                             commandBuffer,
@@ -1198,8 +1181,10 @@ anv_cmd_buffer_merge_dynamic(struct anv_cmd_buffer *cmd_buffer,
    state = anv_cmd_buffer_alloc_dynamic_state(cmd_buffer,
                                               dwords * 4, alignment);
    p = state.map;
-   for (uint32_t i = 0; i < dwords; i++)
+   for (uint32_t i = 0; i < dwords; i++) {
+      assert((a[i] & b[i]) == 0);
       p[i] = a[i] | b[i];
+   }
 
    VG(VALGRIND_CHECK_MEM_IS_DEFINED(p, dwords * 4));
 
@@ -1209,9 +1194,18 @@ anv_cmd_buffer_merge_dynamic(struct anv_cmd_buffer *cmd_buffer,
 struct anv_state
 anv_cmd_buffer_gfx_push_constants(struct anv_cmd_buffer *cmd_buffer)
 {
-   struct anv_push_constants *data =
+   const struct anv_push_constants *data =
       &cmd_buffer->state.gfx.base.push_constants;
 
+   /* For Mesh/Task shaders the 3DSTATE_(MESH|TASK)_SHADER_DATA require a 64B
+    * alignment.
+    *
+    * ATMS PRMs Volume 2d: Command Reference: Structures,
+    * 3DSTATE_MESH_SHADER_DATA_BODY::Indirect Data Start Address:
+    *
+    *    "This pointer is relative to the General State Base Address. It is
+    *     the 64-byte aligned address of the indirect data."
+    */
    struct anv_state state =
       anv_cmd_buffer_alloc_temporary_state(cmd_buffer,
                                            sizeof(struct anv_push_constants),
@@ -1219,7 +1213,11 @@ anv_cmd_buffer_gfx_push_constants(struct anv_cmd_buffer *cmd_buffer)
    if (state.alloc_size == 0)
       return state;
 
-   memcpy(state.map, data, sizeof(struct anv_push_constants));
+   memcpy(state.map, data->client_data,
+          cmd_buffer->state.gfx.base.push_constants_client_size);
+   memcpy(state.map + sizeof(data->client_data),
+          &data->desc_surface_offsets,
+          sizeof(struct anv_push_constants) - sizeof(data->client_data));
 
    return state;
 }
@@ -1247,9 +1245,9 @@ anv_cmd_buffer_cs_push_constants(struct anv_cmd_buffer *cmd_buffer)
       ALIGN(total_push_constants_size, push_constant_alignment);
    struct anv_state state;
    if (devinfo->verx10 >= 125) {
-      state = anv_state_stream_alloc(&cmd_buffer->general_state_stream,
-                                     aligned_total_push_constants_size,
-                                     push_constant_alignment);
+      state = anv_cmd_buffer_alloc_general_state(cmd_buffer,
+                                                 aligned_total_push_constants_size,
+                                                 push_constant_alignment);
    } else {
       state = anv_cmd_buffer_alloc_dynamic_state(cmd_buffer,
                                                  aligned_total_push_constants_size,
@@ -1296,6 +1294,8 @@ void anv_CmdPushConstants2KHR(
       memcpy(pipe_state->push_constants.client_data + pInfo->offset,
              pInfo->pValues, pInfo->size);
       pipe_state->push_constants_data_dirty = true;
+      pipe_state->push_constants_client_size = MAX2(
+         pipe_state->push_constants_client_size, pInfo->offset + pInfo->size);
    }
    if (pInfo->stageFlags & VK_SHADER_STAGE_COMPUTE_BIT) {
       struct anv_cmd_pipeline_state *pipe_state =
@@ -1304,6 +1304,8 @@ void anv_CmdPushConstants2KHR(
       memcpy(pipe_state->push_constants.client_data + pInfo->offset,
              pInfo->pValues, pInfo->size);
       pipe_state->push_constants_data_dirty = true;
+      pipe_state->push_constants_client_size = MAX2(
+         pipe_state->push_constants_client_size, pInfo->offset + pInfo->size);
    }
    if (pInfo->stageFlags & ANV_RT_STAGE_BITS) {
       struct anv_cmd_pipeline_state *pipe_state =
@@ -1312,6 +1314,8 @@ void anv_CmdPushConstants2KHR(
       memcpy(pipe_state->push_constants.client_data + pInfo->offset,
              pInfo->pValues, pInfo->size);
       pipe_state->push_constants_data_dirty = true;
+      pipe_state->push_constants_client_size = MAX2(
+         pipe_state->push_constants_client_size, pInfo->offset + pInfo->size);
    }
 
    cmd_buffer->state.push_constants_dirty |= pInfo->stageFlags;
@@ -1444,6 +1448,7 @@ void anv_CmdSetRayTracingPipelineStackSizeKHR(
                                             ANV_BO_ALLOC_INTERNAL, /* alloc_flags */
                                             0, /* explicit_address */
                                             &new_bo);
+      ANV_DMR_BO_ALLOC(&device->vk.base, new_bo, result);
       if (result != VK_SUCCESS) {
          rt->scratch.layout.total_size = 0;
          anv_batch_set_error(&cmd_buffer->batch, result);
@@ -1452,7 +1457,8 @@ void anv_CmdSetRayTracingPipelineStackSizeKHR(
 
       bo = p_atomic_cmpxchg(&device->rt_scratch_bos[bucket], NULL, new_bo);
       if (bo != NULL) {
-         anv_device_release_bo(device, bo);
+         ANV_DMR_BO_FREE(&device->vk.base, new_bo);
+         anv_device_release_bo(device, new_bo);
       } else {
          bo = new_bo;
       }
@@ -1477,7 +1483,13 @@ anv_cmd_buffer_save_state(struct anv_cmd_buffer *cmd_buffer,
       state->pipeline = pipe_state->pipeline;
 
    if (state->flags & ANV_CMD_SAVED_STATE_DESCRIPTOR_SET_0)
-      state->descriptor_set = pipe_state->descriptors[0];
+      state->descriptor_set[0] = pipe_state->descriptors[0];
+
+   if (state->flags & ANV_CMD_SAVED_STATE_DESCRIPTOR_SET_ALL) {
+      for (uint32_t i = 0; i < MAX_SETS; i++) {
+         state->descriptor_set[i] = pipe_state->descriptors[i];
+      }
+   }
 
    if (state->flags & ANV_CMD_SAVED_STATE_PUSH_CONSTANTS) {
       memcpy(state->push_constants, pipe_state->push_constants.client_data,
@@ -1506,11 +1518,24 @@ anv_cmd_buffer_restore_state(struct anv_cmd_buffer *cmd_buffer,
    }
 
    if (state->flags & ANV_CMD_SAVED_STATE_DESCRIPTOR_SET_0) {
-      if (state->descriptor_set) {
+      if (state->descriptor_set[0]) {
          anv_cmd_buffer_bind_descriptor_set(cmd_buffer, bind_point, NULL, 0,
-                                            state->descriptor_set, NULL, NULL);
+                                            state->descriptor_set[0], NULL,
+                                            NULL);
       } else {
          pipe_state->descriptors[0] = NULL;
+      }
+   }
+
+   if (state->flags & ANV_CMD_SAVED_STATE_DESCRIPTOR_SET_ALL) {
+      for (uint32_t i = 0; i < MAX_SETS; i++) {
+         if (state->descriptor_set[i]) {
+            anv_cmd_buffer_bind_descriptor_set(cmd_buffer, bind_point, NULL, i,
+                                               state->descriptor_set[i], NULL,
+                                               NULL);
+         } else {
+            pipe_state->descriptors[i] = NULL;
+         }
       }
    }
 
@@ -1525,4 +1550,41 @@ anv_cmd_buffer_restore_state(struct anv_cmd_buffer *cmd_buffer,
       };
       anv_CmdPushConstants2KHR(cmd_buffer_, &push_info);
    }
+}
+
+void
+anv_cmd_write_buffer_cp(VkCommandBuffer commandBuffer,
+                        VkDeviceAddress dstAddr,
+                        void *data,
+                        uint32_t size)
+{
+   ANV_FROM_HANDLE(anv_cmd_buffer, cmd_buffer, commandBuffer);
+   anv_genX(cmd_buffer->device->info, cmd_write_buffer_cp)(cmd_buffer, dstAddr,
+                                                           data, size);
+}
+
+void
+anv_cmd_flush_buffer_write_cp(VkCommandBuffer commandBuffer)
+{
+   /* TODO: cmd_write_buffer_cp is implemented with MI store +
+    * ForceWriteCompletionCheck so that should make the content globally
+    * observable.
+    *
+    * If we encounter any functional or perf bottleneck issues, let's revisit
+    * this helper and add ANV_PIPE_HDC_PIPELINE_FLUSH_BIT +
+    * ANV_PIPE_UNTYPED_DATAPORT_CACHE_FLUSH_BIT +
+    * ANV_PIPE_DATA_CACHE_FLUSH_BIT.
+    */
+}
+
+void
+anv_cmd_dispatch_unaligned(VkCommandBuffer commandBuffer,
+                           uint32_t invocations_x,
+                           uint32_t invocations_y,
+                           uint32_t invocations_z)
+{
+   ANV_FROM_HANDLE(anv_cmd_buffer, cmd_buffer, commandBuffer);
+
+   anv_genX(cmd_buffer->device->info, cmd_dispatch_unaligned)
+      (commandBuffer, invocations_x, invocations_y, invocations_z);
 }

@@ -261,7 +261,9 @@ class Instruction(object):
         self.operand_size = 0
       elif 'sad_' in name:
         self.operand_size = 32
-      elif name in ['v_mad_u64_u32', 'v_mad_i64_i32']:
+      elif name in ['v_mad_u64_u32', 'v_mad_i64_i32',
+                    'v_interp_p10_f16_f32_inreg', 'v_interp_p10_rtz_f16_f32_inreg',
+                    'v_interp_p2_f16_f32_inreg', 'v_interp_p2_rtz_f16_f32_inreg']:
         self.operand_size = 0
       elif self.operand_size == 24:
         self.operand_size = 32
@@ -388,7 +390,7 @@ insn("p_end_wqm")
 insn("p_discard_if")
 insn("p_demote_to_helper")
 insn("p_is_helper")
-insn("p_exit_early_if")
+insn("p_exit_early_if_not")
 
 # simulates proper bpermute behavior using v_readlane_b32
 # definitions: result VGPR, temp EXEC, clobbered VCC
@@ -436,6 +438,8 @@ insn("p_dual_src_export_gfx11")
 insn("p_end_with_regs")
 
 insn("p_shader_cycles_hi_lo_hi")
+
+insn("p_debug_info")
 
 # SOP2 instructions: 2 scalar inputs, 1 scalar output (+optional scc)
 SOP2 = {
@@ -681,7 +685,7 @@ SOPC = {
    ("s_bitcmp0_b64",    dst(SCC), src(2, 1), op(0x0e)),
    ("s_bitcmp1_b64",    dst(SCC), src(2, 1), op(0x0f)),
    ("s_setvskip",       dst(), src(1, 1), op(0x10, gfx10=-1)),
-   ("s_set_gpr_idx_on", dst(M0), src(1, 1, M0), op(gfx8=0x11, gfx10=-1)),
+   ("s_set_gpr_idx_on", dst(M0), src(1, 1), op(gfx8=0x11, gfx10=-1)),
    ("s_cmp_eq_u64",     dst(SCC), src(2, 2), op(gfx8=0x12, gfx11=0x10)),
    ("s_cmp_lg_u64",     dst(SCC), src(2, 2), op(gfx8=0x13, gfx11=0x11)),
    ("s_cmp_lt_f32",     dst(SCC), src(1, 1), op(gfx11=0x41), InstrClass.SFPU),
@@ -1244,7 +1248,7 @@ VINTERP = {
    ("v_interp_p2_rtz_f16_f32_inreg",  op(gfx11=0x05)),
 }
 for (name, num) in VINTERP:
-   insn(name, num, Format.VINTERP_INREG, InstrClass.Valu32, False, True, definitions = dst(1), operands = src(1, 1, 1))
+   insn(name, num, Format.VINTERP_INREG, InstrClass.Valu32, True, True, definitions = dst(1), operands = src(1, 1, 1))
 
 
 # VOP3 instructions: 3 inputs, 1 output
@@ -1281,6 +1285,7 @@ VOP3 = {
    ("v_sad_u16",               False, False, dst(1), src(1, 1, 1), op(0x15c, gfx8=0x1db, gfx10=0x15c, gfx11=0x224)),
    ("v_sad_u32",               False, False, dst(1), src(1, 1, 1), op(0x15d, gfx8=0x1dc, gfx10=0x15d, gfx11=0x225)),
    ("v_cvt_pk_u8_f32",         True, False, dst(1), src(1, 1, 1), op(0x15e, gfx8=0x1dd, gfx10=0x15e, gfx11=0x226)),
+   ("p_v_cvt_pk_u8_f32",       True, False, dst(1), src(1), op(-1)),
    ("v_div_fixup_f32",         True, True, dst(1), src(1, 1, 1), op(0x15f, gfx8=0x1de, gfx10=0x15f, gfx11=0x227)),
    ("v_div_fixup_f64",         True, True, dst(2), src(2, 2, 2), op(0x160, gfx8=0x1df, gfx10=0x160, gfx11=0x228)),
    ("v_lshl_b64",              False, False, dst(2), src(2, 1), op(0x161, gfx8=-1), InstrClass.Valu64),

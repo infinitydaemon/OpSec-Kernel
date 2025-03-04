@@ -20,10 +20,13 @@
         - src/nouveau/ci/$GPU_VERSION-fails.txt
         - src/nouveau/ci/$GPU_VERSION-flakes.txt
         - src/nouveau/ci/$GPU_VERSION-skips.txt
+        - src/nouveau/ci/$GPU_VERSION-vkd3d-fails.txt
+        - src/nouveau/ci/$GPU_VERSION-vkd3d-flakes.txt
+        - src/nouveau/ci/$GPU_VERSION-vkd3d-skips.txt
       when: on_success
 
 .nvk-valve-manual-rules:
-  stage: nouveau
+  stage: nouveau-postmerge
   extends: .no-auto-retry
   rules:
     - !reference [.test, rules]
@@ -47,6 +50,7 @@
     GPU_VERSION: nvk-ga106
     FDO_CI_CONCURRENT: 16
     RUNNER_FARM_LOCATION: mupuf
+    B2C_MARS_SETUP_TAGS: nvidia:codename:GA106
     B2C_JOB_WARN_REGEX: 'nouveau .+ job timeout|NMI backtrace for cpu \d+'
     # Default kernel is missing the GA106 GSP
     # 1 - clone b2c
@@ -59,4 +63,4 @@
     # GSP is not loaded by default
     B2C_KERNEL_CMDLINE_EXTRAS: 'nouveau.config=NvGspRm=1'
   tags:
-    - nvidia:codename:GA106
+    - $B2C_MARS_SETUP_TAGS

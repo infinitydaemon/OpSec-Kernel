@@ -521,7 +521,8 @@ elk_nir_lower_fs_inputs(nir_shader *nir,
    }
 
    nir_lower_io(nir, nir_var_shader_in, elk_type_size_vec4,
-                nir_lower_io_lower_64bit_to_32);
+                nir_lower_io_lower_64bit_to_32 |
+                nir_lower_io_use_interpolated_input_intrinsics);
 
    if (key->multisample_fbo == ELK_NEVER) {
       nir_lower_single_sampled(nir);
@@ -662,9 +663,16 @@ elk_nir_optimize(nir_shader *nir, bool is_scalar,
       const bool is_vec4_tessellation = !is_scalar &&
          (nir->info.stage == MESA_SHADER_TESS_CTRL ||
           nir->info.stage == MESA_SHADER_TESS_EVAL);
-      OPT(nir_opt_peephole_select, 0, !is_vec4_tessellation, false);
-      OPT(nir_opt_peephole_select, 8, !is_vec4_tessellation,
-          devinfo->ver >= 6);
+
+      nir_opt_peephole_select_options peephole_select_options = {
+         .limit = 0,
+         .indirect_load_ok = !is_vec4_tessellation,
+      };
+      OPT(nir_opt_peephole_select, &peephole_select_options);
+
+      peephole_select_options.limit = 8;
+      peephole_select_options.expensive_alu_ok = devinfo->ver >= 6;
+      OPT(nir_opt_peephole_select, &peephole_select_options);
 
       OPT(nir_opt_intrinsics);
       OPT(nir_opt_idiv_const, 32);
@@ -702,7 +710,12 @@ elk_nir_optimize(nir_shader *nir, bool is_scalar,
          OPT(nir_opt_dce);
       }
       OPT(nir_opt_if, nir_opt_if_optimize_phi_true_false);
-      OPT(nir_opt_conditional_discard);
+
+      nir_opt_peephole_select_options peephole_discard_options = {
+         .limit = 0,
+         .discard_ok = true,
+      };
+      OPT(nir_opt_peephole_select, &peephole_discard_options);
       if (nir->options->max_unroll_iterations != 0) {
          OPT(nir_opt_loop_unroll);
       }
@@ -1124,10 +1137,11 @@ elk_nir_link_shaders(const struct elk_compiler *compiler,
    }
 }
 
-bool
+static bool
 elk_nir_should_vectorize_mem(unsigned align_mul, unsigned align_offset,
                              unsigned bit_size,
                              unsigned num_components,
+                             int64_t hole_size,
                              nir_intrinsic_instr *low,
                              nir_intrinsic_instr *high,
                              void *data)
@@ -1136,11 +1150,10 @@ elk_nir_should_vectorize_mem(unsigned align_mul, unsigned align_offset,
     * those back into 32-bit ones anyway and UBO loads aren't split in NIR so
     * we don't want to make a mess for the back-end.
     */
-   if (bit_size > 32)
+   if (bit_size > 32 || hole_size > 0 || !nir_num_components_valid(num_components))
       return false;
 
-   if (low->intrinsic == nir_intrinsic_load_global_const_block_intel ||
-       low->intrinsic == nir_intrinsic_load_ubo_uniform_block_intel ||
+   if (low->intrinsic == nir_intrinsic_load_ubo_uniform_block_intel ||
        low->intrinsic == nir_intrinsic_load_ssbo_uniform_block_intel ||
        low->intrinsic == nir_intrinsic_load_shared_uniform_block_intel ||
        low->intrinsic == nir_intrinsic_load_global_constant_uniform_block_intel) {
@@ -1215,7 +1228,8 @@ bool combine_all_memory_barriers(nir_intrinsic_instr *a,
 static nir_mem_access_size_align
 get_mem_access_size_align(nir_intrinsic_op intrin, uint8_t bytes,
                           uint8_t bit_size, uint32_t align_mul, uint32_t align_offset,
-                          bool offset_is_const, const void *cb_data)
+                          bool offset_is_const, enum gl_access_qualifier access,
+                          const void *cb_data)
 {
    const uint32_t align = nir_combined_align(align_mul, align_offset);
 
@@ -1234,6 +1248,7 @@ get_mem_access_size_align(nir_intrinsic_op intrin, uint8_t bytes,
             .bit_size = 32,
             .num_components = comps32,
             .align = 4,
+            .shift = nir_mem_access_shift_method_scalar,
          };
       }
       break;
@@ -1269,6 +1284,7 @@ get_mem_access_size_align(nir_intrinsic_op intrin, uint8_t bytes,
          .bit_size = bytes * 8,
          .num_components = 1,
          .align = 1,
+         .shift = nir_mem_access_shift_method_scalar,
       };
    } else {
       bytes = MIN2(bytes, 16);
@@ -1277,6 +1293,7 @@ get_mem_access_size_align(nir_intrinsic_op intrin, uint8_t bytes,
          .num_components = is_scratch ? 1 :
                            is_load ? DIV_ROUND_UP(bytes, 4) : bytes / 4,
          .align = 4,
+         .shift = nir_mem_access_shift_method_scalar,
       };
    }
 }
@@ -1416,9 +1433,16 @@ elk_postprocess_nir(nir_shader *nir, const struct elk_compiler *compiler,
       const bool is_vec4_tessellation = !is_scalar &&
          (nir->info.stage == MESA_SHADER_TESS_CTRL ||
           nir->info.stage == MESA_SHADER_TESS_EVAL);
-      OPT(nir_opt_peephole_select, 0, is_vec4_tessellation, false);
-      OPT(nir_opt_peephole_select, 1, is_vec4_tessellation,
-          compiler->devinfo->ver >= 6);
+
+      nir_opt_peephole_select_options peephole_select_options = {
+         .limit = 0,
+         .indirect_load_ok = !is_vec4_tessellation,
+      };
+      OPT(nir_opt_peephole_select, &peephole_select_options);
+
+      peephole_select_options.limit = 1;
+      peephole_select_options.expensive_alu_ok = compiler->devinfo->ver >= 6;
+      OPT(nir_opt_peephole_select, &peephole_select_options);
    }
 
    do {
@@ -1463,16 +1487,12 @@ elk_postprocess_nir(nir_shader *nir, const struct elk_compiler *compiler,
    OPT(nir_opt_move, nir_move_comparisons);
    OPT(nir_opt_dead_cf);
 
-   bool divergence_analysis_dirty = false;
-   NIR_PASS(_, nir, nir_convert_to_lcssa, true, true);
-   NIR_PASS_V(nir, nir_divergence_analysis);
-
    /* TODO: Enable nir_opt_uniform_atomics on Gfx7.x too.
     * It currently fails Vulkan tests on Haswell for an unknown reason.
     */
    bool opt_uniform_atomic_stage_allowed = devinfo->ver >= 8;
 
-   if (opt_uniform_atomic_stage_allowed && OPT(nir_opt_uniform_atomics)) {
+   if (opt_uniform_atomic_stage_allowed && OPT(nir_opt_uniform_atomics, false)) {
       const nir_lower_subgroups_options subgroups_options = {
          .ballot_bit_size = 32,
          .ballot_components = 1,
@@ -1482,22 +1502,12 @@ elk_postprocess_nir(nir_shader *nir, const struct elk_compiler *compiler,
 
       if (OPT(nir_lower_int64))
          elk_nir_optimize(nir, is_scalar, devinfo);
-
-      divergence_analysis_dirty = true;
    }
 
    /* Do this only after the last opt_gcm. GCM will undo this lowering. */
    if (nir->info.stage == MESA_SHADER_FRAGMENT) {
-      if (divergence_analysis_dirty) {
-         NIR_PASS(_, nir, nir_convert_to_lcssa, true, true);
-         NIR_PASS_V(nir, nir_divergence_analysis);
-      }
-
       OPT(intel_nir_lower_non_uniform_barycentric_at_sample);
    }
-
-   /* Clean up LCSSA phis */
-   OPT(nir_opt_remove_phis);
 
    OPT(nir_lower_bool_to_int32);
    OPT(nir_copy_prop);
@@ -1524,7 +1534,7 @@ elk_postprocess_nir(nir_shader *nir, const struct elk_compiler *compiler,
    NIR_PASS(_, nir, nir_convert_to_lcssa, true, true);
    NIR_PASS_V(nir, nir_divergence_analysis);
 
-   OPT(nir_convert_from_ssa, true);
+   OPT(nir_convert_from_ssa, true, true);
 
    if (!is_scalar) {
       OPT(nir_move_vec_src_uses_to_dest, true);
@@ -1616,6 +1626,9 @@ get_subgroup_size(const struct shader_info *info, unsigned max_subgroup_size)
        * size.
        */
       return info->stage == MESA_SHADER_FRAGMENT ? 0 : max_subgroup_size;
+
+   case SUBGROUP_SIZE_REQUIRE_4:
+      unreachable("Unsupported subgroup size type");
 
    case SUBGROUP_SIZE_REQUIRE_8:
    case SUBGROUP_SIZE_REQUIRE_16:
@@ -1873,8 +1886,7 @@ elk_nir_load_global_const(nir_builder *b, nir_intrinsic_instr *load_uniform,
       nir_def *data[2];
       for (unsigned i = 0; i < 2; i++) {
          nir_def *addr = nir_iadd_imm(b, base_addr, aligned_offset + i * 64);
-         data[i] = nir_load_global_const_block_intel(b, 16, addr,
-                                                     nir_imm_true(b));
+         data[i] = nir_load_global_constant_uniform_block_intel(b, 16, 32, addr);
       }
 
       sysval = nir_extract_bits(b, data, 2, suboffset * 8,
@@ -1897,7 +1909,7 @@ elk_nir_get_var_type(const struct nir_shader *nir, nir_variable *var)
    const struct glsl_type *type = var->interface_type;
    if (!type) {
       type = var->type;
-      if (nir_is_arrayed_io(var, nir->info.stage) || var->data.per_view) {
+      if (nir_is_arrayed_io(var, nir->info.stage)) {
          assert(glsl_type_is_array(type));
          type = glsl_get_array_element(type);
       }

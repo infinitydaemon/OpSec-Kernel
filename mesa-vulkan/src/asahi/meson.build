@@ -7,9 +7,14 @@ inc_asahi = include_directories([
 ])
 
 if with_gallium_asahi or with_asahi_vk
+   subdir('genxml')
+   subdir('libagx')
    subdir('layout')
    subdir('compiler')
    subdir('clc')
+   subdir('lib')
+elif dep_iokit.found()
+   # Just build enough for libwrap.dylib
    subdir('genxml')
    subdir('lib')
 endif

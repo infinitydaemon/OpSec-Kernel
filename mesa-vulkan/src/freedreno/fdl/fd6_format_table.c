@@ -1,25 +1,7 @@
 /*
- * Copyright (C) 2016 Rob Clark <robclark@freedesktop.org>
+ * Copyright © 2016 Rob Clark <robclark@freedesktop.org>
  * Copyright © 2018 Google, Inc.
- *
- * Permission is hereby granted, free of charge, to any person obtaining a
- * copy of this software and associated documentation files (the "Software"),
- * to deal in the Software without restriction, including without limitation
- * the rights to use, copy, modify, merge, publish, distribute, sublicense,
- * and/or sell copies of the Software, and to permit persons to whom the
- * Software is furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice (including the next
- * paragraph) shall be included in all copies or substantial portions of the
- * Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
- * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
- * SOFTWARE.
+ * SPDX-License-Identifier: MIT
  *
  * Authors:
  *    Rob Clark <robclark@freedesktop.org>
@@ -369,8 +351,8 @@ static const struct fd6_format formats[PIPE_FORMAT_COUNT] = {
    _T_(ASTC_12x10_SRGB, ASTC_12x10,             WZYX),
    _T_(ASTC_12x12_SRGB, ASTC_12x12,             WZYX),
 
-   _T_(R8G8_R8B8_UNORM, R8G8R8B8_422_UNORM, WZYX), /* YUYV */
-   _T_(G8R8_B8R8_UNORM, G8R8B8R8_422_UNORM, WZYX), /* UYVY */
+   _T_(G8B8_G8R8_UNORM, R8G8R8B8_422_UNORM,     WZYX), /* YUYV */
+   _T_(B8G8_R8G8_UNORM, G8R8B8R8_422_UNORM,     WZYX), /* UYVY */
 
    _T_(R8_G8B8_420_UNORM, R8_G8B8_2PLANE_420_UNORM, WZYX), /* Gallium NV12 */
    _T_(G8_B8R8_420_UNORM, R8_G8B8_2PLANE_420_UNORM, WZYX), /* Vulkan NV12 */
@@ -379,7 +361,8 @@ static const struct fd6_format formats[PIPE_FORMAT_COUNT] = {
 /* clang-format on */
 
 static enum a3xx_color_swap
-fd6_pipe2swap(enum pipe_format format, enum a6xx_tile_mode tile_mode)
+fd6_pipe2swap(enum pipe_format format, enum a6xx_tile_mode tile_mode,
+              bool is_mutable)
 {
    if (!formats[format].present)
       return WZYX;
@@ -388,7 +371,7 @@ fd6_pipe2swap(enum pipe_format format, enum a6xx_tile_mode tile_mode)
     * other hand, always respects swap.  We should return WZYX such that CCU
     * and TP agree each other.
     */
-   if (tile_mode)
+   if (tile_mode && !is_mutable)
       return WZYX;
 
    return formats[format].swap;
@@ -406,17 +389,18 @@ fd6_vertex_format(enum pipe_format format)
 enum a3xx_color_swap
 fd6_vertex_swap(enum pipe_format format)
 {
-   return fd6_pipe2swap(format, TILE6_LINEAR);
+   return fd6_pipe2swap(format, TILE6_LINEAR, false);
 }
 
 /* convert pipe format to texture sampler format: */
 enum a6xx_format
-fd6_texture_format(enum pipe_format format, enum a6xx_tile_mode tile_mode)
+fd6_texture_format(enum pipe_format format, enum a6xx_tile_mode tile_mode,
+                   bool is_mutable)
 {
    if (!formats[format].present)
       return FMT6_NONE;
 
-   if (!tile_mode) {
+   if (!tile_mode || is_mutable) {
       switch (format) {
       /* Linear ARGB/ABGR1555 has a special format for sampling (tiled
        * 1555/5551 formats always have the same swizzle and layout).
@@ -438,9 +422,10 @@ fd6_texture_format(enum pipe_format format, enum a6xx_tile_mode tile_mode)
 }
 
 enum a3xx_color_swap
-fd6_texture_swap(enum pipe_format format, enum a6xx_tile_mode tile_mode)
+fd6_texture_swap(enum pipe_format format, enum a6xx_tile_mode tile_mode,
+                 bool is_mutable)
 {
-   if (!tile_mode) {
+   if (!tile_mode || is_mutable) {
       switch (format) {
       case PIPE_FORMAT_A1R5G5B5_UNORM:
          return WZYX;
@@ -463,7 +448,7 @@ fd6_texture_swap(enum pipe_format format, enum a6xx_tile_mode tile_mode)
    if (format == PIPE_FORMAT_X24S8_UINT)
       return XYZW;
 
-   return fd6_pipe2swap(format, tile_mode);
+   return fd6_pipe2swap(format, tile_mode, is_mutable);
 }
 
 /* convert pipe format to MRT / copydest format used for render-target: */
@@ -480,9 +465,10 @@ fd6_color_format(enum pipe_format format, enum a6xx_tile_mode tile_mode)
 }
 
 enum a3xx_color_swap
-fd6_color_swap(enum pipe_format format, enum a6xx_tile_mode tile_mode)
+fd6_color_swap(enum pipe_format format, enum a6xx_tile_mode tile_mode,
+               bool is_mutable)
 {
-   return fd6_pipe2swap(format, tile_mode);
+   return fd6_pipe2swap(format, tile_mode, is_mutable);
 }
 
 enum a6xx_depth_format

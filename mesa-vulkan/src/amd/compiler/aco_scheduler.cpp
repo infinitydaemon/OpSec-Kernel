@@ -10,7 +10,6 @@
 #include "common/amdgfxregs.h"
 
 #include <algorithm>
-#include <unordered_set>
 #include <vector>
 
 #define SMEM_WINDOW_SIZE    (350 - ctx.num_waves * 35)
@@ -52,6 +51,10 @@ struct DownwardsCursor {
    RegisterDemand clause_demand;
    /* Maximum demand of instructions from source_idx to insert_idx_clause (both exclusive) */
    RegisterDemand total_demand;
+   /* Register demand immediately before the insert_idx_clause. */
+   RegisterDemand insert_demand_clause;
+   /* Register demand immediately before the insert_idx. */
+   RegisterDemand insert_demand;
 
    DownwardsCursor(int current_idx, RegisterDemand initial_clause_demand)
        : source_idx(current_idx - 1), insert_idx_clause(current_idx), insert_idx(current_idx + 1),
@@ -71,6 +74,8 @@ struct UpwardsCursor {
 
    /* Maximum demand of instructions from insert_idx (inclusive) to source_idx (exclusive) */
    RegisterDemand total_demand;
+   /* Register demand immediately before the first use instruction. */
+   RegisterDemand insert_demand;
 
    UpwardsCursor(int source_idx_) : source_idx(source_idx_)
    {
@@ -185,6 +190,12 @@ MoveState::downwards_init(int current_idx, bool improved_rar_, bool may_form_cla
    }
 
    DownwardsCursor cursor(current_idx, block->instructions[current_idx]->register_demand);
+   RegisterDemand temp = get_temp_registers(block->instructions[cursor.insert_idx - 1].get());
+   cursor.insert_demand = block->instructions[cursor.insert_idx - 1]->register_demand - temp;
+   temp = get_temp_registers(block->instructions[cursor.insert_idx_clause - 1].get());
+   cursor.insert_demand_clause =
+      block->instructions[cursor.insert_idx_clause - 1]->register_demand - temp;
+
    cursor.verify_invariants(block);
    return cursor;
 }
@@ -228,15 +239,15 @@ MoveState::downwards_move(DownwardsCursor& cursor, bool add_to_clause)
    }
 
    /* Check the new demand of the instructions being moved over */
-   const RegisterDemand candidate_diff = get_live_changes(instr);
+   const RegisterDemand candidate_diff = get_live_changes(instr.get());
    if (RegisterDemand(register_pressure - candidate_diff).exceeds(max_registers))
       return move_fail_pressure;
 
    /* New demand for the moved instruction */
-   const RegisterDemand temp = get_temp_registers(instr);
-   const RegisterDemand temp2 = get_temp_registers(block->instructions[dest_insert_idx - 1]);
-   const RegisterDemand new_demand =
-      block->instructions[dest_insert_idx - 1]->register_demand - temp2 + temp;
+   const RegisterDemand temp = get_temp_registers(instr.get());
+   const RegisterDemand insert_demand =
+      add_to_clause ? cursor.insert_demand_clause : cursor.insert_demand;
+   const RegisterDemand new_demand = insert_demand + temp;
    if (new_demand.exceeds(max_registers))
       return move_fail_pressure;
 
@@ -258,8 +269,10 @@ MoveState::downwards_move(DownwardsCursor& cursor, bool add_to_clause)
       cursor.clause_demand.update(new_demand);
    } else {
       cursor.clause_demand -= candidate_diff;
+      cursor.insert_demand -= candidate_diff;
       cursor.insert_idx--;
    }
+   cursor.insert_demand_clause -= candidate_diff;
 
    cursor.source_idx--;
    cursor.verify_invariants(block);
@@ -335,6 +348,8 @@ MoveState::upwards_update_insert_idx(UpwardsCursor& cursor)
 {
    cursor.insert_idx = cursor.source_idx;
    cursor.total_demand = block->instructions[cursor.insert_idx]->register_demand;
+   const RegisterDemand temp = get_temp_registers(block->instructions[cursor.insert_idx - 1].get());
+   cursor.insert_demand = block->instructions[cursor.insert_idx - 1]->register_demand - temp;
 }
 
 MoveResult
@@ -356,13 +371,11 @@ MoveState::upwards_move(UpwardsCursor& cursor)
 
    /* check if register pressure is low enough: the diff is negative if register pressure is
     * decreased */
-   const RegisterDemand candidate_diff = get_live_changes(instr);
-   const RegisterDemand temp = get_temp_registers(instr);
+   const RegisterDemand candidate_diff = get_live_changes(instr.get());
+   const RegisterDemand temp = get_temp_registers(instr.get());
    if (RegisterDemand(cursor.total_demand + candidate_diff).exceeds(max_registers))
       return move_fail_pressure;
-   const RegisterDemand temp2 = get_temp_registers(block->instructions[cursor.insert_idx - 1]);
-   const RegisterDemand new_demand =
-      block->instructions[cursor.insert_idx - 1]->register_demand - temp2 + candidate_diff + temp;
+   const RegisterDemand new_demand = cursor.insert_demand + candidate_diff + temp;
    if (new_demand.exceeds(max_registers))
       return move_fail_pressure;
 
@@ -374,8 +387,7 @@ MoveState::upwards_move(UpwardsCursor& cursor)
    for (int i = cursor.insert_idx + 1; i <= cursor.source_idx; i++)
       block->instructions[i]->register_demand += candidate_diff;
    cursor.total_demand += candidate_diff;
-
-   cursor.total_demand.update(block->instructions[cursor.source_idx]->register_demand);
+   cursor.insert_demand += candidate_diff;
 
    cursor.insert_idx++;
    cursor.source_idx++;
@@ -554,7 +566,7 @@ HazardResult
 perform_hazard_query(hazard_query* query, Instruction* instr, bool upwards)
 {
    /* don't schedule discards downwards */
-   if (!upwards && instr->opcode == aco_opcode::p_exit_early_if)
+   if (!upwards && instr->opcode == aco_opcode::p_exit_early_if_not)
       return hazard_fail_unreorderable;
 
    /* In Primitive Ordered Pixel Shading, await overlapped waves as late as possible, and notify
@@ -601,7 +613,7 @@ perform_hazard_query(hazard_query* query, Instruction* instr, bool upwards)
        instr->opcode == aco_opcode::s_sendmsg_rtn_b32 ||
        instr->opcode == aco_opcode::s_sendmsg_rtn_b64 ||
        instr->opcode == aco_opcode::p_end_with_regs || instr->opcode == aco_opcode::s_nop ||
-       instr->opcode == aco_opcode::s_sleep)
+       instr->opcode == aco_opcode::s_sleep || instr->opcode == aco_opcode::s_trap)
       return hazard_fail_unreorderable;
 
    memory_event_set instr_set;
@@ -1245,7 +1257,6 @@ schedule_program(Program* program)
    /* Allowing the scheduler to reduce the number of waves to as low as 5
     * improves performance of Thrones of Britannia significantly and doesn't
     * seem to hurt anything else. */
-   // TODO: account for possible uneven num_waves on GFX10+
    unsigned wave_fac = program->dev.physical_vgprs / 256;
    if (program->num_waves <= 5 * wave_fac)
       ctx.num_waves = program->num_waves;
@@ -1259,22 +1270,20 @@ schedule_program(Program* program)
    ctx.num_waves = std::min<uint16_t>(ctx.num_waves, program->num_waves);
    ctx.num_waves = max_suitable_waves(program, ctx.num_waves);
 
+   assert(ctx.num_waves >= program->min_waves);
+   ctx.mv.max_registers = get_addr_regs_from_waves(program, ctx.num_waves);
+   ctx.mv.max_registers.vgpr -= 2;
+
    /* VMEM_MAX_MOVES and such assume pre-GFX10 wave count */
    ctx.num_waves = std::max<uint16_t>(ctx.num_waves / wave_fac, 1);
-
-   assert(ctx.num_waves > 0);
-   ctx.mv.max_registers = {int16_t(get_addr_vgpr_from_waves(program, ctx.num_waves * wave_fac) - 2),
-                           int16_t(get_addr_sgpr_from_waves(program, ctx.num_waves * wave_fac))};
 
    /* NGG culling shaders are very sensitive to position export scheduling.
     * Schedule less aggressively when early primitive export is used, and
     * keep the position export at the very bottom when late primitive export is used.
     */
-   if (program->info.has_ngg_culling && program->stage.num_sw_stages() == 1) {
-      if (!program->info.has_ngg_early_prim_export)
-         ctx.schedule_pos_exports = false;
-      else
-         ctx.schedule_pos_export_div = 4;
+   if (program->info.hw_stage == AC_HW_NEXT_GEN_GEOMETRY_SHADER) {
+      ctx.schedule_pos_exports = program->info.schedule_ngg_pos_exports;
+      ctx.schedule_pos_export_div = 4;
    }
 
    for (Block& block : program->blocks)
@@ -1287,33 +1296,9 @@ schedule_program(Program* program)
    }
    update_vgpr_sgpr_demand(program, new_demand);
 
-/* if enabled, this code asserts that register_demand is updated correctly */
-#if 0
-   int prev_num_waves = program->num_waves;
-   const RegisterDemand prev_max_demand = program->max_reg_demand;
-
-   std::vector<RegisterDemand> block_demands(program->blocks.size());
-   std::vector<std::vector<RegisterDemand>> register_demands(program->blocks.size());
-   for (unsigned j = 0; j < program->blocks.size(); j++) {
-      Block &b = program->blocks[j];
-      block_demands[j] = b.register_demand;
-      register_demands[j].reserve(b.instructions.size());
-      for (unsigned i = 0; i < b.instructions.size(); i++)
-         register_demands[j].emplace_back(b.instructions[i]->register_demand);
-   }
-
-   aco::live_var_analysis(program);
-
-   for (unsigned j = 0; j < program->blocks.size(); j++) {
-      Block &b = program->blocks[j];
-      for (unsigned i = 0; i < b.instructions.size(); i++)
-         assert(register_demands[j][i] == b.instructions[i]->register_demand);
-      assert(b.register_demand == block_demands[j]);
-   }
-
-   assert(program->max_reg_demand == prev_max_demand);
-   assert(program->num_waves == prev_num_waves);
-#endif
+   /* Validate live variable information */
+   if (!validate_live_vars(program))
+      abort();
 }
 
 } // namespace aco

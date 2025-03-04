@@ -43,12 +43,6 @@ alu_src_get_fotid_mask(nir_alu_instr *instr, unsigned idx)
 static void
 update_fotid_alu(nir_builder *b, nir_alu_instr *instr, const radv_nir_opt_tid_function_options *options)
 {
-   /* For legacy reasons these are ALU instructions
-    * when they should be intrinsics.
-    */
-   if (nir_op_is_derivative(instr->op))
-      return;
-
    const nir_op_info *info = &nir_op_infos[instr->op];
 
    unsigned res = BITFIELD_MASK(instr->def.num_components);
@@ -74,11 +68,17 @@ update_fotid_intrinsic(nir_builder *b, nir_intrinsic_instr *instr, const radv_ni
    case nir_intrinsic_load_local_invocation_id: {
       if (b->shader->info.workgroup_size_variable)
          break;
-      /* This assumes linear subgroup dispatch. */
+
+      /* subgroup_invocation_id <-> local_id mapping is not strictly defined by
+       * the spec.  We assume linear dispatch, and with DERIVATIVE_GROUP_QUADS
+       * linear dispatch of quads.
+       */
       unsigned partial_size = 1;
       for (unsigned i = 0; i < 3; i++) {
          partial_size *= b->shader->info.workgroup_size[i];
-         if (partial_size == options->hw_subgroup_size)
+
+         const bool quad_x = i == 0 && b->shader->info.derivative_group == DERIVATIVE_GROUP_QUADS;
+         if (partial_size * (quad_x ? 2 : 1) == options->hw_subgroup_size)
             instr->instr.pass_flags = (uint8_t)BITFIELD_MASK(i + 1);
       }
       if (partial_size <= options->hw_subgroup_size)
@@ -86,6 +86,7 @@ update_fotid_intrinsic(nir_builder *b, nir_intrinsic_instr *instr, const radv_ni
       break;
    }
    case nir_intrinsic_load_local_invocation_index: {
+      assert(b->shader->info.derivative_group != DERIVATIVE_GROUP_QUADS);
       if (b->shader->info.workgroup_size_variable)
          break;
       unsigned workgroup_size =
@@ -195,11 +196,27 @@ constant_fold_scalar(nir_scalar s, unsigned invocation_id, nir_shader *shader, n
          return true;
       }
       case nir_intrinsic_load_local_invocation_id: {
+         const unsigned size_x = shader->info.workgroup_size[0];
+         const unsigned size_y = shader->info.workgroup_size[1];
          unsigned local_ids[3];
-         local_ids[2] = invocation_id / (shader->info.workgroup_size[0] * shader->info.workgroup_size[1]);
-         unsigned xy = invocation_id % (shader->info.workgroup_size[0] * shader->info.workgroup_size[1]);
-         local_ids[1] = xy / shader->info.workgroup_size[0];
-         local_ids[0] = xy % shader->info.workgroup_size[0];
+
+         if (shader->info.derivative_group == DERIVATIVE_GROUP_QUADS) {
+            /* x = (invocation_id / 4 * 2 + invocation_id % 2) % block_width */
+            const unsigned quad_x = invocation_id / 4 * 2;
+            const unsigned quad_sub_x = invocation_id % 2;
+            local_ids[0] = (quad_x + quad_sub_x) % size_x;
+
+            /* y = (invocation_id / block_width / 2 * 2 + (invocation_id / 2) % 2) % block_height */
+            const unsigned quad_y = invocation_id / size_x / 2 * 2;
+            const unsigned quad_sub_y = (invocation_id / 2) % 2;
+            local_ids[1] = (quad_y + quad_sub_y) % size_y;
+         } else {
+            const unsigned xy = invocation_id % (size_x * size_y);
+            local_ids[0] = xy % size_x;
+            local_ids[1] = xy / size_x;
+         }
+
+         local_ids[2] = invocation_id / (size_x * size_y);
          *dest = nir_const_value_for_uint(local_ids[s.comp], s.def->bit_size);
          return true;
       }

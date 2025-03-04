@@ -3,8 +3,7 @@
  * SPDX-License-Identifier: MIT
  */
 
-#ifndef BRW_ASM_INTERNAL_H
-#define BRW_ASM_INTERNAL_H
+#pragma once
 
 /* Assembler internal state and definitions used by the brw_gram/brw_lex. */
 
@@ -15,7 +14,7 @@
 #include "compiler/brw_reg.h"
 #include "compiler/brw_reg_type.h"
 #include "compiler/brw_eu_defines.h"
-#include "compiler/brw_inst.h"
+#include "compiler/brw_eu_inst.h"
 #include "compiler/brw_eu.h"
 #include "dev/intel_device_info.h"
 #include "util/list.h"
@@ -29,6 +28,7 @@ char *lex_text(void);
 
 extern struct brw_codegen *p;
 extern int errors;
+extern bool compaction_warning_given;
 extern const char *input_filename;
 
 extern struct list_head instr_labels;
@@ -66,6 +66,7 @@ struct options {
    unsigned access_mode:1;
    unsigned compression_control:2;
    unsigned thread_control:2;
+   unsigned branch_control:1;
    unsigned no_dd_check:1; // Dependency control
    unsigned no_dd_clear:1; // Dependency control
    unsigned mask_control:1;
@@ -101,6 +102,3 @@ struct target_label {
    char *name;
    int offset;
 };
-
-#endif /* BRW_ASM_H */
-

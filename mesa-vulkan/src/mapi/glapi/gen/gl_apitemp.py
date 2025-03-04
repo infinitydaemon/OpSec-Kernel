@@ -27,6 +27,7 @@
 import argparse
 
 import gl_XML, glX_XML
+import static_data
 import license
 
 class PrintGlOffsets(gl_XML.gl_print_base):
@@ -57,7 +58,7 @@ class PrintGlOffsets(gl_XML.gl_print_base):
         t_string = ""
         comma = ""
 
-        if f.is_static_entry_point(name):
+        if name in static_data.libgl_public_functions:
             keyword = "KEYWORD1"
         else:
             keyword = "KEYWORD1_ALT"
@@ -90,10 +91,10 @@ class PrintGlOffsets(gl_XML.gl_print_base):
             dispatch = "DISPATCH"
 
         need_proto = False
-        if not f.is_static_entry_point(name):
+        if name not in static_data.libgl_public_functions:
             need_proto = True
         elif self.es:
-            cat, num = api.get_category_for_name(name)
+            cat, _ = api.get_category_for_name(name)
             if (cat.startswith("es") or cat.startswith("GL_OES")):
                 need_proto = True
         if need_proto:
@@ -195,13 +196,6 @@ _glapi_proc DISPATCH_TABLE_NAME[] = {""")
         for f in api.functionIterateByOffset():
             print('   TABLE_ENTRY(%s),' % (f.dispatch_name()))
 
-        print('   /* A whole bunch of no-op functions.  These might be called')
-        print('    * when someone tries to call a dynamically-registered')
-        print('    * extension function without a current rendering context.')
-        print('    */')
-        for i in range(1, 100):
-            print('   TABLE_ENTRY(Unused),')
-
         print('};')
         print('#endif /* DISPATCH_TABLE_NAME */')
         print('')
@@ -257,12 +251,12 @@ _glapi_proc UNUSED_TABLE_NAME[] = {""")
         # classify the entry points
         for name in func.entry_points:
             if func.has_different_protocol(name):
-                if func.is_static_entry_point(name):
+                if name in static_data.libgl_public_functions:
                     proto_names.append(name)
                 else:
                     proto_stubs.append(name)
             else:
-                if func.is_static_entry_point(name):
+                if name in static_data.libgl_public_functions:
                     normal_names.append(name)
                 else:
                     normal_stubs.append(name)
@@ -281,6 +275,9 @@ _glapi_proc UNUSED_TABLE_NAME[] = {""")
             normal_ents, proto_ents = self.classifyEntryPoints(func)
             normal_entry_points.append((func, normal_ents))
             proto_entry_points.append((func, proto_ents))
+
+        print('#define _gloffset_COUNT %d' % static_data.function_count)
+        print('')
 
         print('#ifndef _GLAPI_SKIP_NORMAL_ENTRY_POINTS')
         print('')

@@ -11,7 +11,7 @@
 #include "vk_util.h"
 
 #define NVK_MAX_SETS 32
-#define NVK_MAX_PUSH_SIZE 128
+#define NVK_MAX_PUSH_SIZE 256
 #define NVK_MAX_DYNAMIC_BUFFERS 64
 #define NVK_MAX_RTS 8
 #define NVK_MAX_SAMPLES 8
@@ -34,6 +34,12 @@
 
 /* Max size of a bound cbuf */
 #define NVK_MAX_CBUF_SIZE (1u << 16)
+
+#define NVK_MAX_IMAGE_PLANES 3
+#define NVK_MAX_SAMPLER_PLANES 2
+
+/* Device Generated Commands */
+#define NVK_DGC_ALIGN 0x100
 
 struct nvk_addr_range {
    uint64_t addr;

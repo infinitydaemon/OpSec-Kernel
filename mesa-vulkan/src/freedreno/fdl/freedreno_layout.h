@@ -1,24 +1,6 @@
 /*
  * Copyright © 2019 Google, Inc.
- *
- * Permission is hereby granted, free of charge, to any person obtaining a
- * copy of this software and associated documentation files (the "Software"),
- * to deal in the Software without restriction, including without limitation
- * the rights to use, copy, modify, merge, publish, distribute, sublicense,
- * and/or sell copies of the Software, and to permit persons to whom the
- * Software is furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice (including the next
- * paragraph) shall be included in all copies or substantial portions of the
- * Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
- * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
- * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
- * IN THE SOFTWARE.
+ * SPDX-License-Identifier: MIT
  */
 
 #ifndef FREEDRENO_LAYOUT_H_
@@ -32,6 +14,7 @@
 #include "util/u_math.h"
 
 #include "common/freedreno_common.h"
+#include "common/freedreno_dev_info.h"
 
 BEGINC;
 
@@ -118,6 +101,7 @@ struct fdl_layout {
    bool ubwc : 1;
    bool layer_first : 1; /* see above description */
    bool tile_all : 1;
+   bool is_mutable : 1;
 
    /* Note that for tiled textures, beyond a certain mipmap level (ie.
     * when width is less than block size) things switch to linear.  In
@@ -241,7 +225,7 @@ fdl_tile_mode(const struct fdl_layout *layout, int level)
 static inline bool
 fdl_ubwc_enabled(const struct fdl_layout *layout, int level)
 {
-   return layout->ubwc;
+   return layout->ubwc && !fdl_level_linear(layout, level);
 }
 
 const char *fdl_tile_mode_desc(const struct fdl_layout *layout, int level);
@@ -253,10 +237,11 @@ void fdl5_layout(struct fdl_layout *layout, enum pipe_format format,
                  uint32_t depth0, uint32_t mip_levels, uint32_t array_size,
                  bool is_3d);
 
-bool fdl6_layout(struct fdl_layout *layout, enum pipe_format format,
-                 uint32_t nr_samples, uint32_t width0, uint32_t height0,
-                 uint32_t depth0, uint32_t mip_levels, uint32_t array_size,
-                 bool is_3d, struct fdl_explicit_layout *plane_layout);
+bool fdl6_layout(struct fdl_layout *layout, const struct fd_dev_info *info,
+                 enum pipe_format format, uint32_t nr_samples, uint32_t width0,
+                 uint32_t height0, uint32_t depth0, uint32_t mip_levels,
+                 uint32_t array_size, bool is_3d, bool is_mutable,
+                 struct fdl_explicit_layout *plane_layout);
 
 static inline void
 fdl_set_pitchalign(struct fdl_layout *layout, unsigned pitchalign)
@@ -296,7 +281,6 @@ struct fdl_view_args {
    enum pipe_format format;
    enum fdl_view_type type;
    enum fdl_chroma_location chroma_offsets[2];
-   bool ubwc_fc_mutable;
 };
 
 #define FDL6_TEX_CONST_DWORDS 16
@@ -313,6 +297,8 @@ struct fdl6_view {
    bool need_y2_align;
 
    bool ubwc_enabled;
+   bool is_mutable;
+   uint8_t color_swap;
 
    enum pipe_format format;
 
@@ -351,6 +337,41 @@ fdl6_buffer_view_init(uint32_t *descriptor, enum pipe_format format,
 void
 fdl6_format_swiz(enum pipe_format format, bool has_z24uint_s8uint,
                  unsigned char *format_swiz);
+
+enum fdl_macrotile_mode {
+   FDL_MACROTILE_4_CHANNEL,
+   FDL_MACROTILE_8_CHANNEL,
+   /* Used internally by turnip */
+   FDL_MACROTILE_INVALID = ~0,
+};
+
+/* Parameters that affect UBWC swizzling. Note that because we don't handle
+ * compression, this isn't a complete set of knobs. See the documentation in
+ * fd6_tiled_memcpy.c for a description of each one.
+ */
+struct fdl_ubwc_config {
+   unsigned highest_bank_bit;
+   unsigned bank_swizzle_levels;
+   enum fdl_macrotile_mode macrotile_mode;
+};
+
+void
+fdl6_memcpy_linear_to_tiled(uint32_t x_start, uint32_t y_start,
+                            uint32_t width, uint32_t height,
+                            char *dst, const char *src,
+                            const struct fdl_layout *dst_layout,
+                            unsigned dst_miplevel,
+                            uint32_t src_pitch,
+                            const struct fdl_ubwc_config *config);
+
+void
+fdl6_memcpy_tiled_to_linear(uint32_t x_start, uint32_t y_start,
+                            uint32_t width, uint32_t height,
+                            char *dst, const char *src,
+                            const struct fdl_layout *src_layout,
+                            unsigned src_miplevel,
+                            uint32_t dst_pitch,
+                            const struct fdl_ubwc_config *config);
 
 ENDC;
 

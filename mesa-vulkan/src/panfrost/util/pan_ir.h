@@ -105,6 +105,7 @@ struct panfrost_compile_inputs {
    } blend;
    bool no_idvs;
    bool no_ubo_to_push;
+   uint32_t view_mask;
 
    /* Used on Valhall.
     *
@@ -120,6 +121,10 @@ struct panfrost_compile_inputs {
       struct {
          uint32_t rt_conv[8];
       } bifrost;
+      struct {
+         /* Use LD_VAR_BUF[_IMM] instead of LD_VAR[_IMM] to load varyings. */
+         bool use_ld_var_buf;
+      } valhall;
    };
 };
 
@@ -178,6 +183,11 @@ struct bifrost_shader_info {
 
 struct midgard_shader_info {
    unsigned first_tag;
+   union {
+      struct {
+         bool reads_raw_vertex_id;
+      } vs;
+   };
 };
 
 struct pan_shader_info {
@@ -280,6 +290,9 @@ struct pan_shader_info {
       struct pan_shader_varying input[PAN_MAX_VARYINGS];
       unsigned output_count;
       struct pan_shader_varying output[PAN_MAX_VARYINGS];
+
+      /* Bitfield of noperspective varyings, starting at VARYING_SLOT_VAR0 */
+      uint32_t noperspective;
    } varyings;
 
    /* UBOs to push to Register Mapped Uniforms (Midgard) or Fast Access
@@ -380,11 +393,27 @@ void pan_print_alu_type(nir_alu_type t, FILE *fp);
 #define PAN_WRITEOUT_S 4
 #define PAN_WRITEOUT_2 8
 
+/* Specify the mediump lowering behavior for pan_nir_collect_varyings */
+enum pan_mediump_vary {
+   /* Always assign a 32-bit format to mediump varyings */
+   PAN_MEDIUMP_VARY_32BIT,
+   /* Assign a 16-bit format to varyings with smooth interpolation, and a
+    * 32-bit format to varyings with flat interpolation */
+   PAN_MEDIUMP_VARY_SMOOTH_16BIT,
+};
+
 bool pan_nir_lower_zs_store(nir_shader *nir);
 bool pan_nir_lower_store_component(nir_shader *shader);
 
+bool pan_nir_lower_vertex_id(nir_shader *shader);
+
 bool pan_nir_lower_image_ms(nir_shader *shader);
-bool pan_nir_lower_64bit_intrin(nir_shader *shader);
+
+bool pan_nir_lower_frag_coord_zw(nir_shader *shader);
+bool pan_nir_lower_noperspective_vs(nir_shader *shader);
+bool pan_nir_lower_noperspective_fs(nir_shader *shader);
+bool pan_nir_lower_static_noperspective(nir_shader *shader,
+                                        uint32_t noperspective_varyings);
 
 bool pan_lower_helper_invocation(nir_shader *shader);
 bool pan_lower_sample_pos(nir_shader *shader);
@@ -392,7 +421,9 @@ bool pan_lower_xfb(nir_shader *nir);
 
 bool pan_lower_image_index(nir_shader *shader, unsigned vs_img_attrib_offset);
 
-void pan_nir_collect_varyings(nir_shader *s, struct pan_shader_info *info);
+uint32_t pan_nir_collect_noperspective_varyings_fs(nir_shader *s);
+void pan_nir_collect_varyings(nir_shader *s, struct pan_shader_info *info,
+                              enum pan_mediump_vary mediump);
 
 /*
  * Helper returning the subgroup size. Generally, this is equal to the number of

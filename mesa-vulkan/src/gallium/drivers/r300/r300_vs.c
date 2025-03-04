@@ -76,7 +76,7 @@ static void r300_shader_read_vs_outputs(
                 assert(index == 0);
                 /* Draw does clip vertex for us. */
                 if (r300->screen->caps.has_tcl) {
-                    fprintf(stderr, "r300 VP: cannot handle clip vertex output.\n");
+                    unreachable();
                 }
                 break;
 
@@ -198,6 +198,12 @@ void r300_translate_vertex_shader(struct r300_context *r300,
     compiler.Base.debug = &r300->context.debug;
     compiler.Base.is_r500 = r300->screen->caps.is_r500;
     compiler.Base.disable_optimizations = DBG_ON(r300, DBG_NO_OPT);
+    /* Only R500 has few IEEE math opcodes. */
+    if (r300->screen->options.ieeemath && r300->screen->caps.is_r500) {
+        compiler.Base.math_rules = RC_MATH_IEEE;
+    } else if (r300->screen->options.ffmath) {
+        compiler.Base.math_rules = RC_MATH_FF;
+    }
     compiler.Base.has_half_swizzles = false;
     compiler.Base.has_presub = false;
     compiler.Base.has_omod = false;
@@ -217,8 +223,7 @@ void r300_translate_vertex_shader(struct r300_context *r300,
     r300_tgsi_to_rc(&ttr, shader->state.tokens);
 
     if (ttr.error) {
-        fprintf(stderr, "r300 VP: Cannot translate a shader. "
-                "Corresponding draws will be skipped.\n");
+        vs->error = strdup("Cannot translate shader from TGSI");
         vs->dummy = true;
         return;
     }
@@ -237,9 +242,7 @@ void r300_translate_vertex_shader(struct r300_context *r300,
     /* Invoke the compiler */
     r3xx_compile_vertex_program(&compiler);
     if (compiler.Base.Error) {
-        fprintf(stderr, "r300 VP: Compiler error:\n%sCorresponding draws will be"
-                " skipped.\n", compiler.Base.ErrorMsg);
-
+        vs->error = strdup(compiler.Base.ErrorMsg);
         rc_destroy(&compiler.Base);
         vs->dummy = true;
         return;

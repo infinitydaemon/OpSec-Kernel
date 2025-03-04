@@ -134,6 +134,7 @@ Enum("intel_platform",
       EnumValue("INTEL_PLATFORM_ARL_H", group_end="ARL"),
       "INTEL_PLATFORM_LNL",
       "INTEL_PLATFORM_BMG",
+      "INTEL_PLATFORM_PTL",
       ])
 
 Struct("intel_memory_class_instance",
@@ -446,7 +447,8 @@ Struct("intel_device_info",
 
         Member("unsigned", "max_cs_threads",
                comment=dedent("""\
-               Maximum Compute Shader threads.
+               Maximum Compute Shader threads per subslice.
+               Actual maximum compute shader threads is max_cs_threads * subslices.
 
                Thread count * number of EUs per subslice""")),
 
@@ -481,6 +483,7 @@ Struct("intel_device_info",
         Member("int", "simulator_id"),
         Member("char", "name", array="INTEL_DEVICE_MAX_NAME_SIZE"),
         Member("bool", "no_hw"),
+        Member("bool", "probe_forced", comment="Device needed INTEL_FORCE_PROBE"),
         Member("intel_device_info_mem_desc", "mem"),
         Member("intel_device_info_pat_desc", "pat"),
         Member("intel_cooperative_matrix_configuration",

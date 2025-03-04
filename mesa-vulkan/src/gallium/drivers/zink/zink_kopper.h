@@ -90,6 +90,8 @@ struct kopper_displaytarget
 
    struct kopper_loader_info info;
 
+   bool async; // True if submits should go through zink_screen::flush_queue
+
    VkSurfaceCapabilitiesKHR caps;
    VkImageFormatListCreateInfo format_list;
    enum kopper_type type;
@@ -132,6 +134,13 @@ static inline bool
 zink_kopper_acquired(const struct kopper_displaytarget *cdt, uint32_t idx)
 {
    return idx != UINT32_MAX && cdt->swapchain->images[idx].acquired;
+}
+
+static inline struct pipe_screen * kopper_get_zink_screen(struct pipe_screen *screen)
+{
+   struct pipe_screen *pscreen = screen->get_driver_pipe_screen ?
+      screen->get_driver_pipe_screen(screen) : screen;
+   return pscreen;
 }
 
 void

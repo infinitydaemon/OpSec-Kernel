@@ -62,7 +62,6 @@ def _main():
 
     print(generate_defines(functions))
     if target == "gldispatch":
-        print(generate_table(functions, allFunctions))
         print(generate_noop_array(functions))
         print(generate_public_stubs(functions))
     print(generate_public_entries(functions))
@@ -81,14 +80,6 @@ def generate_defines(functions):
         text += "GLAPI {f.rt} GLAPIENTRY {f.name}({f.decArgs});\n".format(f=func)
     text += "#undef MAPI_TMP_DEFINES\n"
     text += "#endif /* MAPI_TMP_DEFINES */\n"
-    return text
-
-def generate_table(functions, allFunctions):
-    text = "#ifdef MAPI_TMP_TABLE\n"
-    text += "#define MAPI_TABLE_NUM_STATIC %d\n" % (len(allFunctions))
-    text += "#define MAPI_TABLE_NUM_DYNAMIC %d\n" % (genCommon.MAPI_TABLE_NUM_DYNAMIC,)
-    text += "#undef MAPI_TMP_TABLE\n"
-    text += "#endif /* MAPI_TMP_TABLE */\n"
     return text
 
 def generate_noop_array(functions):
@@ -111,15 +102,11 @@ def generate_noop_array(functions):
     text += "const mapi_func table_noop_array[] = {\n"
     for func in functions:
         text += "   (mapi_func) noop{f.basename},\n".format(f=func)
-    for i in range(genCommon.MAPI_TABLE_NUM_DYNAMIC - 1):
-        text += "   (mapi_func) noop_generic,\n"
-    text += "   (mapi_func) noop_generic\n"
     text += "};\n\n"
     text += "#else /* !MESA_DEBUG */\n\n"
     text += "const mapi_func table_noop_array[] = {\n"
-    for i in range(len(functions) + genCommon.MAPI_TABLE_NUM_DYNAMIC - 1):
+    for i in range(len(functions)):
         text += "   (mapi_func) noop_generic,\n"
-    text += "   (mapi_func) noop_generic\n"
 
     text += "};\n\n"
     text += "#endif /* MESA_DEBUG */\n"
@@ -146,7 +133,7 @@ def generate_public_entries(functions):
         text += r"""
 GLAPI {f.rt} GLAPIENTRY {f.name}({f.decArgs})
 {{
-   const struct _glapi_table *_tbl = entry_current_get();
+   const struct _glapi_table *_tbl = GET_DISPATCH();
    mapi_func _func = ((const mapi_func *) _tbl)[{f.slot}];
    {retStr}(({f.rt} (GLAPIENTRY *)({f.decArgs})) _func)({f.callArgs});
 }}

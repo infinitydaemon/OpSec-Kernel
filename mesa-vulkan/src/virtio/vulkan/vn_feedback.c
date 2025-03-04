@@ -99,8 +99,12 @@ vn_feedback_buffer_create(struct vn_device *dev,
    if (result != VK_SUCCESS)
       goto out_free_memory;
 
-   result = vn_MapMemory(dev_handle, fb_buf->mem_handle, 0, VK_WHOLE_SIZE, 0,
-                         &fb_buf->data);
+   const VkMemoryMapInfo map_info = {
+      .sType = VK_STRUCTURE_TYPE_MEMORY_MAP_INFO,
+      .memory = fb_buf->mem_handle,
+      .size = VK_WHOLE_SIZE,
+   };
+   result = vn_MapMemory2(dev_handle, &map_info, &fb_buf->data);
    if (result != VK_SUCCESS)
       goto out_free_memory;
 
@@ -127,17 +131,23 @@ vn_feedback_buffer_destroy(struct vn_device *dev,
 {
    VkDevice dev_handle = vn_device_to_handle(dev);
 
-   vn_UnmapMemory(dev_handle, fb_buf->mem_handle);
+   const VkMemoryUnmapInfo unmap_info = {
+      .sType = VK_STRUCTURE_TYPE_MEMORY_UNMAP_INFO,
+      .memory = fb_buf->mem_handle,
+   };
+   vn_UnmapMemory2(dev_handle, &unmap_info);
    vn_FreeMemory(dev_handle, fb_buf->mem_handle, alloc);
    vn_DestroyBuffer(dev_handle, fb_buf->buf_handle, alloc);
    vk_free(alloc, fb_buf);
 }
 
 static inline uint32_t
-vn_get_feedback_buffer_alignment(struct vn_feedback_buffer *fb_buf)
+vn_get_feedback_buffer_alignment(struct vn_device *dev,
+                                 struct vn_feedback_buffer *fb_buf)
 {
    struct vn_buffer *buf = vn_buffer_from_handle(fb_buf->buf_handle);
-   return buf->requirements.memory.memoryRequirements.alignment;
+   return align(buf->requirements.memory.memoryRequirements.alignment,
+                dev->physical_device->wa_min_fb_align);
 }
 
 static VkResult
@@ -153,7 +163,7 @@ vn_feedback_pool_grow_locked(struct vn_feedback_pool *pool)
       return result;
 
    pool->used = 0;
-   pool->alignment = vn_get_feedback_buffer_alignment(fb_buf);
+   pool->alignment = vn_get_feedback_buffer_alignment(pool->dev, fb_buf);
 
    list_add(&fb_buf->head, &pool->fb_bufs);
 

@@ -248,6 +248,7 @@ iris_destroy_context(struct pipe_context *ctx)
 
    iris_destroy_batches(ice);
    iris_destroy_binder(&ice->state.binder);
+   iris_bo_unreference(ice->draw.generation.ring_bo);
 
    iris_utrace_fini(ice);
 
@@ -259,6 +260,9 @@ iris_destroy_context(struct pipe_context *ctx)
 
 #define genX_call(devinfo, func, ...)             \
    switch ((devinfo)->verx10) {                   \
+   case 300:                                      \
+      gfx30_##func(__VA_ARGS__);                  \
+      break;                                      \
    case 200:                                      \
       gfx20_##func(__VA_ARGS__);                  \
       break;                                      \
@@ -280,6 +284,12 @@ iris_destroy_context(struct pipe_context *ctx)
    default:                                       \
       unreachable("Unknown hardware generation"); \
    }
+
+#ifndef INTEL_USE_ELK
+static inline void gfx8_init_state(struct iris_context *ice) { unreachable("no elk support"); }
+static inline void gfx8_init_blorp(struct iris_context *ice) { unreachable("no elk support"); }
+static inline void gfx8_init_query(struct iris_context *ice) { unreachable("no elk support"); }
+#endif
 
 /**
  * Create a context.

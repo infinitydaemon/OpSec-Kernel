@@ -26,6 +26,7 @@
 #include "radv_shader_object.h"
 #include "radv_sqtt.h"
 
+#include "vk_render_pass.h"
 #include "vk_shader_module.h"
 
 #ifdef __cplusplus
@@ -45,6 +46,10 @@ struct radv_meta_saved_state {
    uint32_t flags;
 
    struct radv_descriptor_set *old_descriptor_set0;
+   bool old_descriptor_set0_valid;
+   uint64_t old_descriptor_buffer_addr0;
+   uint64_t old_descriptor_buffer0;
+
    struct radv_graphics_pipeline *old_graphics_pipeline;
    struct radv_compute_pipeline *old_compute_pipeline;
    struct radv_dynamic_state dynamic;
@@ -55,9 +60,9 @@ struct radv_meta_saved_state {
 
    struct radv_rendering_state render;
 
-   unsigned active_pipeline_gds_queries;
-   unsigned active_prims_gen_gds_queries;
-   unsigned active_prims_xfb_gds_queries;
+   unsigned active_emulated_pipeline_queries;
+   unsigned active_emulated_prims_gen_queries;
+   unsigned active_emulated_prims_xfb_queries;
    unsigned active_occlusion_queries;
 
    bool predicating;
@@ -101,70 +106,64 @@ radv_meta_dst_layout_to_layout(enum radv_meta_dst_layout layout)
 
 extern const VkFormat radv_fs_key_format_exemplars[NUM_META_FS_KEYS];
 
+enum radv_meta_object_key_type {
+   RADV_META_OBJECT_KEY_NOOP = VK_META_OBJECT_KEY_DRIVER_OFFSET,
+   RADV_META_OBJECT_KEY_BLIT,
+   RADV_META_OBJECT_KEY_BLIT2D,
+   RADV_META_OBJECT_KEY_BLIT2D_COLOR,
+   RADV_META_OBJECT_KEY_BLIT2D_DEPTH,
+   RADV_META_OBJECT_KEY_BLIT2D_STENCIL,
+   RADV_META_OBJECT_KEY_FILL_BUFFER,
+   RADV_META_OBJECT_KEY_COPY_BUFFER,
+   RADV_META_OBJECT_KEY_COPY_IMAGE_TO_BUFFER,
+   RADV_META_OBJECT_KEY_COPY_BUFFER_TO_IMAGE,
+   RADV_META_OBJECT_KEY_COPY_BUFFER_TO_IMAGE_R32G32B32,
+   RADV_META_OBJECT_KEY_COPY_IMAGE,
+   RADV_META_OBJECT_KEY_COPY_IMAGE_R32G32B32,
+   RADV_META_OBJECT_KEY_COPY_VRS_HTILE,
+   RADV_META_OBJECT_KEY_CLEAR_CS,
+   RADV_META_OBJECT_KEY_CLEAR_CS_R32G32B32,
+   RADV_META_OBJECT_KEY_CLEAR_COLOR,
+   RADV_META_OBJECT_KEY_CLEAR_DS,
+   RADV_META_OBJECT_KEY_CLEAR_HTILE,
+   RADV_META_OBJECT_KEY_CLEAR_DCC_COMP_TO_SINGLE,
+   RADV_META_OBJECT_KEY_FAST_CLEAR_ELIMINATE,
+   RADV_META_OBJECT_KEY_DCC_DECOMPRESS,
+   RADV_META_OBJECT_KEY_DCC_RETILE,
+   RADV_META_OBJECT_KEY_HTILE_EXPAND_GFX,
+   RADV_META_OBJECT_KEY_HTILE_EXPAND_CS,
+   RADV_META_OBJECT_KEY_FMASK_COPY,
+   RADV_META_OBJECT_KEY_FMASK_EXPAND,
+   RADV_META_OBJECT_KEY_FMASK_DECOMPRESS,
+   RADV_META_OBJECT_KEY_RESOLVE_HW,
+   RADV_META_OBJECT_KEY_RESOLVE_CS,
+   RADV_META_OBJECT_KEY_RESOLVE_COLOR_CS,
+   RADV_META_OBJECT_KEY_RESOLVE_DS_CS,
+   RADV_META_OBJECT_KEY_RESOLVE_FS,
+   RADV_META_OBJECT_KEY_RESOLVE_COLOR_FS,
+   RADV_META_OBJECT_KEY_RESOLVE_DS_FS,
+   RADV_META_OBJECT_KEY_DGC,
+   RADV_META_OBJECT_KEY_QUERY,
+   RADV_META_OBJECT_KEY_QUERY_OCCLUSION,
+   RADV_META_OBJECT_KEY_QUERY_PIPELINE_STATS,
+   RADV_META_OBJECT_KEY_QUERY_TFB,
+   RADV_META_OBJECT_KEY_QUERY_TIMESTAMP,
+   RADV_META_OBJECT_KEY_QUERY_PRIMS_GEN,
+   RADV_META_OBJECT_KEY_QUERY_MESH_PRIMS_GEN,
+};
+
 VkResult radv_device_init_meta(struct radv_device *device);
 void radv_device_finish_meta(struct radv_device *device);
-
-VkResult radv_device_init_meta_clear_state(struct radv_device *device, bool on_demand);
-void radv_device_finish_meta_clear_state(struct radv_device *device);
-
-VkResult radv_device_init_meta_resolve_state(struct radv_device *device, bool on_demand);
-void radv_device_finish_meta_resolve_state(struct radv_device *device);
-
-VkResult radv_device_init_meta_depth_decomp_state(struct radv_device *device, bool on_demand);
-void radv_device_finish_meta_depth_decomp_state(struct radv_device *device);
-
-VkResult radv_device_init_meta_fast_clear_flush_state(struct radv_device *device, bool on_demand);
-void radv_device_finish_meta_fast_clear_flush_state(struct radv_device *device);
-
-VkResult radv_device_init_meta_blit_state(struct radv_device *device, bool on_demand);
-void radv_device_finish_meta_blit_state(struct radv_device *device);
-
-VkResult radv_device_init_meta_blit2d_state(struct radv_device *device, bool on_demand);
-void radv_device_finish_meta_blit2d_state(struct radv_device *device);
-
-VkResult radv_device_init_meta_buffer_state(struct radv_device *device, bool on_demand);
-void radv_device_finish_meta_buffer_state(struct radv_device *device);
-
-VkResult radv_device_init_meta_query_state(struct radv_device *device, bool on_demand);
-void radv_device_finish_meta_query_state(struct radv_device *device);
-
-VkResult radv_device_init_meta_resolve_compute_state(struct radv_device *device, bool on_demand);
-void radv_device_finish_meta_resolve_compute_state(struct radv_device *device);
-
-VkResult radv_device_init_meta_resolve_fragment_state(struct radv_device *device, bool on_demand);
-void radv_device_finish_meta_resolve_fragment_state(struct radv_device *device);
-
-VkResult radv_device_init_meta_fmask_copy_state(struct radv_device *device, bool on_demand);
-void radv_device_finish_meta_fmask_copy_state(struct radv_device *device);
-
-VkResult radv_device_init_meta_fmask_expand_state(struct radv_device *device, bool on_demand);
-void radv_device_finish_meta_fmask_expand_state(struct radv_device *device);
-
-void radv_device_finish_meta_dcc_retile_state(struct radv_device *device);
-
-void radv_device_finish_meta_copy_vrs_htile_state(struct radv_device *device);
 
 VkResult radv_device_init_null_accel_struct(struct radv_device *device);
 VkResult radv_device_init_accel_struct_build_state(struct radv_device *device);
 void radv_device_finish_accel_struct_build_state(struct radv_device *device);
-
-VkResult radv_device_init_meta_etc_decode_state(struct radv_device *device, bool on_demand);
-void radv_device_finish_meta_etc_decode_state(struct radv_device *device);
-
-VkResult radv_device_init_meta_astc_decode_state(struct radv_device *device, bool on_demand);
-void radv_device_finish_meta_astc_decode_state(struct radv_device *device);
-
-VkResult radv_device_init_dgc_prepare_state(struct radv_device *device);
-void radv_device_finish_dgc_prepare_state(struct radv_device *device);
 
 void radv_meta_save(struct radv_meta_saved_state *saved_state, struct radv_cmd_buffer *cmd_buffer, uint32_t flags);
 
 void radv_meta_restore(const struct radv_meta_saved_state *state, struct radv_cmd_buffer *cmd_buffer);
 
 VkImageViewType radv_meta_get_view_type(const struct radv_image *image);
-
-uint32_t radv_meta_get_iview_layer(const struct radv_image *dst_image, const VkImageSubresourceLayers *dst_subresource,
-                                   const VkOffset3D *dst_offset);
 
 struct radv_meta_blit2d_surf {
    /** The size of an element in bytes. */
@@ -180,7 +179,8 @@ struct radv_meta_blit2d_surf {
 };
 
 struct radv_meta_blit2d_buffer {
-   struct radv_buffer *buffer;
+   uint64_t addr;
+   uint64_t size;
    uint32_t offset;
    uint32_t pitch;
    uint8_t bs;
@@ -201,8 +201,6 @@ void radv_meta_blit2d(struct radv_cmd_buffer *cmd_buffer, struct radv_meta_blit2
 
 void radv_meta_end_blit2d(struct radv_cmd_buffer *cmd_buffer, struct radv_meta_saved_state *save);
 
-VkResult radv_device_init_meta_bufimage_state(struct radv_device *device, bool on_demand);
-void radv_device_finish_meta_bufimage_state(struct radv_device *device);
 void radv_meta_image_to_buffer(struct radv_cmd_buffer *cmd_buffer, struct radv_meta_blit2d_surf *src,
                                struct radv_meta_blit2d_buffer *dst, struct radv_meta_blit2d_rect *rect);
 
@@ -224,7 +222,7 @@ void radv_retile_dcc(struct radv_cmd_buffer *cmd_buffer, struct radv_image *imag
 void radv_expand_fmask_image_inplace(struct radv_cmd_buffer *cmd_buffer, struct radv_image *image,
                                      const VkImageSubresourceRange *subresourceRange);
 void radv_copy_vrs_htile(struct radv_cmd_buffer *cmd_buffer, struct radv_image_view *vrs_iview, const VkRect2D *rect,
-                         struct radv_image *dst_image, struct radv_buffer *htile_buffer, bool read_htile_value);
+                         struct radv_image *dst_image, uint64_t htile_va, bool read_htile_value);
 
 bool radv_can_use_fmask_copy(struct radv_cmd_buffer *cmd_buffer, const struct radv_image *src_image,
                              const struct radv_image *dst_image, const struct radv_meta_blit2d_rect *rect);
@@ -252,7 +250,7 @@ uint32_t radv_clear_fmask(struct radv_cmd_buffer *cmd_buffer, struct radv_image 
 uint32_t radv_clear_dcc(struct radv_cmd_buffer *cmd_buffer, struct radv_image *image,
                         const VkImageSubresourceRange *range, uint32_t value);
 uint32_t radv_clear_htile(struct radv_cmd_buffer *cmd_buffer, const struct radv_image *image,
-                          const VkImageSubresourceRange *range, uint32_t value);
+                          const VkImageSubresourceRange *range, uint32_t value, bool is_clear);
 
 void radv_update_buffer_cp(struct radv_cmd_buffer *cmd_buffer, uint64_t va, const void *data, uint64_t size);
 
@@ -261,29 +259,10 @@ void radv_meta_decode_etc(struct radv_cmd_buffer *cmd_buffer, struct radv_image 
 void radv_meta_decode_astc(struct radv_cmd_buffer *cmd_buffer, struct radv_image *image, VkImageLayout layout,
                            const VkImageSubresourceLayers *subresource, VkOffset3D offset, VkExtent3D extent);
 
-/* common nir builder helpers */
-#include "nir/nir_builder.h"
-
-nir_builder PRINTFLIKE(3, 4)
-   radv_meta_init_shader(struct radv_device *dev, gl_shader_stage stage, const char *name, ...);
-
-nir_shader *radv_meta_build_nir_vs_generate_vertices(struct radv_device *dev);
-nir_shader *radv_meta_build_nir_fs_noop(struct radv_device *dev);
-
-void radv_meta_build_resolve_shader_core(struct radv_device *device, nir_builder *b, bool is_integer, int samples,
-                                         nir_variable *input_img, nir_variable *color, nir_def *img_coord);
-
-nir_def *radv_meta_load_descriptor(nir_builder *b, unsigned desc_set, unsigned binding);
-
-nir_def *get_global_ids(nir_builder *b, unsigned num_components);
-
-void radv_break_on_count(nir_builder *b, nir_variable *var, nir_def *count);
-
 uint32_t radv_fill_buffer(struct radv_cmd_buffer *cmd_buffer, const struct radv_image *image,
                           struct radeon_winsys_bo *bo, uint64_t va, uint64_t size, uint32_t value);
 
-void radv_copy_buffer(struct radv_cmd_buffer *cmd_buffer, struct radeon_winsys_bo *src_bo,
-                      struct radeon_winsys_bo *dst_bo, uint64_t src_offset, uint64_t dst_offset, uint64_t size);
+void radv_copy_memory(struct radv_cmd_buffer *cmd_buffer, uint64_t src_va, uint64_t dst_va, uint64_t size);
 
 void radv_cmd_buffer_clear_attachment(struct radv_cmd_buffer *cmd_buffer, const VkClearAttachment *attachment);
 
@@ -305,16 +284,11 @@ void radv_cmd_buffer_resolve_rendering_fs(struct radv_cmd_buffer *cmd_buffer, st
 void radv_depth_stencil_resolve_rendering_fs(struct radv_cmd_buffer *cmd_buffer, VkImageAspectFlags aspects,
                                              VkResolveModeFlagBits resolve_mode);
 
-VkResult radv_meta_create_compute_pipeline(struct radv_device *device, nir_shader *nir,
-                                           VkPipelineLayout pipeline_layout, VkPipeline *pipeline);
+VkResult radv_meta_get_noop_pipeline_layout(struct radv_device *device, VkPipelineLayout *layout_out);
 
-VkResult radv_meta_create_pipeline_layout(struct radv_device *device, VkDescriptorSetLayout *set_layout,
-                                          uint32_t num_pc_ranges, const VkPushConstantRange *pc_ranges,
-                                          VkPipelineLayout *pipeline_layout);
-
-VkResult radv_meta_create_descriptor_set_layout(struct radv_device *device, uint32_t num_bindings,
-                                                const VkDescriptorSetLayoutBinding *bindings,
-                                                VkDescriptorSetLayout *desc_layout);
+void radv_meta_bind_descriptors(struct radv_cmd_buffer *cmd_buffer, VkPipelineBindPoint bind_point,
+                                VkPipelineLayout _layout, uint32_t num_descriptors,
+                                const VkDescriptorGetInfoEXT *descriptors);
 
 #ifdef __cplusplus
 }

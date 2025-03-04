@@ -77,13 +77,13 @@ zink_create_vertex_elements_state(struct pipe_context *pctx,
       ves->divisor[binding] = MIN2(elem->instance_divisor, screen->info.vdiv_props.maxVertexAttribDivisor);
 
       VkFormat format;
-      if (screen->format_props[elem->src_format].bufferFeatures & VK_FORMAT_FEATURE_VERTEX_BUFFER_BIT)
+      if (zink_get_format_props(screen, elem->src_format)->bufferFeatures & VK_FORMAT_FEATURE_VERTEX_BUFFER_BIT)
          format = zink_get_format(screen, elem->src_format);
       else {
          enum pipe_format new_format = zink_decompose_vertex_format(elem->src_format);
          assert(new_format);
          num_decomposed++;
-         assert(screen->format_props[new_format].bufferFeatures & VK_FORMAT_FEATURE_VERTEX_BUFFER_BIT);
+         assert(zink_get_format_props(screen, new_format)->bufferFeatures & VK_FORMAT_FEATURE_VERTEX_BUFFER_BIT);
          if (util_format_get_blocksize(new_format) == 4)
             size32 |= BITFIELD_BIT(i);
          else if (util_format_get_blocksize(new_format) == 2)
@@ -204,8 +204,8 @@ zink_bind_vertex_elements_state(struct pipe_context *pctx,
          decomposed_attrs_without_w = vs->u16.decomposed_attrs_without_w;
          break;
       case 4:
-         decomposed_attrs = vs->u16.decomposed_attrs;
-         decomposed_attrs_without_w = vs->u16.decomposed_attrs_without_w;
+         decomposed_attrs = vs->u32.decomposed_attrs;
+         decomposed_attrs_without_w = vs->u32.decomposed_attrs_without_w;
          break;
       }
       if (ctx->element_state->decomposed_attrs != decomposed_attrs ||

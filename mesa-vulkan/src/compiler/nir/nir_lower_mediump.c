@@ -47,8 +47,10 @@ get_io_intrinsic(nir_instr *instr, nir_variable_mode modes,
       return modes & nir_var_shader_in ? intr : NULL;
    case nir_intrinsic_load_output:
    case nir_intrinsic_load_per_vertex_output:
+   case nir_intrinsic_load_per_view_output:
    case nir_intrinsic_store_output:
    case nir_intrinsic_store_per_vertex_output:
+   case nir_intrinsic_store_per_view_output:
       *out_mode = nir_var_shader_out;
       return modes & nir_var_shader_out ? intr : NULL;
    default:
@@ -127,12 +129,12 @@ nir_recompute_io_bases(nir_shader *nir, nir_variable_mode modes)
             if (intr->intrinsic == nir_intrinsic_load_per_primitive_input) {
                nir_intrinsic_set_base(intr,
                                       num_normal_inputs +
-                                      BITSET_PREFIX_SUM(per_prim_inputs, sem.location));
+                                         BITSET_PREFIX_SUM(per_prim_inputs, sem.location));
             } else {
                nir_intrinsic_set_base(intr,
                                       BITSET_PREFIX_SUM(inputs, sem.location) +
-                                      BITSET_PREFIX_SUM(dual_slot_inputs, sem.location) +
-                                      (sem.high_dvec2 ? 1 : 0));
+                                         BITSET_PREFIX_SUM(dual_slot_inputs, sem.location) +
+                                         (sem.high_dvec2 ? 1 : 0));
             }
          } else if (sem.dual_source_blend_index) {
             nir_intrinsic_set_base(intr,
@@ -145,11 +147,7 @@ nir_recompute_io_bases(nir_shader *nir, nir_variable_mode modes)
       }
    }
 
-   if (changed) {
-      nir_metadata_preserve(impl, nir_metadata_control_flow);
-   } else {
-      nir_metadata_preserve(impl, nir_metadata_all);
-   }
+   nir_progress(changed, impl, nir_metadata_control_flow);
 
    if (modes & nir_var_shader_in)
       nir->num_inputs = BITSET_COUNT(inputs);
@@ -283,13 +281,7 @@ nir_lower_mediump_io(nir_shader *nir, nir_variable_mode modes,
    if (changed && use_16bit_slots)
       nir_recompute_io_bases(nir, modes);
 
-   if (changed) {
-      nir_metadata_preserve(impl, nir_metadata_control_flow);
-   } else {
-      nir_metadata_preserve(impl, nir_metadata_all);
-   }
-
-   return changed;
+   return nir_progress(changed, impl, nir_metadata_control_flow);
 }
 
 /**
@@ -344,13 +336,7 @@ nir_force_mediump_io(nir_shader *nir, nir_variable_mode modes,
       }
    }
 
-   if (changed) {
-      nir_metadata_preserve(impl, nir_metadata_control_flow);
-   } else {
-      nir_metadata_preserve(impl, nir_metadata_all);
-   }
-
-   return changed;
+   return nir_progress(changed, impl, nir_metadata_control_flow);
 }
 
 /**
@@ -389,13 +375,7 @@ nir_unpack_16bit_varying_slots(nir_shader *nir, nir_variable_mode modes)
    if (changed)
       nir_recompute_io_bases(nir, modes);
 
-   if (changed) {
-      nir_metadata_preserve(impl, nir_metadata_control_flow);
-   } else {
-      nir_metadata_preserve(impl, nir_metadata_all);
-   }
-
-   return changed;
+   return nir_progress(changed, impl, nir_metadata_control_flow);
 }
 
 static bool
@@ -555,13 +535,7 @@ nir_lower_mediump_vars_impl(nir_function_impl *impl, nir_variable_mode modes,
       }
    }
 
-   if (progress) {
-      nir_metadata_preserve(impl, nir_metadata_control_flow);
-   } else {
-      nir_metadata_preserve(impl, nir_metadata_all);
-   }
-
-   return progress;
+   return nir_progress(progress, impl, nir_metadata_control_flow);
 }
 
 bool
@@ -584,8 +558,10 @@ nir_lower_mediump_vars(nir_shader *shader, nir_variable_mode modes)
                nir_variable *var = nir_deref_instr_get_variable(deref);
 
                /* If we have atomic derefs that we can't track, then don't lower any mediump.  */
-               if (!var)
+               if (!var) {
+                  ralloc_free(no_lower_set);
                   return false;
+               }
 
                _mesa_set_add(no_lower_set, var);
                break;
@@ -742,14 +718,15 @@ can_opt_16bit_src(nir_def *ssa, nir_alu_type src_type, bool sext_matters)
             can_opt &= (const_is_u16(comp) || const_is_i16(comp));
       } else if (nir_scalar_is_alu(comp)) {
          nir_alu_instr *alu = nir_instr_as_alu(comp.def->parent_instr);
-         if (alu->src[0].src.ssa->bit_size != 16)
-            return false;
+         bool is_16bit = alu->src[0].src.ssa->bit_size == 16;
 
-         if (alu->op == nir_op_f2f32)
+         if ((alu->op == nir_op_f2f32 && is_16bit) ||
+             alu->op == nir_op_unpack_half_2x16_split_x ||
+             alu->op == nir_op_unpack_half_2x16_split_y)
             can_opt &= opt_f16;
-         else if (alu->op == nir_op_i2i32)
+         else if (alu->op == nir_op_i2i32 && is_16bit)
             can_opt &= opt_i16 || opt_i16_u16;
-         else if (alu->op == nir_op_u2u32)
+         else if (alu->op == nir_op_u2u32 && is_16bit)
             can_opt &= opt_u16 || opt_i16_u16;
          else
             return false;
@@ -782,6 +759,23 @@ opt_16bit_src(nir_builder *b, nir_instr *instr, nir_src *src, nir_alu_type src_t
       } else {
          /* conversion instruction */
          new_comps[i] = nir_scalar_chase_alu_src(comp, 0);
+         if (new_comps[i].def->bit_size != 16) {
+            assert(new_comps[i].def->bit_size == 32);
+
+            nir_def *extract = nir_channel(b, new_comps[i].def, new_comps[i].comp);
+            switch (nir_scalar_alu_op(comp)) {
+            case nir_op_unpack_half_2x16_split_x:
+               extract = nir_unpack_32_2x16_split_x(b, extract);
+               break;
+            case nir_op_unpack_half_2x16_split_y:
+               extract = nir_unpack_32_2x16_split_y(b, extract);
+               break;
+            default:
+               unreachable("unsupported alu op");
+            }
+
+            new_comps[i] = nir_get_scalar(extract, 0);
+         }
       }
    }
 
@@ -995,9 +989,11 @@ opt_16bit_tex_srcs(nir_builder *b, nir_tex_instr *tex,
       /* Zero-extension (u16) and sign-extension (i16) have
        * the same behavior here - txf returns 0 if bit 15 is set
        * because it's out of bounds and the higher bits don't
-       * matter.
+       * matter. With the exception of a texel buffer, which could
+       * be arbitrary large.
        */
-      if (!can_opt_16bit_src(src->ssa, src_type, false))
+      bool sext_matters = tex->sampler_dim == GLSL_SAMPLER_DIM_BUF;
+      if (!can_opt_16bit_src(src->ssa, src_type, sext_matters))
          return false;
 
       opt_srcs |= (1 << i);

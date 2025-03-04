@@ -43,7 +43,7 @@ libpanfrost_bifrost_files = files(
 
 bifrost_gen_disasm_c = custom_target(
   'bifrost_gen_disasm.c',
-  input : ['gen_disasm.py', 'ISA.xml'],
+  input : ['gen_disasm.py', 'bifrost/ISA.xml'],
   output : 'bifrost_gen_disasm.c',
   command : [prog_python, '@INPUT@'],
   capture : true,
@@ -52,7 +52,7 @@ bifrost_gen_disasm_c = custom_target(
 
 bi_opcodes_c = custom_target(
   'bi_opcodes.c',
-  input : ['bi_opcodes.c.py', 'ISA.xml'],
+  input : ['bi_opcodes.c.py', 'IR_pseudo.xml', 'bifrost/ISA.xml', 'valhall/ISA.xml'],
   output : 'bi_opcodes.c',
   command : [prog_python, '@INPUT@'],
   capture : true,
@@ -61,7 +61,7 @@ bi_opcodes_c = custom_target(
 
 bi_printer_c = custom_target(
   'bi_printer.c',
-  input : ['bi_printer.c.py', 'ISA.xml'],
+  input : ['bi_printer.c.py', 'IR_pseudo.xml', 'bifrost/ISA.xml', 'valhall/ISA.xml'],
   output : 'bi_printer.c',
   command : [prog_python, '@INPUT@'],
   capture : true,
@@ -70,7 +70,7 @@ bi_printer_c = custom_target(
 
 bi_packer_c = custom_target(
   'bi_packer.c',
-  input : ['bi_packer.c.py', 'ISA.xml'],
+  input : ['bi_packer.c.py', 'IR_pseudo.xml', 'bifrost/ISA.xml', 'valhall/ISA.xml'],
   output : 'bi_packer.c',
   command : [prog_python, '@INPUT@'],
   capture : true,
@@ -79,7 +79,7 @@ bi_packer_c = custom_target(
 
 bi_opcodes_h = custom_target(
   'bi_opcodes.h',
-  input : ['bi_opcodes.h.py', 'ISA.xml'],
+  input : ['bi_opcodes.h.py', 'IR_pseudo.xml', 'bifrost/ISA.xml', 'valhall/ISA.xml'],
   output : 'bi_opcodes.h',
   command : [prog_python, '@INPUT@'],
   capture : true,
@@ -93,7 +93,7 @@ idep_bi_opcodes_h = declare_dependency(
 
 bi_builder_h = custom_target(
   'bi_builder.h',
-  input : ['bi_builder.h.py', 'ISA.xml'],
+  input : ['bi_builder.h.py', 'IR_pseudo.xml', 'bifrost/ISA.xml', 'valhall/ISA.xml'],
   output : 'bi_builder.h',
   command : [prog_python, '@INPUT@'],
   capture : true,
@@ -119,7 +119,7 @@ bifrost_nir_algebraic_c = custom_target(
 libpanfrost_bifrost_disasm = static_library(
   'panfrost_bifrost_disasm',
   ['bifrost/disassemble.c', 'bi_print_common.c', bifrost_gen_disasm_c],
-  include_directories : [inc_include, inc_src, inc_panfrost_hw],
+  include_directories : [inc_include, inc_src],
   dependencies: [idep_nir],
   link_with: [libpanfrost_util],
   c_args : [no_override_init_args],
@@ -130,7 +130,7 @@ libpanfrost_bifrost_disasm = static_library(
 libpanfrost_bifrost = static_library(
   'panfrost_bifrost',
   [libpanfrost_bifrost_files, bi_opcodes_c, bi_printer_c, bi_packer_c, bifrost_nir_algebraic_c, valhall_c],
-  include_directories : [inc_include, inc_src, inc_panfrost_hw, inc_valhall],
+  include_directories : [inc_include, inc_src, inc_valhall],
   dependencies: [idep_nir, idep_bi_opcodes_h, idep_bi_builder_h, idep_valhall_enums_h],
   link_with: [libpanfrost_util, libpanfrost_bifrost_disasm, libpanfrost_valhall_disasm],
   c_args : [no_override_init_args],

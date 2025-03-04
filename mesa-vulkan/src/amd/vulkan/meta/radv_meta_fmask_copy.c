@@ -3,183 +3,97 @@
  *
  * SPDX-License-Identifier: MIT
  */
-#include "nir/nir_builder.h"
+
+#include "nir/radv_meta_nir.h"
 #include "radv_formats.h"
 #include "radv_meta.h"
 
-static nir_shader *
-build_fmask_copy_compute_shader(struct radv_device *dev, int samples)
+static VkResult
+get_pipeline_layout(struct radv_device *device, VkPipelineLayout *layout_out)
 {
-   const struct glsl_type *sampler_type = glsl_sampler_type(GLSL_SAMPLER_DIM_MS, false, false, GLSL_TYPE_FLOAT);
-   const struct glsl_type *img_type = glsl_image_type(GLSL_SAMPLER_DIM_MS, false, GLSL_TYPE_FLOAT);
+   enum radv_meta_object_key_type key = RADV_META_OBJECT_KEY_FMASK_COPY;
 
-   nir_builder b = radv_meta_init_shader(dev, MESA_SHADER_COMPUTE, "meta_fmask_copy_cs_-%d", samples);
+   const VkDescriptorSetLayoutBinding bindings[] = {
+      {
+         .binding = 0,
+         .descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
+         .descriptorCount = 1,
+         .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT,
+      },
+      {
+         .binding = 1,
+         .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
+         .descriptorCount = 1,
+         .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT,
+      },
+   };
 
-   b.shader->info.workgroup_size[0] = 8;
-   b.shader->info.workgroup_size[1] = 8;
+   const VkDescriptorSetLayoutCreateInfo desc_info = {
+      .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+      .flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT,
+      .bindingCount = 2,
+      .pBindings = bindings,
+   };
 
-   nir_variable *input_img = nir_variable_create(b.shader, nir_var_uniform, sampler_type, "s_tex");
-   input_img->data.descriptor_set = 0;
-   input_img->data.binding = 0;
-
-   nir_variable *output_img = nir_variable_create(b.shader, nir_var_uniform, img_type, "out_img");
-   output_img->data.descriptor_set = 0;
-   output_img->data.binding = 1;
-
-   nir_def *invoc_id = nir_load_local_invocation_id(&b);
-   nir_def *wg_id = nir_load_workgroup_id(&b);
-   nir_def *block_size = nir_imm_ivec3(&b, b.shader->info.workgroup_size[0], b.shader->info.workgroup_size[1],
-                                       b.shader->info.workgroup_size[2]);
-
-   nir_def *global_id = nir_iadd(&b, nir_imul(&b, wg_id, block_size), invoc_id);
-
-   /* Get coordinates. */
-   nir_def *src_coord = nir_trim_vector(&b, global_id, 2);
-   nir_def *dst_coord = nir_vec4(&b, nir_channel(&b, src_coord, 0), nir_channel(&b, src_coord, 1), nir_undef(&b, 1, 32),
-                                 nir_undef(&b, 1, 32));
-
-   nir_tex_src frag_mask_srcs[] = {{
-      .src_type = nir_tex_src_coord,
-      .src = nir_src_for_ssa(src_coord),
-   }};
-   nir_def *frag_mask =
-      nir_build_tex_deref_instr(&b, nir_texop_fragment_mask_fetch_amd, nir_build_deref_var(&b, input_img), NULL,
-                                ARRAY_SIZE(frag_mask_srcs), frag_mask_srcs);
-
-   /* Get the maximum sample used in this fragment. */
-   nir_def *max_sample_index = nir_imm_int(&b, 0);
-   for (uint32_t s = 0; s < samples; s++) {
-      /* max_sample_index = MAX2(max_sample_index, (frag_mask >> (s * 4)) & 0xf) */
-      max_sample_index = nir_umax(&b, max_sample_index,
-                                  nir_ubitfield_extract(&b, frag_mask, nir_imm_int(&b, 4 * s), nir_imm_int(&b, 4)));
-   }
-
-   nir_variable *counter = nir_local_variable_create(b.impl, glsl_int_type(), "counter");
-   nir_store_var(&b, counter, nir_imm_int(&b, 0), 0x1);
-
-   nir_loop *loop = nir_push_loop(&b);
-   {
-      nir_def *sample_id = nir_load_var(&b, counter);
-
-      nir_tex_src frag_fetch_srcs[] = {{
-                                          .src_type = nir_tex_src_coord,
-                                          .src = nir_src_for_ssa(src_coord),
-                                       },
-                                       {
-                                          .src_type = nir_tex_src_ms_index,
-                                          .src = nir_src_for_ssa(sample_id),
-                                       }};
-      nir_def *outval = nir_build_tex_deref_instr(&b, nir_texop_fragment_fetch_amd, nir_build_deref_var(&b, input_img),
-                                                  NULL, ARRAY_SIZE(frag_fetch_srcs), frag_fetch_srcs);
-
-      nir_image_deref_store(&b, &nir_build_deref_var(&b, output_img)->def, dst_coord, sample_id, outval,
-                            nir_imm_int(&b, 0), .image_dim = GLSL_SAMPLER_DIM_MS);
-
-      radv_break_on_count(&b, counter, max_sample_index);
-   }
-   nir_pop_loop(&b, loop);
-
-   return b.shader;
+   return vk_meta_get_pipeline_layout(&device->vk, &device->meta_state.device, &desc_info, NULL, &key, sizeof(key),
+                                      layout_out);
 }
 
+struct radv_fmask_copy_key {
+   enum radv_meta_object_key_type type;
+   uint32_t samples;
+};
+
 static VkResult
-create_pipeline(struct radv_device *device, int samples, VkPipeline *pipeline)
+get_pipeline(struct radv_device *device, uint32_t samples_log2, VkPipeline *pipeline_out, VkPipelineLayout *layout_out)
 {
-   struct radv_meta_state *state = &device->meta_state;
+   const uint32_t samples = 1 << samples_log2;
+   struct radv_fmask_copy_key key;
    VkResult result;
 
-   if (!state->fmask_copy.ds_layout) {
-      const VkDescriptorSetLayoutBinding bindings[] = {
-         {
-            .binding = 0,
-            .descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
-            .descriptorCount = 1,
-            .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT,
-         },
-         {
-            .binding = 1,
-            .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-            .descriptorCount = 1,
-            .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT,
-         },
-      };
+   result = get_pipeline_layout(device, layout_out);
+   if (result != VK_SUCCESS)
+      return result;
 
-      result = radv_meta_create_descriptor_set_layout(device, 2, bindings, &state->fmask_copy.ds_layout);
-      if (result != VK_SUCCESS)
-         return result;
+   memset(&key, 0, sizeof(key));
+   key.type = RADV_META_OBJECT_KEY_FMASK_COPY;
+   key.samples = samples;
+
+   VkPipeline pipeline_from_cache = vk_meta_lookup_pipeline(&device->meta_state.device, &key, sizeof(key));
+   if (pipeline_from_cache != VK_NULL_HANDLE) {
+      *pipeline_out = pipeline_from_cache;
+      return VK_SUCCESS;
    }
 
-   if (!state->fmask_copy.p_layout) {
-      result =
-         radv_meta_create_pipeline_layout(device, &state->fmask_copy.ds_layout, 0, NULL, &state->fmask_copy.p_layout);
-      if (result != VK_SUCCESS)
-         return result;
-   }
+   nir_shader *cs = radv_meta_nir_build_fmask_copy_compute_shader(device, samples);
 
-   nir_shader *cs = build_fmask_copy_compute_shader(device, samples);
+   const VkPipelineShaderStageCreateInfo stage_info = {
+      .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+      .stage = VK_SHADER_STAGE_COMPUTE_BIT,
+      .module = vk_shader_module_handle_from_nir(cs),
+      .pName = "main",
+      .pSpecializationInfo = NULL,
+   };
 
-   result = radv_meta_create_compute_pipeline(device, cs, state->fmask_copy.p_layout, pipeline);
+   const VkComputePipelineCreateInfo pipeline_info = {
+      .sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
+      .stage = stage_info,
+      .flags = 0,
+      .layout = *layout_out,
+   };
+
+   result = vk_meta_create_compute_pipeline(&device->vk, &device->meta_state.device, &pipeline_info, &key, sizeof(key),
+                                            pipeline_out);
 
    ralloc_free(cs);
    return result;
-}
-
-static VkResult
-get_pipeline(struct radv_device *device, uint32_t samples_log2, VkPipeline *pipeline_out)
-{
-   struct radv_meta_state *state = &device->meta_state;
-   VkResult result = VK_SUCCESS;
-
-   mtx_lock(&state->mtx);
-   if (!state->fmask_copy.pipeline[samples_log2]) {
-      result = create_pipeline(device, 1 << samples_log2, &state->fmask_copy.pipeline[samples_log2]);
-      if (result != VK_SUCCESS)
-         goto fail;
-   }
-
-   *pipeline_out = state->fmask_copy.pipeline[samples_log2];
-
-fail:
-   mtx_unlock(&state->mtx);
-   return result;
-}
-
-void
-radv_device_finish_meta_fmask_copy_state(struct radv_device *device)
-{
-   struct radv_meta_state *state = &device->meta_state;
-
-   radv_DestroyPipelineLayout(radv_device_to_handle(device), state->fmask_copy.p_layout, &state->alloc);
-   device->vk.dispatch_table.DestroyDescriptorSetLayout(radv_device_to_handle(device), state->fmask_copy.ds_layout,
-                                                        &state->alloc);
-
-   for (uint32_t i = 0; i < MAX_SAMPLES_LOG2; ++i) {
-      radv_DestroyPipeline(radv_device_to_handle(device), state->fmask_copy.pipeline[i], &state->alloc);
-   }
-}
-
-VkResult
-radv_device_init_meta_fmask_copy_state(struct radv_device *device, bool on_demand)
-{
-   VkResult result;
-
-   if (on_demand)
-      return VK_SUCCESS;
-
-   for (uint32_t i = 0; i < MAX_SAMPLES_LOG2; i++) {
-      result = create_pipeline(device, 1u << i, &device->meta_state.fmask_copy.pipeline[i]);
-      if (result != VK_SUCCESS)
-         return result;
-   }
-
-   return VK_SUCCESS;
 }
 
 static void
 radv_fixup_copy_dst_metadata(struct radv_cmd_buffer *cmd_buffer, const struct radv_image *src_image,
                              const struct radv_image *dst_image)
 {
-   uint64_t src_offset, dst_offset, size;
+   uint64_t src_va, dst_va, size;
 
    assert(src_image->planes[0].surface.cmask_size == dst_image->planes[0].surface.cmask_size &&
           src_image->planes[0].surface.fmask_size == dst_image->planes[0].surface.fmask_size);
@@ -190,10 +104,10 @@ radv_fixup_copy_dst_metadata(struct radv_cmd_buffer *cmd_buffer, const struct ra
 
    /* Copy CMASK+FMASK. */
    size = src_image->planes[0].surface.cmask_size + src_image->planes[0].surface.fmask_size;
-   src_offset = src_image->bindings[0].offset + src_image->planes[0].surface.fmask_offset;
-   dst_offset = dst_image->bindings[0].offset + dst_image->planes[0].surface.fmask_offset;
+   src_va = src_image->bindings[0].addr + src_image->planes[0].surface.fmask_offset;
+   dst_va = dst_image->bindings[0].addr + dst_image->planes[0].surface.fmask_offset;
 
-   radv_copy_buffer(cmd_buffer, src_image->bindings[0].bo, dst_image->bindings[0].bo, src_offset, dst_offset, size);
+   radv_copy_memory(cmd_buffer, src_va, dst_va, size);
 }
 
 bool
@@ -246,10 +160,11 @@ radv_fmask_copy(struct radv_cmd_buffer *cmd_buffer, struct radv_meta_blit2d_surf
    struct radv_image_view src_iview, dst_iview;
    uint32_t samples = src->image->vk.samples;
    uint32_t samples_log2 = ffs(samples) - 1;
+   VkPipelineLayout layout;
    VkPipeline pipeline;
    VkResult result;
 
-   result = get_pipeline(device, samples_log2, &pipeline);
+   result = get_pipeline(device, samples_log2, &pipeline, &layout);
    if (result != VK_SUCCESS) {
       vk_command_buffer_set_error(&cmd_buffer->vk, result);
       return;
@@ -272,7 +187,7 @@ radv_fmask_copy(struct radv_cmd_buffer *cmd_buffer, struct radv_meta_blit2d_surf
                                  .layerCount = 1,
                               },
                         },
-                        0, NULL);
+                        NULL);
 
    radv_image_view_init(&dst_iview, device,
                         &(VkImageViewCreateInfo){
@@ -289,31 +204,24 @@ radv_fmask_copy(struct radv_cmd_buffer *cmd_buffer, struct radv_meta_blit2d_surf
                                  .layerCount = 1,
                               },
                         },
-                        0, NULL);
+                        NULL);
 
-   radv_meta_push_descriptor_set(cmd_buffer, VK_PIPELINE_BIND_POINT_COMPUTE, device->meta_state.fmask_copy.p_layout, 0,
-                                 2,
-                                 (VkWriteDescriptorSet[]){{.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-                                                           .dstBinding = 0,
-                                                           .dstArrayElement = 0,
-                                                           .descriptorCount = 1,
-                                                           .descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
-                                                           .pImageInfo =
-                                                              (VkDescriptorImageInfo[]){
-                                                                 {.sampler = VK_NULL_HANDLE,
-                                                                  .imageView = radv_image_view_to_handle(&src_iview),
-                                                                  .imageLayout = VK_IMAGE_LAYOUT_GENERAL},
-                                                              }},
-                                                          {.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-                                                           .dstBinding = 1,
-                                                           .dstArrayElement = 0,
-                                                           .descriptorCount = 1,
-                                                           .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-                                                           .pImageInfo = (VkDescriptorImageInfo[]){
-                                                              {.sampler = VK_NULL_HANDLE,
-                                                               .imageView = radv_image_view_to_handle(&dst_iview),
-                                                               .imageLayout = VK_IMAGE_LAYOUT_GENERAL},
-                                                           }}});
+   radv_meta_bind_descriptors(cmd_buffer, VK_PIPELINE_BIND_POINT_COMPUTE, layout, 2,
+                              (VkDescriptorGetInfoEXT[]){{.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_GET_INFO_EXT,
+                                                          .type = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
+                                                          .data.pSampledImage =
+                                                             (VkDescriptorImageInfo[]){
+                                                                {.sampler = VK_NULL_HANDLE,
+                                                                 .imageView = radv_image_view_to_handle(&src_iview),
+                                                                 .imageLayout = VK_IMAGE_LAYOUT_GENERAL},
+                                                             }},
+                                                         {.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_GET_INFO_EXT,
+                                                          .type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
+                                                          .data.pStorageImage = (VkDescriptorImageInfo[]){
+                                                             {.sampler = VK_NULL_HANDLE,
+                                                              .imageView = radv_image_view_to_handle(&dst_iview),
+                                                              .imageLayout = VK_IMAGE_LAYOUT_GENERAL},
+                                                          }}});
 
    radv_unaligned_dispatch(cmd_buffer, src->image->vk.extent.width, src->image->vk.extent.height, 1);
 

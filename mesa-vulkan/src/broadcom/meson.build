@@ -8,9 +8,16 @@ subdir('cle')
 v3d_versions = ['42', '71']
 v3d_libs = []
 
+dep_v3d_hw = dependency('v3d_hw', required: false)
+with_v3d_hw = dep_v3d_hw.found()
+v3d_simulator_arg = '-DUSE_V3D_SIMULATOR=@0@'.format(with_v3d_hw.to_int())
+
 if with_gallium_v3d or with_broadcom_vk
   subdir('compiler')
   subdir('qpu')
+endif
+
+if with_v3d_hw
   subdir('simulator')
 endif
 
@@ -63,8 +70,14 @@ libbroadcom_v3d = static_library(
   link_whole : v3d_libs + per_version_libs,
   link_with: [libv3d_neon],
   build_by_default : false,
-  dependencies: [dep_valgrind, dep_thread, idep_mesautil],
+  dependencies: [dep_valgrind, dep_thread, idep_mesautil, dep_libdrm],
 )
+
+subdir('perfcntrs')
+
+if with_perfetto and (with_datasources.contains('v3d') or with_datasources.contains('auto'))
+  subdir('ds')
+endif
 
 if with_broadcom_vk
   subdir('vulkan')

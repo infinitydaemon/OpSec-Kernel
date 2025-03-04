@@ -2251,7 +2251,7 @@ struct crocus_sampler_state {
  * We fill out SAMPLER_STATE (except for the border color pointer), and
  * store that on the CPU.  It doesn't make sense to upload it to a GPU
  * buffer object yet, because 3DSTATE_SAMPLER_STATE_POINTERS requires
- * all bound sampler states to be in contiguous memor.
+ * all bound sampler states to be in contiguous memory.
  */
 static void *
 crocus_create_sampler_state(struct pipe_context *ctx,
@@ -4122,7 +4122,8 @@ static void
 crocus_set_stream_output_targets(struct pipe_context *ctx,
                                  unsigned num_targets,
                                  struct pipe_stream_output_target **targets,
-                                 const unsigned *offsets)
+                                 const unsigned *offsets,
+                                 enum mesa_prim output_prim)
 {
    struct crocus_context *ice = (struct crocus_context *) ctx;
    struct crocus_batch *batch = &ice->batches[CROCUS_BATCH_RENDER];

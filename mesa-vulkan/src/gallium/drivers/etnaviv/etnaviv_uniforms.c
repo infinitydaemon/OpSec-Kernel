@@ -118,6 +118,9 @@ etna_uniforms_write(const struct etna_context *ctx,
    bool frag = (sobj == ctx->shader.fs);
    uint32_t base = frag ? screen->specs.ps_uniforms_offset : screen->specs.vs_uniforms_offset;
 
+   if (screen->specs.has_unified_uniforms && frag)
+      base += ctx->shader.vs->uniforms.count * 4;
+
    if (!uinfo->count)
       return;
 
@@ -180,6 +183,9 @@ etna_set_shader_uniforms_dirty_flags(struct etna_shader_variant *sobj)
 
       case ETNA_UNIFORM_TEXRECT_SCALE_X:
       case ETNA_UNIFORM_TEXRECT_SCALE_Y:
+      case ETNA_UNIFORM_TEXTURE_WIDTH:
+      case ETNA_UNIFORM_TEXTURE_HEIGHT:
+      case ETNA_UNIFORM_TEXTURE_DEPTH:
          dirty |= ETNA_DIRTY_SAMPLER_VIEWS;
          break;
       }

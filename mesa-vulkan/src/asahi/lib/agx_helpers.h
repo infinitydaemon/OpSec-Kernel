@@ -8,20 +8,13 @@
 #include <stdbool.h>
 #include "asahi/compiler/agx_compile.h"
 #include "asahi/layout/layout.h"
+#include "agx_abi.h"
 #include "agx_pack.h"
 #include "agx_ppp.h"
+#include "libagx_shaders.h"
 
-#define AGX_MAX_OCCLUSION_QUERIES (65536)
+#define AGX_MAX_OCCLUSION_QUERIES (32768)
 #define AGX_MAX_VIEWPORTS         (16)
-
-#define agx_push(ptr, T, cfg)                                                  \
-   for (unsigned _loop = 0; _loop < 1; ++_loop, ptr += AGX_##T##_LENGTH)       \
-      agx_pack(ptr, T, cfg)
-
-#define agx_push_packed(ptr, src, T)                                           \
-   STATIC_ASSERT(sizeof(src) == AGX_##T##_LENGTH);                             \
-   memcpy(ptr, &src, sizeof(src));                                             \
-   ptr += sizeof(src);
 
 static inline enum agx_sampler_states
 agx_translate_sampler_state_count(unsigned count, bool extended)
@@ -44,6 +37,23 @@ agx_translate_sampler_state_count(unsigned count, bool extended)
          return AGX_SAMPLER_STATES_12_COMPACT;
       else
          return AGX_SAMPLER_STATES_16_COMPACT;
+   }
+}
+
+static void
+agx_pack_txf_sampler(struct agx_sampler_packed *out)
+{
+   agx_pack(out, SAMPLER, cfg) {
+      /* Allow mipmapping. This is respected by txf, weirdly. */
+      cfg.minimum_lod = 0.0;
+      cfg.maximum_lod = INFINITY;
+      cfg.mip_filter = AGX_MIP_FILTER_NEAREST;
+
+      /* Out-of-bounds reads must return 0 */
+      cfg.wrap_s = AGX_WRAP_CLAMP_TO_BORDER;
+      cfg.wrap_t = AGX_WRAP_CLAMP_TO_BORDER;
+      cfg.wrap_r = AGX_WRAP_CLAMP_TO_BORDER;
+      cfg.border_colour = AGX_BORDER_COLOUR_TRANSPARENT_BLACK;
    }
 }
 
@@ -72,9 +82,8 @@ static inline enum agx_layout
 agx_translate_layout(enum ail_tiling tiling)
 {
    switch (tiling) {
-   case AIL_TILING_TWIDDLED:
-   case AIL_TILING_TWIDDLED_COMPRESSED:
-      return AGX_LAYOUT_TWIDDLED;
+   case AIL_TILING_GPU:
+      return AGX_LAYOUT_GPU;
    case AIL_TILING_LINEAR:
       return AGX_LAYOUT_LINEAR;
    }
@@ -95,24 +104,6 @@ agx_translate_sample_count(unsigned samples)
    }
 }
 
-static inline enum agx_index_size
-agx_translate_index_size(uint8_t size_B)
-{
-   /* Index sizes are encoded logarithmically */
-   STATIC_ASSERT(__builtin_ctz(1) == AGX_INDEX_SIZE_U8);
-   STATIC_ASSERT(__builtin_ctz(2) == AGX_INDEX_SIZE_U16);
-   STATIC_ASSERT(__builtin_ctz(4) == AGX_INDEX_SIZE_U32);
-
-   assert((size_B == 1) || (size_B == 2) || (size_B == 4));
-   return __builtin_ctz(size_B);
-}
-
-static inline uint8_t
-agx_index_size_to_B(enum agx_index_size size)
-{
-   return 1 << size;
-}
-
 static enum agx_conservative_depth
 agx_translate_depth_layout(enum gl_frag_depth_layout layout)
 {
@@ -131,16 +122,32 @@ agx_translate_depth_layout(enum gl_frag_depth_layout layout)
 }
 
 static void
-agx_ppp_fragment_face_2(struct agx_ppp_update *ppp,
-                        enum agx_object_type object_type,
-                        struct agx_shader_info *info)
+agx_pack_fragment_face_2(struct agx_fragment_face_2_packed *out,
+                         enum agx_object_type object_type,
+                         struct agx_shader_info *info)
 {
-   agx_ppp_push(ppp, FRAGMENT_FACE_2, cfg) {
+   agx_pack(out, FRAGMENT_FACE_2, cfg) {
+      /* These act like disables, ANDed in the hardware. Setting them like this
+       * means the draw-time flag is used.
+       */
+      cfg.disable_depth_write = true;
+      cfg.depth_function = AGX_ZS_FUNC_ALWAYS;
+
       cfg.object_type = object_type;
       cfg.conservative_depth =
          info ? agx_translate_depth_layout(info->depth_layout)
               : AGX_CONSERVATIVE_DEPTH_UNCHANGED;
    }
+}
+
+static void
+agx_ppp_fragment_face_2(struct agx_ppp_update *ppp,
+                        enum agx_object_type object_type,
+                        struct agx_shader_info *info)
+{
+   struct agx_fragment_face_2_packed packed;
+   agx_pack_fragment_face_2(&packed, object_type, info);
+   agx_ppp_push_packed(ppp, &packed, FRAGMENT_FACE_2);
 }
 
 static inline uint32_t
@@ -164,7 +171,7 @@ static void
 agx_set_null_texture(struct agx_texture_packed *tex, uint64_t valid_address)
 {
    agx_pack(tex, TEXTURE, cfg) {
-      cfg.layout = AGX_LAYOUT_NULL;
+      cfg.layout = AGX_LAYOUT_TWIDDLED;
       cfg.channels = AGX_CHANNELS_R8;
       cfg.type = AGX_TEXTURE_TYPE_UNORM /* don't care */;
       cfg.swizzle_r = AGX_CHANNEL_0;
@@ -172,7 +179,7 @@ agx_set_null_texture(struct agx_texture_packed *tex, uint64_t valid_address)
       cfg.swizzle_b = AGX_CHANNEL_0;
       cfg.swizzle_a = AGX_CHANNEL_0;
       cfg.address = valid_address;
-      cfg.null = true;
+      cfg.mode = AGX_IMAGE_MODE_NULL;
    }
 }
 
@@ -183,7 +190,7 @@ agx_set_null_pbe(struct agx_pbe_packed *pbe, uint64_t sink)
       cfg.width = 1;
       cfg.height = 1;
       cfg.levels = 1;
-      cfg.layout = AGX_LAYOUT_NULL;
+      cfg.layout = AGX_LAYOUT_TWIDDLED;
       cfg.channels = AGX_CHANNELS_R8;
       cfg.type = AGX_TEXTURE_TYPE_UNORM /* don't care */;
       cfg.swizzle_r = AGX_CHANNEL_R;
@@ -212,8 +219,8 @@ agx_set_null_pbe(struct agx_pbe_packed *pbe, uint64_t sink)
  *    i <= floor((size - src_offset - elsize_B) / stride)
  */
 static inline uint32_t
-agx_calculate_vbo_clamp(uint64_t vbuf, uint64_t sink, enum pipe_format format,
-                        uint32_t size_B, uint32_t stride_B, uint32_t offset_B,
+agx_calculate_vbo_clamp(uint64_t vbuf, enum pipe_format format, uint32_t size_B,
+                        uint32_t stride_B, uint32_t offset_B,
                         uint64_t *vbuf_out)
 {
    unsigned elsize_B = util_format_get_blocksize(format);
@@ -231,7 +238,46 @@ agx_calculate_vbo_clamp(uint64_t vbuf, uint64_t sink, enum pipe_format format,
       else
          return UINT32_MAX;
    } else {
-      *vbuf_out = sink;
+      *vbuf_out = AGX_ZERO_PAGE_ADDRESS;
       return 0;
    }
 }
+
+static struct libagx_decompress_args
+agx_fill_decompress_args(struct ail_layout *layout, unsigned layer,
+                         unsigned level, uint64_t ptr, uint64_t images)
+{
+   return (struct libagx_decompress_args){
+      .images = images,
+      .tile_uncompressed = ail_tile_mode_uncompressed(layout->format),
+      .metadata = ptr + layout->metadata_offset_B +
+                  layout->level_offsets_compressed_B[level] +
+                  (layer * layout->compression_layer_stride_B),
+      .metadata_layer_stride_tl = layout->compression_layer_stride_B / 8,
+      .metadata_width_tl = ail_metadata_width_tl(layout, level),
+      .metadata_height_tl = ail_metadata_height_tl(layout, level),
+   };
+}
+
+#undef libagx_decompress
+#define libagx_decompress(context, grid, barrier, layout, layer, level, ptr,   \
+                          images)                                              \
+   libagx_decompress_struct(                                                   \
+      context, grid, barrier,                                                  \
+      agx_fill_decompress_args(layout, layer, level, ptr, images),             \
+      util_logbase2(layout->sample_count_sa))
+
+#define libagx_tessellate(context, grid, barrier, prim, mode, state)           \
+   if (prim == TESS_PRIMITIVE_QUADS) {                                         \
+      libagx_tess_quad(context, grid, barrier, state, mode);                   \
+   } else if (prim == TESS_PRIMITIVE_TRIANGLES) {                              \
+      libagx_tess_tri(context, grid, barrier, state, mode);                    \
+   } else {                                                                    \
+      assert(prim == TESS_PRIMITIVE_ISOLINES);                                 \
+      libagx_tess_isoline(context, grid, barrier, state, mode);                \
+   }
+
+struct agx_border_packed;
+
+void agx_pack_border(struct agx_border_packed *out, const uint32_t in[4],
+                     enum pipe_format format);

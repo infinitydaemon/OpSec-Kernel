@@ -1,9 +1,13 @@
 # Slow tests (> 1 minute to run)
 spec@!opengl 1.1@streaming-texture-leak
 spec@!opengl 1.2@tex3d-maxsize
+spec@arb_shader_texture_lod@execution@tex-miplevel-selection \*gradarb 2dshadow
 spec@arb_texture_multisample@texelfetch fs sampler2dms 4 1x130-501x130
 spec@arb_texture_multisample@texelfetch fs sampler2dms 4 1x71-501x71
 spec@arb_texture_multisample@texelfetch fs sampler2dmsarray 4 98x1x9-98x129x9
+spec@glsl-1.30@execution@tex-miplevel-selection texture() 1darray
+spec@glsl-1.30@execution@tex-miplevel-selection texture() 2darrayshadow
+spec@glsl-1.30@execution@tex-miplevel-selection texturelod 2darray
 spec@glsl-1.30@execution@texelfetch fs sampler2d 1x281-501x281
 
 # Slow CL tests (> 5 minute to run)
@@ -279,10 +283,6 @@ dEQP-VK.texture.explicit_lod.2d.sizes.128x128_nearest_linear_mipmap_linear_repea
 dEQP-VK.image.swapchain_mutable.*
 dEQP-VK.wsi.*
 
-# These require VK_KHR_shader_draw_parameters but they don't check for it
-# (Seems to be fixed in some later release of CTS 1.3.7).
-dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.*
-
 # Skip tests for unsupported features so we can increase the number of tests
 # that are actually useful in the limited CI time we have per job.
 dEQP-VK.binding_model.mutable_descriptor.*
@@ -307,3 +307,57 @@ dEQP-VK.robustness.robustness2.*
 dEQP-VK.shader_object.rendering.*
 dEQP-VK.sparse_resources.*
 dEQP-VK.transform_feedback.*
+
+# This times out
+spec@glsl-1.40@execution@tf-no-position
+
+# These are due an issue in CTS that is already fixed upstream
+asan-KHR-GL31.ext_texture_shadow_lod.texture.sampler2darrayshadow_bias_fragment
+asan-KHR-GLES31.core.geometry_shader.adjacency.adjacency_indiced_triangle_strip
+asan-KHR-GLES31.core.geometry_shader.api.fs_gs_draw_call
+asan-KHR-GLES31.core.geometry_shader.linking.more_ACs_in_GS_than_supported
+
+# This times out
+asan-dEQP-VK.ssbo.phys.layout.3_level_array.std430.column_major_mat3x4_store_cols
+
+# New timeouts in 1.4.1.0
+dEQP-VK.glsl.texture_functions.query.texturesize.sampler1darray_fixed_fragment
+dEQP-VK.glsl.texture_functions.query.texturesize.sampler1darray_float_fragment
+dEQP-VK.image.concurrent_copy.vk_format_r32g32_sfloat.vk_image_tiling_linear.vk_image_type_3d.multiple.random.device.write
+dEQP-VK.image.concurrent_copy.vk_format_r32g32_sfloat.vk_image_tiling_optimal.vk_image_type_3d.multiple.gradient.device.write
+dEQP-VK.image.concurrent_copy.vk_format_r32g32_sfloat.vk_image_tiling_optimal.vk_image_type_3d.multiple.random.device.write
+dEQP-VK.image.concurrent_copy.vk_format_r8_unorm.vk_image_tiling_linear.vk_image_type_3d.multiple.gradient.device.write
+dEQP-VK.image.concurrent_copy.vk_format_r8g8b8a8_unorm.vk_image_tiling_linear.vk_image_type_3d.multiple.random.device.write
+dEQP-VK.image.concurrent_copy.vk_format_r8g8b8a8_unorm.vk_image_tiling_linear.vk_image_type_3d.single.gradient.device.write
+dEQP-VK.image.concurrent_copy.vk_format_r8g8b8a8_unorm.vk_image_tiling_optimal.vk_image_type_3d.multiple.random.device.write
+dEQP-VK.image.concurrent_copy.vk_format_r8_unorm.vk_image_tiling_optimal.vk_image_type_3d.multiple.gradient.device.write
+dEQP-VK.image.concurrent_copy.vk_format_r8_unorm.vk_image_tiling_optimal.vk_image_type_3d.single.gradient.device.write
+dEQP-VK.image.concurrent_copy.vk_format_r8g8b8a8_unorm.vk_image_tiling_linear.vk_image_type_3d.single.random.device.write
+dEQP-VK.image.concurrent_copy.vk_format_r8g8b8a8_unorm.vk_image_tiling_optimal.vk_image_type_3d.multiple.gradient.device.write
+dEQP-VK.image.concurrent_copy.vk_format_r32g32_sfloat.vk_image_tiling_optimal.vk_image_type_3d.single.gradient.device.write
+dEQP-VK.image.concurrent_copy.vk_format_r8_unorm.vk_image_tiling_optimal.vk_image_type_3d.single.random.device.write
+dEQP-VK.image.concurrent_copy.vk_format_r8g8b8a8_unorm.vk_image_tiling_optimal.vk_image_type_3d.single.gradient.device.write
+dEQP-VK.image.concurrent_copy.vk_format_r32g32_sfloat.vk_image_tiling_linear.vk_image_type_3d.single.random.device.write
+dEQP-VK.image.concurrent_copy.vk_format_r32g32_sfloat.vk_image_tiling_optimal.vk_image_type_3d.single.random.device.write
+dEQP-VK.image.concurrent_copy.vk_format_r8_unorm.vk_image_tiling_linear.vk_image_type_3d.single.random.device.write
+dEQP-VK.image.concurrent_copy.vk_format_r8_unorm.vk_image_tiling_optimal.vk_image_type_3d.multiple.random.device.write
+dEQP-VK.image.concurrent_copy.vk_format_r8_unorm.vk_image_tiling_linear.vk_image_type_3d.multiple.random.device.write
+dEQP-VK.image.concurrent_copy.vk_format_r8g8b8a8_unorm.vk_image_tiling_linear.vk_image_type_3d.multiple.gradient.device.write
+dEQP-VK.image.concurrent_copy.vk_format_r32g32_sfloat.vk_image_tiling_linear.vk_image_type_3d.multiple.gradient.device.write
+dEQP-VK.image.concurrent_copy.vk_format_r32g32_sfloat.vk_image_tiling_linear.vk_image_type_3d.single.gradient.device.write
+dEQP-VK.image.concurrent_copy.vk_format_r8_unorm.vk_image_tiling_linear.vk_image_type_3d.single.gradient.device.write
+dEQP-VK.image.concurrent_copy.vk_format_r8g8b8a8_unorm.vk_image_tiling_optimal.vk_image_type_3d.single.random.device.write
+
+# These generate OOM on purpose to test failures. Better skip them to
+# avoid interferences when running with other tests in parallel
+dEQP-VK.api.device_init.create_instance_device_intentional_alloc_fail.basic
+dEQP-VK.api.object_management.alloc_callback_fail.*
+
+# Slow tests (> 1 minute to run)
+ubsan-dEQP-VK.ssbo.layout.3_level_unsized_array.std140.row_major_mat3x4_store_cols
+ubsan-dEQP-VK.ssbo.layout.basic_unsized_array.std430.column_major_mat4_store_cols
+ubsan-dEQP-VK.ssbo.layout.basic_unsized_array.std430.row_major_mat4_comp_access_store_cols
+ubsan-dEQP-VK.ssbo.layout.random.16bit.all_shared_buffer.33
+
+# Leaky in VKCTS 1.4.1.1
+asan-dEQP-VK.video.*

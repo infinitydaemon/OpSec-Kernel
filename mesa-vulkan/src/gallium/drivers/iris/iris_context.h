@@ -379,6 +379,7 @@ struct iris_cs_data {
    enum intel_compute_walk_order walk_order;
 
    bool uses_barrier;
+   bool uses_sampler;
    bool first_param_is_builtin_subgroup_id;
 };
 
@@ -499,6 +500,7 @@ enum pipe_control_flags
    PIPE_CONTROL_L3_READ_ONLY_CACHE_INVALIDATE   = (1 << 28),
    PIPE_CONTROL_UNTYPED_DATAPORT_CACHE_FLUSH    = (1 << 29),
    PIPE_CONTROL_CCS_CACHE_FLUSH                 = (1 << 30),
+   PIPE_CONTROL_L3_FABRIC_FLUSH                 = (1 << 31),
 };
 
 #define PIPE_CONTROL_CACHE_FLUSH_BITS \
@@ -635,6 +637,9 @@ struct iris_binding_table {
    uint64_t used_mask[IRIS_SURFACE_GROUP_COUNT];
 
    uint64_t samplers_used_mask;
+
+   /** Whether the first render target is a null fb surface */
+   uint8_t use_null_rt;
 };
 
 /**
@@ -1009,6 +1014,8 @@ struct iris_context {
       struct pipe_stencil_ref stencil_ref;
       struct pipe_framebuffer_state framebuffer;
       struct pipe_clip_state clip_planes;
+      /* width and height treated like x2 and y2 */
+      struct pipe_box render_area;
 
       float default_outer_level[4];
       float default_inner_level[2];
@@ -1488,7 +1495,6 @@ iris_execute_indirect_draw_supported(const struct iris_context *ice,
    const struct iris_screen *screen = (struct iris_screen *)ice->ctx.screen;
    const struct iris_vs_data *vs_data =
       iris_vs_data(ice->shaders.prog[MESA_SHADER_VERTEX]);
-   const bool is_multiview = draw->view_mask != 0;
    const size_t struct_size = draw->index_size ?
       sizeof(uint32_t) * 5 :
       sizeof(uint32_t) * 4;
@@ -1499,7 +1505,6 @@ iris_execute_indirect_draw_supported(const struct iris_context *ice,
            aligned_stride &&
            (indirect &&
            !indirect->count_from_stream_output) &&
-           !is_multiview &&
            !(vs_data->uses_firstvertex ||
              vs_data->uses_baseinstance ||
              vs_data->uses_drawid));
@@ -1508,9 +1513,11 @@ iris_execute_indirect_draw_supported(const struct iris_context *ice,
 #ifdef genX
 #  include "iris_genx_protos.h"
 #else
-#  define genX(x) gfx8_##x
-#  include "iris_genx_protos.h"
-#  undef genX
+#  ifdef INTEL_USE_ELK
+#    define genX(x) gfx8_##x
+#    include "iris_genx_protos.h"
+#    undef genX
+#  endif
 #  define genX(x) gfx9_##x
 #  include "iris_genx_protos.h"
 #  undef genX
@@ -1524,6 +1531,9 @@ iris_execute_indirect_draw_supported(const struct iris_context *ice,
 #  include "iris_genx_protos.h"
 #  undef genX
 #  define genX(x) gfx20_##x
+#  include "iris_genx_protos.h"
+#  undef genX
+#  define genX(x) gfx30_##x
 #  include "iris_genx_protos.h"
 #  undef genX
 #endif

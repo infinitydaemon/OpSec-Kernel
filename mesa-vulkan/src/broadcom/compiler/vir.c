@@ -25,6 +25,7 @@
 #include "v3d_compiler.h"
 #include "compiler/nir/nir_schedule.h"
 #include "compiler/nir/nir_builder.h"
+#include "util/perf/cpu_trace.h"
 
 int
 vir_get_nsrc(struct qinst *inst)
@@ -1050,6 +1051,14 @@ v3d_nir_lower_vs_early(struct v3d_compile *c)
         NIR_PASS(_, c->s, nir_lower_io, nir_var_shader_in | nir_var_shader_out,
                  type_size_vec4,
                  (nir_lower_io_options)0);
+
+        /* For geometry stages using the same segment for inputs and outputs
+         * we need to read all inputs before writing any output. If we switch
+         * to separate segments in the future this may not longer be strictly
+         * required.
+         */
+        NIR_PASS(_, c->s, nir_move_output_stores_to_end);
+
         /* clean up nir_lower_io's deref_var remains and do a constant folding pass
          * on the code it generated.
          */
@@ -1174,7 +1183,7 @@ v3d_nir_lower_fs_late(struct v3d_compile *c)
          * are using.
          */
         if (c->key->ucp_enables)
-                NIR_PASS(_, c->s, nir_lower_clip_fs, c->key->ucp_enables, true);
+                NIR_PASS(_, c->s, nir_lower_clip_fs, c->key->ucp_enables, true, false);
 
         NIR_PASS_V(c->s, nir_lower_io_to_scalar, nir_var_shader_in, NULL, NULL);
 }
@@ -1294,7 +1303,7 @@ v3d_instr_delay_cb(nir_instr *instr, void *data)
          case nir_intrinsic_image_load:
             return 3;
          case nir_intrinsic_load_ubo:
-            if (nir_src_is_divergent(intr->src[1]))
+            if (nir_src_is_divergent(&intr->src[1]))
                return 3;
             FALLTHROUGH;
          default:
@@ -1382,7 +1391,7 @@ v3d_nir_sort_constant_ubo_load(nir_block *block, nir_intrinsic_instr *ref)
                         continue;
 
                 /* We only produce unifa sequences for non-divergent loads */
-                if (nir_src_is_divergent(intr->src[1]))
+                if (nir_src_is_divergent(&intr->src[1]))
                         continue;
 
                 /* If there are any UBO loads that are not constant or that
@@ -1449,7 +1458,7 @@ v3d_nir_sort_constant_ubo_load(nir_block *block, nir_intrinsic_instr *ref)
                         if (tmp_intr->intrinsic != nir_intrinsic_load_ubo)
                                 continue;
 
-                        if (nir_src_is_divergent(tmp_intr->src[1]))
+                        if (nir_src_is_divergent(&tmp_intr->src[1]))
                                 continue;
 
                         /* Stop if we find a unifa UBO load that breaks the
@@ -1567,8 +1576,7 @@ v3d_nir_sort_constant_ubo_loads(nir_shader *s, struct v3d_compile *c)
                         c->sorted_any_ubo_loads |=
                                 v3d_nir_sort_constant_ubo_loads_block(c, block);
                 }
-                nir_metadata_preserve(impl,
-                                      nir_metadata_control_flow);
+                nir_progress(true, impl, nir_metadata_control_flow);
         }
         return c->sorted_any_ubo_loads;
 }
@@ -1663,10 +1671,35 @@ v3d_nir_lower_subgroup_intrinsics(nir_shader *s, struct v3d_compile *c)
                 nir_foreach_block(block, impl)
                         progress |= lower_subgroup_intrinsics(c, block, &b);
 
-                nir_metadata_preserve(impl,
-                                      nir_metadata_control_flow);
+                nir_progress(true, impl, nir_metadata_control_flow);
         }
         return progress;
+}
+
+static bool
+should_lower_robustness(const nir_intrinsic_instr *intr, const void *data)
+{
+        const struct v3d_key *key = data;
+
+        switch (intr->intrinsic) {
+        case nir_intrinsic_load_ubo:
+                return key->robust_uniform_access;
+
+        case nir_intrinsic_load_ssbo:
+        case nir_intrinsic_store_ssbo:
+        case nir_intrinsic_ssbo_atomic:
+        case nir_intrinsic_ssbo_atomic_swap:
+                return key->robust_storage_access;
+
+        case nir_intrinsic_image_load:
+        case nir_intrinsic_image_store:
+        case nir_intrinsic_image_atomic:
+        case nir_intrinsic_image_atomic_swap:
+                return key->robust_image_access;
+
+        default:
+                return false;
+        }
 }
 
 static void
@@ -1740,18 +1773,14 @@ v3d_attempt_compile(struct v3d_compile *c)
                 NIR_PASS(_, c->s, nir_copy_prop);
                 NIR_PASS(_, c->s, nir_opt_constant_folding);
 
-                nir_lower_robust_access_options opts = {
-                   .lower_image = c->key->robust_image_access,
-                   .lower_ssbo = c->key->robust_storage_access,
-                   .lower_ubo = c->key->robust_uniform_access,
-                };
-
-                NIR_PASS(_, c->s, nir_lower_robust_access, &opts);
+                NIR_PASS(_, c->s, nir_lower_robust_access,
+                         should_lower_robustness, c->key);
         }
 
         NIR_PASS(_, c->s, nir_lower_vars_to_scratch,
                  nir_var_function_temp,
                  0,
+                 glsl_get_natural_size_align_bytes,
                  glsl_get_natural_size_align_bytes);
 
         NIR_PASS(_, c->s, v3d_nir_lower_global_2x32);
@@ -1796,7 +1825,7 @@ v3d_attempt_compile(struct v3d_compile *c)
         NIR_PASS(_, c->s, nir_lower_bool_to_int32);
         NIR_PASS(_, c->s, nir_convert_to_lcssa, true, true);
         NIR_PASS_V(c->s, nir_divergence_analysis);
-        NIR_PASS(_, c->s, nir_convert_from_ssa, true);
+        NIR_PASS(_, c->s, nir_convert_from_ssa, true, true);
 
         struct nir_schedule_options schedule_options = {
                 /* Schedule for about half our register space, to enable more
@@ -1984,9 +2013,11 @@ uint64_t *v3d_compile(const struct v3d_compiler *compiler,
                       uint32_t *final_assembly_size)
 {
         struct v3d_compile *c = NULL;
-
         uint32_t best_spill_fill_count = UINT32_MAX;
         struct v3d_compile *best_c = NULL;
+
+        MESA_TRACE_FUNC();
+
         for (int32_t strat = 0; strat < ARRAY_SIZE(strategies); strat++) {
                 /* Fallback strategy */
                 if (strat > 0) {
@@ -2515,4 +2546,24 @@ v3d_compute_vpm_config(struct v3d_device_info *devinfo,
    }
 
    return true;
+}
+
+static inline uint32_t
+compute_prog_score(struct v3d_prog_data *p, uint32_t qpu_size)
+{
+        const uint32_t inst_count = qpu_size / sizeof(uint64_t);
+        const uint32_t tmu_count = p->tmu_count + p->tmu_spills + p->tmu_fills;
+        return inst_count + 4 * tmu_count;
+}
+
+void
+v3d_update_double_buffer_score(uint32_t vertex_count,
+                               uint32_t vs_qpu_size,
+                               uint32_t fs_qpu_size,
+                               struct v3d_prog_data *vs,
+                               struct v3d_prog_data *fs,
+                               struct v3d_double_buffer_score *score)
+{
+        score->geom += vertex_count * compute_prog_score(vs, vs_qpu_size);
+        score->render += compute_prog_score(fs, fs_qpu_size);
 }

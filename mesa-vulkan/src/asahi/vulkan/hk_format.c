@@ -8,6 +8,7 @@
  * SPDX-License-Identifier: MIT
  */
 #include "drm-uapi/drm_fourcc.h"
+#include "vulkan/vulkan_core.h"
 
 #include "hk_buffer_view.h"
 #include "hk_entrypoints.h"
@@ -18,22 +19,30 @@
 #include "vk_format.h"
 
 uint64_t agx_best_modifiers[] = {
-   // DRM_FORMAT_MOD_APPLE_TWIDDLED_COMPRESSED,
-   DRM_FORMAT_MOD_APPLE_TWIDDLED,
+   DRM_FORMAT_MOD_APPLE_GPU_TILED_COMPRESSED,
+   DRM_FORMAT_MOD_APPLE_GPU_TILED,
    DRM_FORMAT_MOD_LINEAR,
 };
 
 static VkFormatFeatureFlags2
-hk_modifier_features(uint64_t mod, VkFormat vk_format,
-                     const VkFormatProperties *props)
+hk_modifier_features(const struct agx_device *dev, uint64_t mod,
+                     VkFormat vk_format, const VkFormatProperties *props)
 {
-   if (mod == DRM_FORMAT_MOD_LINEAR)
-      return props->linearTilingFeatures;
+   /* There's no corresponding fourcc, so don't advertise modifiers */
+   if (vk_format == VK_FORMAT_B10G11R11_UFLOAT_PACK32 ||
+       vk_format == VK_FORMAT_E5B9G9R9_UFLOAT_PACK32) {
+      return 0;
+   }
 
-   if (mod == DRM_FORMAT_MOD_APPLE_TWIDDLED_COMPRESSED /* TODO */)
+   /* Don't advertise compression for the uncompressable */
+   if (mod == DRM_FORMAT_MOD_APPLE_GPU_TILED_COMPRESSED &&
+       !hk_can_compress_format(dev, vk_format))
       return 0;
 
-   return props->optimalTilingFeatures;
+   if (mod == DRM_FORMAT_MOD_LINEAR)
+      return props->linearTilingFeatures;
+   else
+      return props->optimalTilingFeatures;
 }
 
 static void
@@ -47,7 +56,8 @@ get_drm_format_modifier_properties_list(
 
    for (unsigned i = 0; i < ARRAY_SIZE(agx_best_modifiers); ++i) {
       uint64_t mod = agx_best_modifiers[i];
-      VkFormatFeatureFlags2 flags = hk_modifier_features(mod, vk_format, props);
+      VkFormatFeatureFlags2 flags =
+         hk_modifier_features(&physical_device->dev, mod, vk_format, props);
 
       if (!flags)
          continue;
@@ -75,7 +85,8 @@ get_drm_format_modifier_properties_list_2(
 
    for (unsigned i = 0; i < ARRAY_SIZE(agx_best_modifiers); ++i) {
       uint64_t mod = agx_best_modifiers[i];
-      VkFormatFeatureFlags2 flags = hk_modifier_features(mod, vk_format, props);
+      VkFormatFeatureFlags2 flags =
+         hk_modifier_features(&physical_device->dev, mod, vk_format, props);
 
       if (!flags)
          continue;

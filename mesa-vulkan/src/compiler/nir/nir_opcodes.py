@@ -150,7 +150,6 @@ def type_base_type(type_):
 _2src_commutative = "2src_commutative "
 associative = "associative "
 selection = "selection "
-derivative = "derivative "
 
 # global dictionary of opcodes
 opcodes = {}
@@ -347,19 +346,6 @@ unop("fcos", tfloat, "bit_size == 64 ? cos(src0) : cosf(src0)")
 # dfrexp
 unop_convert("frexp_exp", tint32, tfloat, "frexp(src0, &dst);")
 unop_convert("frexp_sig", tfloat, tfloat, "int n; dst = frexp(src0, &n);")
-
-# Partial derivatives.
-deriv_template = """
-Calculate the screen-space partial derivative using {} derivatives of the input
-with respect to the {}-axis. The constant folding is trivial as the derivative
-of a constant is 0 if the constant is not Inf or NaN.
-"""
-
-for mode, suffix in [("either fine or coarse", ""), ("fine", "_fine"), ("coarse", "_coarse")]:
-    for axis in ["x", "y"]:
-        unop(f"fdd{axis}{suffix}", tfloat, "isfinite(src0) ? 0.0 : NAN",
-             algebraic_properties = derivative,
-             description = deriv_template.format(mode, axis.upper()))
 
 # Floating point pack and unpack operations.
 
@@ -886,6 +872,9 @@ opcode("ushr", 0, tuint, [0, 0], [tuint, tuint32], False, "",
        "src0 >> (src1 & (sizeof(src0) * 8 - 1))",
        description = "Unsigned right-shift." + shift_note)
 
+opcode("udiv_aligned_4", 0, tuint, [0], [tuint], False, "",
+       "src0 >> 2", description = "Divide a multiple of 4 by 4")
+
 opcode("urol", 0, tuint, [0, 0], [tuint, tuint32], False, "", """
    uint32_t rotate_mask = sizeof(src0) * 8 - 1;
    dst = (src0 << (src1 & rotate_mask)) |
@@ -899,8 +888,8 @@ opcode("uror", 0, tuint, [0, 0], [tuint, tuint32], False, "", """
 
 opcode("shfr", 0, tuint32, [0, 0, 0], [tuint32, tuint32, tuint32], False, "", """
    uint32_t rotate_mask = sizeof(src0) * 8 - 1;
-   dst = (src1 >> (src2 & rotate_mask)) |
-         (src0 << (-src2 & rotate_mask));
+   uint64_t src = src1 | ((uint64_t)src0 << 32);
+   dst = src >> (src2 & rotate_mask);
 """)
 
 bitwise_description = """
@@ -1077,6 +1066,8 @@ opcode("b16csel", 0, tuint, [0, 0, 0],
 opcode("b32csel", 0, tuint, [0, 0, 0],
        [tbool32, tuint, tuint], False, selection, "src0 ? src1 : src2",
        description = csel_description.format("a 32-bit", "0 vs ~0"))
+
+triop("icsel_eqz", tint, selection, "(src0 == 0) ? src1 : src2")
 
 triop("i32csel_gt", tint32, selection, "(src0 > 0) ? src1 : src2")
 triop("i32csel_ge", tint32, selection, "(src0 >= 0) ? src1 : src2")
@@ -1281,6 +1272,16 @@ dst = ((((src0 & 0x0000ffff) << 16) * (src1 & 0xffff0000)) >> 16) + src2;
 triop("imad24_ir3", tint32, _2src_commutative,
       "(((int32_t)src0 << 8) >> 8) * (((int32_t)src1 << 8) >> 8) + src2")
 
+def triop_shift_ir3(name, shift_op, bit_op):
+    opcode(name, 0, tuint, [0, 0, 0], [tuint, tuint32, tuint], False, "",
+           f"(src0 {shift_op} (src1 & (sizeof(src0) * 8 - 1))) {bit_op} src2")
+
+triop_shift_ir3("shrm_ir3", ">>", "&")
+triop_shift_ir3("shlm_ir3", "<<", "&")
+triop_shift_ir3("shrg_ir3", ">>", "|")
+triop_shift_ir3("shlg_ir3", "<<", "|")
+triop("andg_ir3", tuint, _2src_commutative, "(src0 & src1) | src2")
+
 # r600/gcn specific instruction that evaluates unnormalized cube texture coordinates
 # and face index
 # The actual texture coordinates are evaluated from this according to
@@ -1320,6 +1321,11 @@ unop_horiz("cube_amd", 4, tfloat32, 3, tfloat32, """
 # input values are expected to be normalized by dividing by (2 * pi)
 unop("fsin_amd", tfloat, "sinf(6.2831853 * src0)")
 unop("fcos_amd", tfloat, "cosf(6.2831853 * src0)")
+
+opcode("alignbyte_amd", 0, tuint32, [0, 0, 0], [tuint32, tuint32, tuint32], False, "", """
+   uint64_t src = src1 | ((uint64_t)src0 << 32);
+   dst = src >> ((src2 & 0x3) * 8);
+""")
 
 # Midgard specific sin and cos
 # These expect their inputs to be divided by pi.
@@ -1361,6 +1367,20 @@ opcode("imadshl_agx", 0, tint, [0, 0, 0, 0], [tint, tint, tint, tint], False,
 opcode("imsubshl_agx", 0, tint, [0, 0, 0, 0], [tint, tint, tint, tint], False,
        "", f"(src0 * src1) - (src2 << src3)")
 
+# Address arithmetic instructions: extend, shift, and add
+# Shift must be a small constant.
+opcode("ilea_agx", 0, tuint64, [0, 0, 0], [tuint64, tint32, tuint32], False,
+       "", f"src0 + (((int64_t)src1) << src2)")
+opcode("ulea_agx", 0, tuint64, [0, 0, 0], [tuint64, tuint32, tuint32], False,
+       "", f"src0 + (((uint64_t)src1) << src2)")
+
+# Bounds check instruction.
+#
+# Sources: <data, end offset, bounds>
+opcode("bounds_agx", 0, tint, [0, 0, 0],
+       [tint, tint, tint], False,
+       "", "src1 <= src2 ? src0 : 0")
+
 binop_convert("interleave_agx", tuint32, tuint16, "", """
       dst = 0;
       for (unsigned bit = 0; bit < 16; bit++) {
@@ -1370,6 +1390,14 @@ binop_convert("interleave_agx", tuint32, tuint16, "", """
       Interleave bits of 16-bit integers to calculate a 32-bit integer. This can
       be used as-is for Morton encoding.
       """)
+
+# These are like fmin/fmax, but do not flush denorms on the output which is why
+# they're modeled as conversions. AGX flushes fp32 denorms but preserves fp16
+# denorms, so fp16 fmin/fmax work without lowering.
+binop_convert("fmin_agx", tuint32, tfloat32, _2src_commutative + associative,
+              "(src0 < src1 || isnan(src1)) ? src0 : src1")
+binop_convert("fmax_agx", tuint32, tfloat32, _2src_commutative + associative,
+              "(src0 > src1 || isnan(src1)) ? src0 : src1")
 
 # NVIDIA PRMT
 opcode("prmt_nv", 0, tuint32, [0, 0, 0], [tuint32, tuint32, tuint32],
@@ -1383,6 +1411,11 @@ opcode("prmt_nv", 0, tuint32, [0, 0, 0], [tuint32, tuint32, tuint32],
             x = ((int8_t)x) >> 7;
         dst |= ((uint32_t)x) << i * 8;
     }""")
+
+# Address arithmetic instructions: shift and add
+# Shift must be a constant.
+opcode("lea_nv", 0, tuint, [0, 0, 0], [tuint, tuint, tuint32], False,
+       "", "src0 + (src1 << (src2 % bit_size))")
 
 # 24b multiply into 32b result (with sign extension)
 binop("imul24", tint32, _2src_commutative + associative,
@@ -1404,6 +1437,16 @@ binop("umul24_relaxed", tuint32, _2src_commutative + associative, "src0 * src1")
 unop_convert("fisnormal", tbool1, tfloat, "isnormal(src0)")
 unop_convert("fisfinite", tbool1, tfloat, "isfinite(src0)")
 unop_convert("fisfinite32", tbool32, tfloat, "isfinite(src0)")
+
+# panfrost-specific opcodes
+
+# 16-bit ldexp with 16-bit exponent for bifrost
+opcode("ldexp16_pan", 0, tfloat16, [0, 0], [tfloat16, tint16], False, "", """
+dst = ldexpf(src0, src1);
+/* flush denormals to zero. */
+if (!isnormal(dst))
+   dst = copysignf(0.0f, src0);
+""")
 
 # vc4-specific opcodes
 
@@ -1504,9 +1547,9 @@ unop("pack_2x16_to_unorm_2x10_v3d", tuint32, "pack_2x16_to_unorm_2x10(src0)")
 # and one 10 bit unorm
 unop("pack_2x16_to_unorm_10_2_v3d", tuint32, "pack_2x16_to_unorm_10_2(src0)")
 
-# Mali-specific opcodes
-unop("fsat_signed_mali", tfloat, ("fmin(fmax(src0, -1.0), 1.0)"))
-unop("fclamp_pos_mali", tfloat, ("fmax(src0, 0.0)"))
+# These opcodes are used used by Mali and V3D
+unop("fsat_signed", tfloat, ("fmin(fmax(src0, -1.0), 1.0)"))
+unop("fclamp_pos", tfloat, ("fmax(src0, 0.0)"))
 
 opcode("b32fcsel_mdg", 0, tuint, [0, 0, 0],
        [tbool32, tfloat, tfloat], False, selection, "src0 ? src1 : src2",
@@ -1515,10 +1558,6 @@ opcode("b32fcsel_mdg", 0, tuint, [0, 0, 0],
        integer sources. That includes support for floating point modifiers in
        the backend.
        """)
-
-# Magnitude equal to fddx/y, sign undefined. Derivative of a constant is zero.
-unop("fddx_must_abs_mali", tfloat, "0.0", algebraic_properties = "derivative")
-unop("fddy_must_abs_mali", tfloat, "0.0", algebraic_properties = "derivative")
 
 # DXIL specific double [un]pack
 # DXIL doesn't support generic [un]pack instructions, so we want those

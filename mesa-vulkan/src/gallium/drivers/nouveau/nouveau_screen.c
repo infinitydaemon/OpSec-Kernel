@@ -1,3 +1,5 @@
+#include "git_sha1.h"
+
 #include "pipe/p_defines.h"
 #include "pipe/p_screen.h"
 #include "pipe/p_state.h"
@@ -261,24 +263,32 @@ nouveau_pushbuf_destroy(struct nouveau_pushbuf **push)
    nouveau_pushbuf_del(push);
 }
 
-static bool
-nouveau_check_for_uma(int chipset, struct nouveau_device *dev)
-{
-   struct nv_device_info_v0 info = {
-      .version = 0,
-   };
-
-   nouveau_device_info(dev, &info);
-
-   return (info.platform == NV_DEVICE_INFO_V0_IGP) || (info.platform == NV_DEVICE_INFO_V0_SOC);
-}
-
 static int
 nouveau_screen_get_fd(struct pipe_screen *pscreen)
 {
    const struct nouveau_screen *screen = nouveau_screen(pscreen);
 
    return screen->drm->fd;
+}
+
+static void
+nouveau_driver_uuid(struct pipe_screen *screen, char *uuid)
+{
+   const char* driver = PACKAGE_VERSION MESA_GIT_SHA1;
+   struct mesa_sha1 sha1_ctx;
+   uint8_t sha1[20];
+
+   _mesa_sha1_init(&sha1_ctx);
+   _mesa_sha1_update(&sha1_ctx, driver, strlen(driver));
+   _mesa_sha1_final(&sha1_ctx, sha1);
+   memcpy(uuid, sha1, PIPE_UUID_SIZE);
+}
+
+static void
+nouveau_device_uuid(struct pipe_screen *pscreen, char *uuid)
+{
+   const struct nouveau_screen *screen = nouveau_screen(pscreen);
+   nv_device_uuid(&screen->device->info, (void *)uuid, PIPE_UUID_SIZE, false);
 }
 
 int
@@ -299,7 +309,6 @@ nouveau_screen_init(struct nouveau_screen *screen, struct nouveau_device *dev)
    if (nv_dbg)
       nouveau_mesa_debug = atoi(nv_dbg);
 
-   screen->force_enable_cl = debug_get_bool_option("NOUVEAU_ENABLE_CL", false);
    screen->disable_fences = debug_get_bool_option("NOUVEAU_DISABLE_FENCES", false);
 
    /* These must be set before any failure is possible, as the cleanup
@@ -307,12 +316,7 @@ nouveau_screen_init(struct nouveau_screen *screen, struct nouveau_device *dev)
     */
    screen->drm = nouveau_drm(&dev->object);
    screen->device = dev;
-
-   /*
-    * this is initialized to 1 in nouveau_drm_screen_create after screen
-    * is fully constructed and added to the global screen list.
-    */
-   screen->refcount = -1;
+   screen->initialized = false;
 
    if (dev->chipset < 0xc0) {
       data = &nv04_data;
@@ -421,6 +425,8 @@ nouveau_screen_init(struct nouveau_screen *screen, struct nouveau_device *dev)
    pscreen->fence_finish = nouveau_screen_fence_finish;
 
    pscreen->query_memory_info = nouveau_query_memory_info;
+   pscreen->get_driver_uuid = nouveau_driver_uuid;
+   pscreen->get_device_uuid = nouveau_device_uuid;
 
    nouveau_disk_cache_create(screen);
 
@@ -438,7 +444,7 @@ nouveau_screen_init(struct nouveau_screen *screen, struct nouveau_device *dev)
       PIPE_BIND_SAMPLER_VIEW | PIPE_BIND_STREAM_OUTPUT |
       PIPE_BIND_COMMAND_ARGS_BUFFER;
 
-   screen->is_uma = nouveau_check_for_uma(dev->chipset, dev);
+   screen->is_uma = dev->info.type != NV_DEVICE_TYPE_DIS;
 
    memset(&mm_config, 0, sizeof(mm_config));
    nouveau_fence_list_init(&screen->fence);

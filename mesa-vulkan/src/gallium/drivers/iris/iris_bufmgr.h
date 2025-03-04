@@ -215,6 +215,13 @@ iris_heap_is_device_local(enum iris_heap heap)
           heap == IRIS_HEAP_DEVICE_LOCAL_COMPRESSED;
 }
 
+static inline bool
+iris_heap_is_compressed(enum iris_heap heap)
+{
+   return heap == IRIS_HEAP_SYSTEM_MEMORY_UNCACHED_COMPRESSED ||
+          heap == IRIS_HEAP_DEVICE_LOCAL_COMPRESSED;
+}
+
 #define IRIS_BATCH_COUNT 3
 
 struct iris_bo_screen_deps {
@@ -349,6 +356,9 @@ struct iris_bo {
           * this set before batch_submit().
           */
          bool capture;
+
+         /** Boolean of whether this buffer can be scanout to display */
+         bool scanout;
       } real;
       struct {
          struct pb_slab_entry entry;
@@ -365,7 +375,7 @@ struct iris_bo {
  * integrated platforms without LLC.
  * Should only be used in BOs that will be written and read from CPU often.
  */
-#define BO_ALLOC_COHERENT        (1<<1)
+#define BO_ALLOC_CACHED_COHERENT (1<<1)
 /* Place BO only on smem. */
 #define BO_ALLOC_SMEM            (1<<2)
 /* BO can be sent to display. */
@@ -620,7 +630,7 @@ iris_bo_bump_seqno(struct iris_bo *bo, uint64_t seqno,
  */
 const struct intel_device_info_pat_entry *
 iris_heap_to_pat_entry(const struct intel_device_info *devinfo,
-                       enum iris_heap heap);
+                       enum iris_heap heap, bool scanout);
 
 enum iris_memory_zone iris_memzone_for_address(uint64_t address);
 
@@ -665,6 +675,7 @@ bool iris_bufmgr_use_global_vm_id(struct iris_bufmgr *bufmgr);
 struct intel_bind_timeline *iris_bufmgr_get_bind_timeline(struct iris_bufmgr *bufmgr);
 bool iris_bufmgr_compute_engine_supported(struct iris_bufmgr *bufmgr);
 uint64_t iris_bufmgr_get_dummy_aux_address(struct iris_bufmgr *bufmgr);
+struct iris_bo *iris_bufmgr_get_mem_fence_bo(struct iris_bufmgr *bufmgr);
 
 enum iris_madvice {
    IRIS_MADVICE_WILL_NEED = 0,

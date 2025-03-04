@@ -34,6 +34,19 @@
 
 #include "util/mesa-sha1.h"
 
+#include "nir.h"
+
+static void
+vk_shader_init(struct vk_shader *shader,
+               struct vk_device *device,
+               const struct vk_shader_ops *ops,
+               gl_shader_stage stage)
+{
+   vk_object_base_init(device, &shader->base, VK_OBJECT_TYPE_SHADER_EXT);
+   shader->ops = ops;
+   shader->stage = stage;
+}
+
 void *
 vk_shader_zalloc(struct vk_device *device,
                  const struct vk_shader_ops *ops,
@@ -56,9 +69,25 @@ vk_shader_zalloc(struct vk_device *device,
    if (shader == NULL)
       return NULL;
 
-   vk_object_base_init(device, &shader->base, VK_OBJECT_TYPE_SHADER_EXT);
-   shader->ops = ops;
-   shader->stage = stage;
+   vk_shader_init(shader, device, ops, stage);
+
+   return shader;
+}
+
+void *
+vk_shader_multizalloc(struct vk_device *device,
+                      struct vk_multialloc *ma,
+                      const struct vk_shader_ops *ops,
+                      gl_shader_stage stage,
+                      const VkAllocationCallbacks *alloc)
+{
+   struct vk_shader *shader =
+      vk_multialloc_zalloc2(ma, &device->alloc, alloc,
+                            VK_SYSTEM_ALLOCATION_SCOPE_DEVICE);
+   if (!shader)
+      return NULL;
+
+   vk_shader_init(shader, device, ops, stage);
 
    return shader;
 }
@@ -133,7 +162,7 @@ vk_shader_to_nir(struct vk_device *device,
       return NULL;
 
    if (ops->preprocess_nir != NULL)
-      ops->preprocess_nir(device->physical, nir);
+      ops->preprocess_nir(device->physical, nir, rs);
 
    return nir;
 }
@@ -377,6 +406,24 @@ vk_common_GetShaderBinaryDataEXT(VkDevice _device,
  */
 #define VK_MAX_LINKED_SHADER_STAGES MESA_VK_MAX_GRAPHICS_PIPELINE_STAGES
 
+const struct vk_pipeline_robustness_state vk_robustness_disabled = {
+   .storage_buffers = VK_PIPELINE_ROBUSTNESS_BUFFER_BEHAVIOR_DISABLED_EXT,
+   .uniform_buffers = VK_PIPELINE_ROBUSTNESS_BUFFER_BEHAVIOR_DISABLED_EXT,
+   .vertex_inputs = VK_PIPELINE_ROBUSTNESS_BUFFER_BEHAVIOR_DISABLED_EXT,
+   .images = VK_PIPELINE_ROBUSTNESS_IMAGE_BEHAVIOR_DISABLED_EXT,
+   /* From the Vulkan 1.3.292 spec:
+    *
+    *    "This extension [VK_EXT_robustness2] also adds support for “null
+    *    descriptors”, where VK_NULL_HANDLE can be used instead of a valid
+    *    handle. Accesses to null descriptors have well-defined behavior,
+    *    and do not rely on robustness."
+    *
+    * For now, default these to true.
+    */
+   .null_uniform_buffer_descriptor = true,
+   .null_storage_buffer_descriptor = true,
+};
+
 VKAPI_ATTR VkResult VKAPI_CALL
 vk_common_CreateShadersEXT(VkDevice _device,
                            uint32_t createInfoCount,
@@ -387,13 +434,6 @@ vk_common_CreateShadersEXT(VkDevice _device,
    VK_FROM_HANDLE(vk_device, device, _device);
    const struct vk_device_shader_ops *ops = device->shader_ops;
    VkResult first_fail_or_success = VK_SUCCESS;
-
-   struct vk_pipeline_robustness_state rs = {
-      .storage_buffers = VK_PIPELINE_ROBUSTNESS_BUFFER_BEHAVIOR_DISABLED_EXT,
-      .uniform_buffers = VK_PIPELINE_ROBUSTNESS_BUFFER_BEHAVIOR_DISABLED_EXT,
-      .vertex_inputs = VK_PIPELINE_ROBUSTNESS_BUFFER_BEHAVIOR_DISABLED_EXT,
-      .images = VK_PIPELINE_ROBUSTNESS_IMAGE_BEHAVIOR_DISABLED_EXT,
-   };
 
    /* From the Vulkan 1.3.274 spec:
     *
@@ -452,7 +492,8 @@ vk_common_CreateShadersEXT(VkDevice _device,
                .idx = i,
             };
          } else {
-            nir_shader *nir = vk_shader_to_nir(device, vk_info, &rs);
+            nir_shader *nir = vk_shader_to_nir(device, vk_info,
+                                               &vk_robustness_disabled);
             if (nir == NULL) {
                result = vk_errorf(device, VK_ERROR_UNKNOWN,
                                   "Failed to compile shader to NIR");
@@ -462,7 +503,7 @@ vk_common_CreateShadersEXT(VkDevice _device,
             struct vk_shader_compile_info info;
             struct set_layouts set_layouts;
             vk_shader_compile_info_init(&info, &set_layouts,
-                                        vk_info, &rs, nir);
+                                        vk_info, &vk_robustness_disabled, nir);
 
             struct vk_shader *shader;
             result = ops->compile(device, 1, &info, NULL /* state */,
@@ -497,7 +538,8 @@ vk_common_CreateShadersEXT(VkDevice _device,
       for (uint32_t l = 0; l < linked_count; l++) {
          const VkShaderCreateInfoEXT *vk_info = &pCreateInfos[linked[l].idx];
 
-         nir_shader *nir = vk_shader_to_nir(device, vk_info, &rs);
+         nir_shader *nir = vk_shader_to_nir(device, vk_info,
+                                            &vk_robustness_disabled);
          if (nir == NULL) {
             result = vk_errorf(device, VK_ERROR_UNKNOWN,
                                "Failed to compile shader to NIR");
@@ -505,7 +547,7 @@ vk_common_CreateShadersEXT(VkDevice _device,
          }
 
          vk_shader_compile_info_init(&infos[l], &set_layouts[l],
-                                     vk_info, &rs, nir);
+                                     vk_info, &vk_robustness_disabled, nir);
       }
 
       if (result == VK_SUCCESS) {

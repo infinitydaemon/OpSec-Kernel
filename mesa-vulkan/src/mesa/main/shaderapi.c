@@ -53,8 +53,6 @@
 #include "compiler/glsl/builtin_functions.h"
 #include "compiler/glsl/glsl_parser_extras.h"
 #include "compiler/glsl/ir.h"
-#include "compiler/glsl/ir_uniform.h"
-#include "compiler/glsl/program.h"
 #include "program/program.h"
 #include "program/prog_print.h"
 #include "program/prog_parameter.h"
@@ -1232,29 +1230,10 @@ _mesa_compile_shader(struct gl_context *ctx, struct gl_shader *sh)
       /* this call will set the shader->CompileStatus field to indicate if
        * compilation was successful.
        */
-      _mesa_glsl_compile_shader(ctx, sh, false, false, false);
+      _mesa_glsl_compile_shader(ctx, sh, NULL, false, false, false);
 
       if (ctx->_Shader->Flags & GLSL_LOG) {
          _mesa_write_shader_to_file(sh);
-      }
-
-      if (ctx->_Shader->Flags & GLSL_DUMP) {
-         if (sh->CompileStatus) {
-            if (sh->ir) {
-               _mesa_log("GLSL IR for shader %d:\n", sh->Name);
-               _mesa_print_ir(mesa_log_get_file(), sh->ir, NULL);
-            } else {
-               _mesa_log("No GLSL IR for shader %d (shader may be from "
-                         "cache)\n", sh->Name);
-            }
-            _mesa_log("\n\n");
-         } else {
-            _mesa_log("GLSL shader %d failed to compile.\n", sh->Name);
-         }
-         if (sh->InfoLog && sh->InfoLog[0] != 0) {
-            _mesa_log("GLSL shader %d info log:\n", sh->Name);
-            _mesa_log("%s\n", sh->InfoLog);
-         }
       }
    }
 
@@ -1296,6 +1275,60 @@ update_programs_in_pipeline(void *data, void *userData)
    }
 }
 
+static void
+capture_shader_program(struct gl_context *ctx,
+                       struct gl_shader_program *shProg)
+{
+#ifndef CUSTOM_SHADER_REPLACEMENT
+   /* Capture .shader_test files. */
+   const char *capture_path = _mesa_get_shader_capture_path();
+
+   if (shProg->Name != 0 && shProg->Name != ~0 && capture_path != NULL) {
+      /* Find an unused filename. */
+      FILE *file = NULL;
+      char *filename = NULL;
+
+      for (unsigned i = 0;; i++) {
+         if (i) {
+            filename = ralloc_asprintf(NULL, "%s/%u-%u.shader_test",
+                                       capture_path, shProg->Name, i);
+         } else {
+            filename = ralloc_asprintf(NULL, "%s/%u.shader_test",
+                                       capture_path, shProg->Name);
+         }
+         file = os_file_create_unique(filename, 0644);
+         if (file)
+            break;
+         /* If we are failing for another reason than "this filename already
+          * exists", we are likely to fail again with another filename, so
+          * let's just give up */
+         if (errno != EEXIST)
+            break;
+         ralloc_free(filename);
+      }
+
+      if (file) {
+         fprintf(file, "[require]\nGLSL%s >= %u.%02u\n",
+                 shProg->IsES ? " ES" : "", shProg->GLSL_Version / 100,
+                 shProg->GLSL_Version % 100);
+         if (shProg->SeparateShader)
+            fprintf(file, "GL_ARB_separate_shader_objects\nSSO ENABLED\n");
+         fprintf(file, "\n");
+
+         for (unsigned i = 0; i < shProg->NumShaders; i++) {
+            fprintf(file, "[%s shader]\n%s\n",
+                    _mesa_shader_stage_to_string(shProg->Shaders[i]->Stage),
+                    shProg->Shaders[i]->Source);
+         }
+         fclose(file);
+      } else {
+         _mesa_warning(ctx, "Failed to open %s", filename);
+      }
+
+      ralloc_free(filename);
+   }
+#endif
+}
 
 /**
  * Link a program's shaders.
@@ -1321,6 +1354,8 @@ link_program(struct gl_context *ctx, struct gl_shader_program *shProg,
          return;
       }
    }
+
+   capture_shader_program(ctx, shProg);
 
    unsigned programs_in_use = 0;
    if (ctx->_Shader)
@@ -1364,53 +1399,6 @@ link_program(struct gl_context *ctx, struct gl_shader_program *shProg,
       _mesa_HashWalk(&ctx->Pipeline.Objects, update_programs_in_pipeline,
                      &params);
    }
-
-#ifndef CUSTOM_SHADER_REPLACEMENT
-   /* Capture .shader_test files. */
-   const char *capture_path = _mesa_get_shader_capture_path();
-   if (shProg->Name != 0 && shProg->Name != ~0 && capture_path != NULL) {
-      /* Find an unused filename. */
-      FILE *file = NULL;
-      char *filename = NULL;
-      for (unsigned i = 0;; i++) {
-         if (i) {
-            filename = ralloc_asprintf(NULL, "%s/%u-%u.shader_test",
-                                       capture_path, shProg->Name, i);
-         } else {
-            filename = ralloc_asprintf(NULL, "%s/%u.shader_test",
-                                       capture_path, shProg->Name);
-         }
-         file = os_file_create_unique(filename, 0644);
-         if (file)
-            break;
-         /* If we are failing for another reason than "this filename already
-          * exists", we are likely to fail again with another filename, so
-          * let's just give up */
-         if (errno != EEXIST)
-            break;
-         ralloc_free(filename);
-      }
-      if (file) {
-         fprintf(file, "[require]\nGLSL%s >= %u.%02u\n",
-                 shProg->IsES ? " ES" : "", shProg->GLSL_Version / 100,
-                 shProg->GLSL_Version % 100);
-         if (shProg->SeparateShader)
-            fprintf(file, "GL_ARB_separate_shader_objects\nSSO ENABLED\n");
-         fprintf(file, "\n");
-
-         for (unsigned i = 0; i < shProg->NumShaders; i++) {
-            fprintf(file, "[%s shader]\n%s\n",
-                    _mesa_shader_stage_to_string(shProg->Shaders[i]->Stage),
-                    shProg->Shaders[i]->Source);
-         }
-         fclose(file);
-      } else {
-         _mesa_warning(ctx, "Failed to open %s", filename);
-      }
-
-      ralloc_free(filename);
-   }
-#endif
 
    if (shProg->data->LinkStatus == LINKING_FAILURE &&
        (ctx->_Shader->Flags & GLSL_REPORT_ERRORS)) {

@@ -1,24 +1,6 @@
 /*
  * Copyright © 2018-2019 Igalia S.L.
- *
- * Permission is hereby granted, free of charge, to any person obtaining a
- * copy of this software and associated documentation files (the "Software"),
- * to deal in the Software without restriction, including without limitation
- * the rights to use, copy, modify, merge, publish, distribute, sublicense,
- * and/or sell copies of the Software, and to permit persons to whom the
- * Software is furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice (including the next
- * paragraph) shall be included in all copies or substantial portions of the
- * Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
- * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
- * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
- * IN THE SOFTWARE.
+ * SPDX-License-Identifier: MIT
  */
 
 #include "compiler/nir/nir_builder.h"
@@ -172,6 +154,37 @@ create_shift(nir_builder *b, nir_def *offset, int shift)
    return nir_ushr_imm(b, offset, shift);
 }
 
+/* isam doesn't have an "untyped" field, so it can only load 1 component at a
+ * time because our storage buffer descriptors use a 1-component format.
+ * Therefore we need to scalarize any loads that would use isam.
+ */
+static void
+scalarize_load(nir_intrinsic_instr *intrinsic, nir_builder *b)
+{
+   struct nir_def *results[NIR_MAX_VEC_COMPONENTS];
+
+   nir_def *descriptor = intrinsic->src[0].ssa;
+   nir_def *offset = intrinsic->src[1].ssa;
+   nir_def *record = nir_channel(b, offset, 0);
+   nir_def *record_offset = nir_channel(b, offset, 1);
+
+   for (unsigned i = 0; i < intrinsic->def.num_components; i++) {
+      results[i] =
+         nir_load_uav_ir3(b, 1, intrinsic->def.bit_size, descriptor,
+                          nir_vec2(b, record, 
+                                   nir_iadd_imm(b, record_offset, i)),
+                          .access = nir_intrinsic_access(intrinsic),
+                          .align_mul = nir_intrinsic_align_mul(intrinsic),
+                          .align_offset = nir_intrinsic_align_offset(intrinsic));
+   }
+
+   nir_def *result = nir_vec(b, results, intrinsic->def.num_components);
+
+   nir_def_rewrite_uses(&intrinsic->def, result);
+
+   nir_instr_remove(&intrinsic->instr);
+}
+
 static bool
 lower_offset_for_ssbo(nir_intrinsic_instr *intrinsic, nir_builder *b,
                       unsigned ir3_ssbo_opcode, uint8_t offset_src_idx)
@@ -191,6 +204,11 @@ lower_offset_for_ssbo(nir_intrinsic_instr *intrinsic, nir_builder *b,
    if ((has_dest && intrinsic->def.bit_size == 8) ||
        (!has_dest && intrinsic->src[0].ssa->bit_size == 8))
       shift = 0;
+
+   if ((has_dest && intrinsic->def.bit_size == 64) ||
+       (!has_dest && intrinsic->src[0].ssa->bit_size == 64)) {
+      shift = 1;
+   }
 
    /* Here we create a new intrinsic and copy over all contents from the old
     * one. */
@@ -284,6 +302,14 @@ lower_io_offsets_block(nir_block *block, nir_builder *b, void *mem_ctx)
          progress |= lower_offset_for_ssbo(intr, b, (unsigned)ir3_intrinsic,
                                            offset_src_idx);
       }
+
+      if (intr->intrinsic == nir_intrinsic_load_uav_ir3 &&
+          (nir_intrinsic_access(intr) & ACCESS_CAN_REORDER) &&
+          ir3_bindless_resource(intr->src[0]) &&
+          intr->num_components > 1) {
+         b->cursor = nir_before_instr(instr);
+         scalarize_load(intr, b);
+      }
    }
 
    return progress;
@@ -300,12 +326,7 @@ lower_io_offsets_func(nir_function_impl *impl)
       progress |= lower_io_offsets_block(block, &b, mem_ctx);
    }
 
-   if (progress) {
-      nir_metadata_preserve(impl,
-                            nir_metadata_control_flow);
-   }
-
-   return progress;
+   return nir_progress(progress, impl, nir_metadata_control_flow);
 }
 
 bool

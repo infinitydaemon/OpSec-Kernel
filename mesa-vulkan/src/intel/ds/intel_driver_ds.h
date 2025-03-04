@@ -59,6 +59,7 @@ enum intel_ds_stall_flag {
    INTEL_DS_PSS_STALL_SYNC_BIT               = BITFIELD_BIT(14),
    INTEL_DS_END_OF_PIPE_BIT                  = BITFIELD_BIT(15),
    INTEL_DS_CCS_CACHE_FLUSH_BIT              = BITFIELD_BIT(16),
+   INTEL_DS_L3_FABRIC_FLUSH_BIT              = BITFIELD_BIT(17),
 };
 
 enum intel_ds_tracepoint_flags {
@@ -70,8 +71,12 @@ enum intel_ds_tracepoint_flags {
    /**
     * Whether this tracepoint's timestamp is recorded on the compute pipeline.
     */
-   INTEL_DS_TRACEPOINT_FLAG_END_OF_PIPE_CS = BITFIELD_BIT(1),
-
+   INTEL_DS_TRACEPOINT_FLAG_END_CS         = BITFIELD_BIT(1),
+   /**
+    * Whether this tracepoint doesn't generate a timestamp but instead repeats
+    * the last one.
+    */
+   INTEL_DS_TRACEPOINT_FLAG_REPEAST_LAST   = BITFIELD_BIT(2),
 };
 
 /* Convert internal driver PIPE_CONTROL stall bits to intel_ds_stall_flag. */

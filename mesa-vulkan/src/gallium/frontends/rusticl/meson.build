@@ -1,9 +1,6 @@
 # Copyright ©
 # SPDX-License-Identifier: MIT
 
-fs = import('fs')
-rust = import('rust')
-
 libmesa_rust_util_files = files(
   'util/lib.rs',
   'util/assert.rs',
@@ -26,6 +23,8 @@ libmesa_rust_files = files(
   'mesa/pipe/fence.rs',
   'mesa/pipe/screen.rs',
   'mesa/pipe/transfer.rs',
+  'mesa/util.rs',
+  'mesa/util/disk_cache.rs',
 )
 
 rusticl_proc_macros_files = files(
@@ -76,6 +75,13 @@ rusticl_args = [
   '-Aclippy::type_complexity',
 ]
 
+rusticl_drivers_enable = get_option('gallium-rusticl-enable-drivers')
+foreach driver : rusticl_drivers_enable
+  rusticl_args += [
+    '--cfg', 'rusticl_enable_' + driver,
+  ]
+endforeach
+
 if with_platform_x11
   rusticl_args += [
     '--cfg', 'glx',
@@ -95,7 +101,6 @@ rusticl_gen_args = [
 
 rusticl_bindgen_args = [
   '--no-convert-floats',
-  '--use-array-pointers-in-arguments',
   '--default-enum-style', 'rust',
   '--with-derive-partialeq',
   '--with-derive-eq',
@@ -105,16 +110,6 @@ rusticl_bindgen_args = [
   '--with-derive-default',
   '--anon-fields-prefix', 'anon_',
 ]
-
-bindgen_version = find_program('bindgen').version()
-
-if bindgen_version == 'unknown'
-  error('Failed to detect bindgen version. If you are using bindgen 0.69.0, please either update to 0.69.1 or downgrade to 0.68.1. You can install the latest version for your user with `cargo install bindgen-cli`.')
-endif
-
-if bindgen_version.version_compare('< 0.65')
-  error('rusticl requires bindgen 0.65 or newer. If your distribution does not ship a recent enough version, you can install the latest version for your user with `cargo install bindgen-cli`.')
-endif
 
 rusticl_bindgen_c_args = [
   '-fno-builtin-malloc',
@@ -157,6 +152,7 @@ rusticl_opencl_bindings_rs = rust.bindgen(
     '--raw-line', 'unsafe impl std::marker::Send for _cl_image_desc {}',
     '--raw-line', 'unsafe impl std::marker::Sync for _cl_image_desc {}',
     '--allowlist-type', 'cl_.*',
+    '--blocklist-type', '(__)?cl_.*[2348(16)]',
     '--allowlist-type', 'cl.*_fn',
     '--allowlist-var', 'CL_.*',
     # needed for gl_sharing extension
@@ -263,6 +259,10 @@ rusticl_mesa_bindings = rust.bindgen(
   ],
   args : [
     rusticl_bindgen_args,
+
+    # we want that for mesa
+    '--use-array-pointers-in-arguments',
+
     # mesa utils
     '--allowlist-function',     'blob_.*',
     '--allowlist-function',     'disk_cache_.*',

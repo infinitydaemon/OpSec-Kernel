@@ -15,51 +15,14 @@
 #include "pan_shader.h"
 
 #include "panvk_blend.h"
+#include "panvk_cmd_buffer.h"
 #include "panvk_device.h"
 #include "panvk_shader.h"
 
-DERIVE_HASH_TABLE(pan_blend_shader_key);
-
-VkResult
-panvk_per_arch(blend_shader_cache_init)(struct panvk_device *dev)
-{
-   struct panvk_blend_shader_cache *cache = &dev->blend_shader_cache;
-
-   simple_mtx_init(&cache->lock, mtx_plain);
-
-   struct panvk_pool_properties bin_pool_props = {
-      .create_flags = PAN_KMOD_BO_FLAG_EXECUTABLE,
-      .slab_size = 16 * 1024,
-      .label = "blend shaders",
-      .owns_bos = true,
-      .prealloc = false,
-      .needs_locking = false,
-   };
-   panvk_pool_init(&cache->bin_pool, dev, NULL, &bin_pool_props);
-
-   cache->ht = pan_blend_shader_key_table_create(NULL);
-   if (!cache->ht) {
-      panvk_pool_cleanup(&cache->bin_pool);
-      simple_mtx_destroy(&cache->lock);
-      return vk_errorf(dev, VK_ERROR_OUT_OF_HOST_MEMORY,
-                       "couldn't create blend shader hash table");
-   }
-
-   return VK_SUCCESS;
-}
-
-void
-panvk_per_arch(blend_shader_cache_cleanup)(struct panvk_device *dev)
-{
-   struct panvk_blend_shader_cache *cache = &dev->blend_shader_cache;
-
-   hash_table_foreach_remove(cache->ht, he)
-      vk_free(&dev->vk.alloc, he->data);
-
-   _mesa_hash_table_destroy(cache->ht, NULL);
-   panvk_pool_cleanup(&cache->bin_pool);
-   simple_mtx_destroy(&cache->lock);
-}
+struct panvk_blend_shader_key {
+   enum panvk_meta_object_key_type type;
+   struct pan_blend_shader_key info;
+};
 
 static bool
 lower_load_blend_const(nir_builder *b, nir_instr *instr, UNUSED void *data)
@@ -74,119 +37,96 @@ lower_load_blend_const(nir_builder *b, nir_instr *instr, UNUSED void *data)
 
    b->cursor = nir_before_instr(instr);
 
-   unsigned offset = offsetof(struct panvk_graphics_sysvals, blend.constants);
+   /* Blend constants are always passed through FAU words 0:3. */
    nir_def *blend_consts = nir_load_push_constant(
-      b, intr->def.num_components, intr->def.bit_size, nir_imm_int(b, 0),
-      /* Push constants are placed first, and then come the sysvals. */
-      .base = offset + 256,
-      .range = intr->def.num_components * intr->def.bit_size / 8);
+      b, intr->def.num_components, intr->def.bit_size, nir_imm_int(b, 0));
 
    nir_def_rewrite_uses(&intr->def, blend_consts);
    return true;
 }
 
 static VkResult
-get_blend_shader_locked(struct panvk_device *dev,
-                        const struct pan_blend_state *state,
-                        nir_alu_type src0_type, nir_alu_type src1_type,
-                        unsigned rt, mali_ptr *shader_addr)
+get_blend_shader(struct panvk_device *dev,
+                 const struct pan_blend_state *state,
+                 nir_alu_type src0_type, nir_alu_type src1_type,
+                 unsigned rt, uint64_t *shader_addr)
 {
    struct panvk_physical_device *pdev =
       to_panvk_physical_device(dev->vk.physical);
-   struct panvk_blend_shader_cache *cache = &dev->blend_shader_cache;
-   struct pan_blend_shader_key key = {
-      .format = state->rts[rt].format,
-      .src0_type = src0_type,
-      .src1_type = src1_type,
-      .rt = rt,
-      .has_constants = pan_blend_constant_mask(state->rts[rt].equation) != 0,
-      .logicop_enable = state->logicop_enable,
-      .logicop_func = state->logicop_func,
-      .nr_samples = state->rts[rt].nr_samples,
-      .equation = state->rts[rt].equation,
+   struct panvk_blend_shader_key key = {
+      .type = PANVK_META_OBJECT_KEY_BLEND_SHADER,
+      .info = {
+         .format = state->rts[rt].format,
+         .src0_type = src0_type,
+         .src1_type = src1_type,
+         .rt = rt,
+         .has_constants =
+            pan_blend_constant_mask(state->rts[rt].equation) != 0,
+         .logicop_enable = state->logicop_enable,
+         .logicop_func = state->logicop_func,
+         .nr_samples = state->rts[rt].nr_samples,
+         .equation = state->rts[rt].equation,
+         .alpha_to_one = state->alpha_to_one,
+      },
    };
+   struct panvk_internal_shader *shader;
 
-   assert(state->logicop_enable ||
+   assert(state->logicop_enable || state->alpha_to_one ||
           !pan_blend_is_opaque(state->rts[rt].equation));
    assert(state->rts[rt].equation.color_mask != 0);
-   simple_mtx_assert_locked(&dev->blend_shader_cache.lock);
 
-   struct hash_entry *he = _mesa_hash_table_search(cache->ht, &key);
-   struct panvk_blend_shader *shader = he ? he->data : NULL;
-
-   if (shader)
+   VkShaderEXT shader_handle = (VkShaderEXT)vk_meta_lookup_object(
+      &dev->meta, VK_OBJECT_TYPE_SHADER_EXT, &key, sizeof(key));
+   if (shader_handle != VK_NULL_HANDLE)
       goto out;
-
-   shader = vk_zalloc(&dev->vk.alloc, sizeof(*shader), 8,
-                      VK_SYSTEM_ALLOCATION_SCOPE_DEVICE);
-   if (!shader)
-      return vk_errorf(dev, VK_ERROR_OUT_OF_HOST_MEMORY,
-                       "couldn't allocate blend shader object");
 
    nir_shader *nir =
       GENX(pan_blend_create_shader)(state, src0_type, src1_type, rt);
 
-   NIR_PASS_V(nir, nir_shader_instructions_pass, lower_load_blend_const,
-              nir_metadata_control_flow, NULL);
+   NIR_PASS(_, nir, nir_shader_instructions_pass, lower_load_blend_const,
+            nir_metadata_control_flow, NULL);
 
    /* Compile the NIR shader */
    struct panfrost_compile_inputs inputs = {
       .gpu_id = pdev->kmod.props.gpu_prod_id,
       .no_ubo_to_push = true,
       .is_blend = true,
-      .blend =
-         {
-            .nr_samples = key.nr_samples,
-            .bifrost_blend_desc =
-               GENX(pan_blend_get_internal_desc)(key.format, key.rt, 0, false),
-         },
+      .blend = {
+         .nr_samples = key.info.nr_samples,
+         .bifrost_blend_desc =
+            GENX(pan_blend_get_internal_desc)(key.info.format, key.info.rt, 0,
+                                              false),
+      },
    };
 
    pan_shader_preprocess(nir, inputs.gpu_id);
 
    enum pipe_format rt_formats[8] = {0};
-   rt_formats[rt] = key.format;
-   NIR_PASS_V(nir, GENX(pan_inline_rt_conversion), rt_formats);
+   rt_formats[rt] = key.info.format;
+   NIR_PASS(_, nir, GENX(pan_inline_rt_conversion), rt_formats);
 
-   struct pan_shader_info info;
-   struct util_dynarray binary;
-
-   util_dynarray_init(&binary, nir);
-   GENX(pan_shader_compile)(nir, &inputs, &binary, &info);
-
-   shader->key = key;
-   shader->binary = pan_pool_upload_aligned(&cache->bin_pool.base, binary.data,
-                                            binary.size, 128);
+   VkResult result =
+      panvk_per_arch(create_internal_shader)(dev, nir, &inputs, &shader);
 
    ralloc_free(nir);
 
-   _mesa_hash_table_insert(cache->ht, &shader->key, shader);
+   if (result != VK_SUCCESS)
+      return result;
+
+   shader_handle = (VkShaderEXT)vk_meta_cache_object(
+      &dev->vk, &dev->meta, &key, sizeof(key), VK_OBJECT_TYPE_SHADER_EXT,
+      (uint64_t)panvk_internal_shader_to_handle(shader));
 
 out:
-   *shader_addr = shader->binary;
+   shader = panvk_internal_shader_from_handle(shader_handle);
+   *shader_addr = panvk_priv_mem_dev_addr(shader->code_mem);
    return VK_SUCCESS;
 }
 
-static VkResult
-get_blend_shader(struct panvk_device *dev, const struct pan_blend_state *state,
-                 nir_alu_type src0_type, nir_alu_type src1_type, unsigned rt,
-                 mali_ptr *shader_addr)
-{
-   struct panvk_blend_shader_cache *cache = &dev->blend_shader_cache;
-   VkResult result;
-
-   simple_mtx_lock(&cache->lock);
-   result = get_blend_shader_locked(dev, state, src0_type, src1_type, rt,
-                                    shader_addr);
-   simple_mtx_unlock(&cache->lock);
-
-   return result;
-}
-
 static void
-emit_blend_desc(const struct pan_shader_info *fs_info, mali_ptr fs_code,
+emit_blend_desc(const struct pan_shader_info *fs_info, uint64_t fs_code,
                 const struct pan_blend_state *state, unsigned rt_idx,
-                mali_ptr blend_shader, uint16_t constant,
+                uint64_t blend_shader, uint16_t constant,
                 struct mali_blend_packed *bd)
 {
    const struct pan_blend_rt_state *rt = &state->rts[rt_idx];
@@ -201,11 +141,9 @@ emit_blend_desc(const struct pan_shader_info *fs_info, mali_ptr fs_code,
       cfg.srgb = util_format_is_srgb(rt->format);
       cfg.load_destination = pan_blend_reads_dest(rt->equation);
       cfg.round_to_fb_precision = true;
-      cfg.constant = constant;
+      cfg.blend_constant = constant;
 
       if (blend_shader) {
-         uint32_t ret_offset = fs_info->bifrost.blend[rt_idx].return_offset;
-
          /* Blend and fragment shaders must be in the same 4G region. */
          assert((blend_shader >> 32) == (fs_code >> 32));
          /* Blend shader must be 16-byte aligned. */
@@ -216,6 +154,9 @@ emit_blend_desc(const struct pan_shader_info *fs_info, mali_ptr fs_code,
          cfg.internal.mode = MALI_BLEND_MODE_SHADER;
          cfg.internal.shader.pc = (uint32_t)blend_shader;
 
+#if PAN_ARCH <= 7
+         uint32_t ret_offset = fs_info->bifrost.blend[rt_idx].return_offset;
+
          /* If ret_offset is zero, we assume the BLEND is a terminal
           * instruction and set return_value to zero, to let the
           * blend shader jump to address zero, which terminates the
@@ -223,6 +164,7 @@ emit_blend_desc(const struct pan_shader_info *fs_info, mali_ptr fs_code,
           */
          cfg.internal.shader.return_value =
             ret_offset ? fs_code + ret_offset : 0;
+#endif
       } else {
          bool opaque = pan_blend_is_opaque(rt->equation);
 
@@ -237,8 +179,22 @@ emit_blend_desc(const struct pan_shader_info *fs_info, mali_ptr fs_code,
          cfg.internal.fixed_function.num_comps = 4;
          cfg.internal.fixed_function.conversion.memory_format =
             GENX(panfrost_dithered_format_from_pipe_format)(rt->format, false);
+
+#if PAN_ARCH >= 7
+         if (cfg.internal.mode == MALI_BLEND_MODE_FIXED_FUNCTION &&
+             (cfg.internal.fixed_function.conversion.memory_format & 0xff) ==
+                MALI_RGB_COMPONENT_ORDER_RGB1) {
+            /* fixed function does not like RGB1 as the component order */
+            /* force this field to be the RGBA. */
+            cfg.internal.fixed_function.conversion.memory_format &= ~0xff;
+            cfg.internal.fixed_function.conversion.memory_format |=
+               MALI_RGB_COMPONENT_ORDER_RGBA;
+         }
+#endif
+
          cfg.internal.fixed_function.rt = rt_idx;
 
+#if PAN_ARCH <= 7
          if (fs_info->fs.untyped_color_outputs) {
             nir_alu_type type = fs_info->bifrost.blend[rt_idx].type;
 
@@ -255,6 +211,7 @@ emit_blend_desc(const struct pan_shader_info *fs_info, mali_ptr fs_code,
             cfg.internal.fixed_function.alpha_one_store =
                pan_blend_alpha_one_store(rt->equation);
          }
+#endif
       }
    }
 }
@@ -290,6 +247,10 @@ blend_needs_shader(const struct pan_blend_state *state, unsigned rt_idx,
     */
    if (state->logicop_enable)
       return state->logicop_func != PIPE_LOGICOP_NOOP;
+
+   /* alpha-to-one always requires a blend shader */
+   if (state->alpha_to_one)
+      return true;
 
    /* If the output is opaque, we don't need a blend shader, no matter the
     * format.
@@ -335,14 +296,22 @@ blend_needs_shader(const struct pan_blend_state *state, unsigned rt_idx,
 }
 
 VkResult
-panvk_per_arch(blend_emit_descs)(
-   struct panvk_device *dev, const struct vk_color_blend_state *cb,
-   const VkFormat *color_attachment_formats, uint8_t *color_attachment_samples,
-   const struct pan_shader_info *fs_info, mali_ptr fs_code,
-   struct mali_blend_packed *bds, bool *any_dest_read,
-   bool *any_blend_const_load)
+panvk_per_arch(blend_emit_descs)(struct panvk_cmd_buffer *cmdbuf,
+                                 struct mali_blend_packed *bds)
 {
+   struct panvk_device *dev = to_panvk_device(cmdbuf->vk.base.device);
+   const struct vk_dynamic_graphics_state *dyns =
+      &cmdbuf->vk.dynamic_graphics_state;
+   const struct vk_color_blend_state *cb = &dyns->cb;
+   const struct panvk_shader *fs = cmdbuf->state.gfx.fs.shader;
+   const struct pan_shader_info *fs_info = fs ? &fs->info : NULL;
+   uint64_t fs_code = panvk_shader_get_dev_addr(fs);
+   const struct panvk_rendering_state *render = &cmdbuf->state.gfx.render;
+   const VkFormat *color_attachment_formats = render->color_attachments.fmts;
+   const uint8_t *color_attachment_samples = render->color_attachments.samples;
+   struct panvk_blend_info *blend_info = &cmdbuf->state.gfx.cb.info;
    struct pan_blend_state bs = {
+      .alpha_to_one = dyns->ms.alpha_to_one_enable,
       .logicop_enable = cb->logic_op_enable,
       .logicop_func = vk_logic_op_to_pipe(cb->logic_op),
       .rt_count = cb->attachment_count,
@@ -354,11 +323,11 @@ panvk_per_arch(blend_emit_descs)(
             cb->blend_constants[3],
          },
    };
-   mali_ptr blend_shaders[8] = {};
+   uint64_t blend_shaders[8] = {};
    /* All bits set to one encodes unused fixed-function blend constant. */
    unsigned ff_blend_constant = ~0;
 
-   *any_dest_read = false;
+   memset(blend_info, 0, sizeof(*blend_info));
    for (uint8_t i = 0; i < cb->attachment_count; i++) {
       struct pan_blend_rt_state *rt = &bs.rts[i];
 
@@ -413,7 +382,7 @@ panvk_per_arch(blend_emit_descs)(
             util_blend_dst_alpha_to_one(rt->equation.alpha_dst_factor);
       }
 
-      *any_dest_read |= pan_blend_reads_dest(rt->equation);
+      blend_info->any_dest_read |= pan_blend_reads_dest(rt->equation);
 
       if (blend_needs_shader(&bs, i, &ff_blend_constant)) {
          nir_alu_type src0_type = fs_info->bifrost.blend[i].type;
@@ -424,7 +393,9 @@ panvk_per_arch(blend_emit_descs)(
          if (result != VK_SUCCESS)
             return result;
 
-         *any_blend_const_load |= pan_blend_constant_mask(rt->equation) != 0;
+         blend_info->shader_loads_blend_const |=
+            pan_blend_constant_mask(rt->equation) != 0;
+         blend_info->needs_shader = true;
       }
    }
 
@@ -437,6 +408,9 @@ panvk_per_arch(blend_emit_descs)(
       emit_blend_desc(fs_info, fs_code, &bs, i, blend_shaders[i],
                       ff_blend_constant, &bds[i]);
    }
+
+   if (blend_info->shader_loads_blend_const)
+      gfx_state_set_dirty(cmdbuf, FS_PUSH_UNIFORMS);
 
    return VK_SUCCESS;
 }

@@ -47,25 +47,43 @@
    CONFIG_ZS(color, PIPE_FORMAT_Z16_UNORM), \
    CONFIG_ZS(color, PIPE_FORMAT_NONE) \
 
+/*
+ * (copy of a comment in dri_screen.c:dri_fill_in_modes())
+ *
+ * The 32-bit RGBA format must not precede the 32-bit BGRA format.
+ * Likewise for RGBX and BGRX.  Otherwise, the GLX client and the GLX
+ * server may disagree on which format the GLXFBConfig represents,
+ * resulting in swapped color channels.
+ *
+ * The problem, as of 2017-05-30:
+ * When matching a GLXFBConfig to a __DRIconfig, GLX ignores the channel
+ * order and chooses the first __DRIconfig with the expected channel
+ * sizes. Specifically, GLX compares the GLXFBConfig's and __DRIconfig's
+ * __DRI_ATTRIB_{CHANNEL}_SIZE but ignores __DRI_ATTRIB_{CHANNEL}_MASK.
+ *
+ * EGL does not suffer from this problem. It correctly compares the
+ * channel masks when matching EGLConfig to __DRIconfig.
+ */
+
 static const struct gl_config drilConfigs[] = {
-   CONFIG(PIPE_FORMAT_R8G8B8A8_UNORM),
-   CONFIG(PIPE_FORMAT_R8G8B8X8_UNORM),
    CONFIG(PIPE_FORMAT_B8G8R8A8_UNORM),
    CONFIG(PIPE_FORMAT_B8G8R8X8_UNORM),
-   CONFIG(PIPE_FORMAT_R10G10B10A2_UNORM),
-   CONFIG(PIPE_FORMAT_R10G10B10X2_UNORM),
+   CONFIG(PIPE_FORMAT_R8G8B8A8_UNORM),
+   CONFIG(PIPE_FORMAT_R8G8B8X8_UNORM),
    CONFIG(PIPE_FORMAT_B10G10R10A2_UNORM),
    CONFIG(PIPE_FORMAT_B10G10R10X2_UNORM),
-   CONFIG(PIPE_FORMAT_R5G6B5_UNORM),
-   CONFIG(PIPE_FORMAT_R5G5B5A1_UNORM),
-   CONFIG(PIPE_FORMAT_R5G5B5X1_UNORM),
-   CONFIG(PIPE_FORMAT_R4G4B4A4_UNORM),
-   CONFIG(PIPE_FORMAT_R4G4B4X4_UNORM),
+   CONFIG(PIPE_FORMAT_R10G10B10A2_UNORM),
+   CONFIG(PIPE_FORMAT_R10G10B10X2_UNORM),
    CONFIG(PIPE_FORMAT_B5G6R5_UNORM),
    CONFIG(PIPE_FORMAT_B5G5R5A1_UNORM),
    CONFIG(PIPE_FORMAT_B5G5R5X1_UNORM),
    CONFIG(PIPE_FORMAT_B4G4R4A4_UNORM),
    CONFIG(PIPE_FORMAT_B4G4R4X4_UNORM),
+   CONFIG(PIPE_FORMAT_R5G6B5_UNORM),
+   CONFIG(PIPE_FORMAT_R5G5B5A1_UNORM),
+   CONFIG(PIPE_FORMAT_R5G5B5X1_UNORM),
+   CONFIG(PIPE_FORMAT_R4G4B4A4_UNORM),
+   CONFIG(PIPE_FORMAT_R4G4B4X4_UNORM),
 };
 
 #define RGB UTIL_FORMAT_COLORSPACE_RGB
@@ -337,18 +355,21 @@ init_dri2_configs(int fd)
 
    void * (*peglGetProcAddress)(const char *) = dlsym(egl, "eglGetProcAddress");
    EGLDisplay (*peglGetPlatformDisplayEXT)(EGLenum, void *, const EGLint *) = peglGetProcAddress("eglGetPlatformDisplayEXT");
-   EGLDisplay (*peglInitialize)(EGLDisplay, int*, int*) = peglGetProcAddress("eglInitialize");
-   void (*peglTerminate)(EGLDisplay) = peglGetProcAddress("eglTerminate");
+   EGLBoolean (*peglInitialize)(EGLDisplay, int*, int*) = peglGetProcAddress("eglInitialize");
+   EGLBoolean (*peglTerminate)(EGLDisplay) = peglGetProcAddress("eglTerminate");
    EGLBoolean (*peglGetConfigs)(EGLDisplay, EGLConfig*, EGLint, EGLint*) = peglGetProcAddress("eglGetConfigs");
    EGLBoolean (*peglGetConfigAttrib)(EGLDisplay, EGLConfig, EGLint, EGLint *) = peglGetProcAddress("eglGetConfigAttrib");
    const char *(*peglQueryString)(EGLDisplay, EGLint) = peglGetProcAddress("eglQueryString");
 
-   /* try opening GBM for hardware driver info */
-   struct gbm_device *gbm = gbm_create_device(fd);
-   if (!gbm)
-      goto out;
+   struct gbm_device *gbm = NULL;
+   if (fd != -1) {
+      /* try opening GBM for hardware driver info */
+      gbm = gbm_create_device(fd);
+      if (!gbm)
+         goto out;
+   }
 
-   EGLDisplay dpy = peglGetPlatformDisplayEXT(EGL_PLATFORM_GBM_MESA, gbm, NULL);
+   EGLDisplay dpy = peglGetPlatformDisplayEXT(EGL_PLATFORM_GBM_MESA, gbm ? gbm : EGL_DEFAULT_DISPLAY, NULL);
    if (!dpy)
       goto out_gbm;
    int maj, min;
@@ -415,7 +436,8 @@ out_egl:
    peglTerminate(dpy);
 
 out_gbm:
-   gbm_device_destroy(gbm);
+   if (gbm)
+      gbm_device_destroy(gbm);
 out:
    dlclose(egl);
    if (c)
@@ -430,17 +452,21 @@ drilCreateNewScreen(int scrn, int fd,
                     const __DRIextension **driver_extensions,
                     const __DRIconfig ***driver_configs, void *data)
 {
-   /* multiply for possible 1/2/4/8/16/32 MSAA configs */
-   // allocate an array of pointers
-   const __DRIconfig **configs = NULL;
-   /* try dri2 if fd is valid */
-   if (fd >= 0)
-      configs = init_dri2_configs(fd);
+   const __DRIconfig **configs = init_dri2_configs(fd);
    if (!configs) {
-      configs = calloc(ARRAY_SIZE(drilConfigs) + 1, sizeof(void *));
+      if (fd != -1)
+         return NULL;
       // otherwise set configs to point to our config list
+      configs = calloc(ARRAY_SIZE(drilConfigs) * 2 + 1, sizeof(void *));
+      int c = 0;
       for (int i = 0; i < ARRAY_SIZE(drilConfigs); i++) {
-         configs[i] = mem_dup(&drilConfigs[i], sizeof(drilConfigs[i]));
+         /* create normal config */
+         configs[c++] = mem_dup(&drilConfigs[i], sizeof(drilConfigs[i]));
+
+         /* create double-buffered config */
+         configs[c] = mem_dup(&drilConfigs[i], sizeof(drilConfigs[i]));
+         struct gl_config *cfg = (void*)configs[c++];
+         cfg->doubleBufferMode = 1;
       }
    }
 
@@ -604,3 +630,4 @@ DEFINE_LOADER_DRM_ENTRYPOINT(udl)
 DEFINE_LOADER_DRM_ENTRYPOINT(zynqmp_dpsub)
 DEFINE_LOADER_DRM_ENTRYPOINT(lima)
 DEFINE_LOADER_DRM_ENTRYPOINT(d3d12)
+DEFINE_LOADER_DRM_ENTRYPOINT(zink)

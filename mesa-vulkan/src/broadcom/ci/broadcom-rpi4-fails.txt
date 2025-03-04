@@ -1,10 +1,7 @@
 glx@glx-make-current,Fail
 glx@glx-multi-window-single-context,Fail
 glx@glx-swap-pixmap-bad,Fail
-glx@glx-visuals-depth -pixmap,Fail
 glx@glx-visuals-stencil -pixmap,Fail
-glx@glx_arb_create_context_es2_profile@invalid opengl es version,Fail
-glx@glx_arb_create_context_no_error@no error,Fail
 shaders@point-vertex-id divisor,Fail
 shaders@point-vertex-id gl_instanceid divisor,Fail
 shaders@point-vertex-id gl_instanceid,Fail
@@ -155,13 +152,6 @@ spec@arb_texture_buffer_object@texture-buffer-size-clamp,Fail
 spec@arb_texture_buffer_object@texture-buffer-size-clamp@r8ui_texture_buffer_size_via_sampler,Fail
 spec@arb_texture_buffer_object@texture-buffer-size-clamp@rg8ui_texture_buffer_size_via_sampler,Fail
 spec@arb_texture_buffer_object@texture-buffer-size-clamp@rgba8ui_texture_buffer_size_via_sampler,Fail
-spec@arb_texture_float@fbo-blending-formats,Fail
-spec@arb_texture_float@fbo-blending-formats@GL_ALPHA32F_ARB,Fail
-spec@arb_texture_float@fbo-blending-formats@GL_INTENSITY32F_ARB,Fail
-spec@arb_texture_float@fbo-blending-formats@GL_LUMINANCE32F_ARB,Fail
-spec@arb_texture_float@fbo-blending-formats@GL_LUMINANCE_ALPHA32F_ARB,Fail
-spec@arb_texture_float@fbo-blending-formats@GL_RGB32F,Fail
-spec@arb_texture_float@fbo-blending-formats@GL_RGBA32F,Fail
 spec@arb_texture_float@texwrap formats bordercolor,Fail
 spec@arb_texture_float@texwrap formats bordercolor-swizzled,Fail
 spec@arb_texture_float@texwrap formats bordercolor-swizzled@GL_ALPHA32F_ARB- swizzled- border color only,Fail
@@ -177,9 +167,6 @@ spec@arb_texture_float@texwrap formats bordercolor@GL_LUMINANCE_ALPHA32F_ARB- bo
 spec@arb_texture_float@texwrap formats bordercolor@GL_RGB32F- border color only,Fail
 spec@arb_texture_float@texwrap formats bordercolor@GL_RGBA32F- border color only,Fail
 spec@arb_texture_rectangle@1-1-linear-texture,Fail
-spec@arb_texture_rg@fbo-blending-formats-float,Fail
-spec@arb_texture_rg@fbo-blending-formats-float@GL_R32F,Fail
-spec@arb_texture_rg@fbo-blending-formats-float@GL_RG32F,Fail
 spec@arb_texture_rg@texwrap formats bordercolor,Fail
 spec@arb_texture_rg@texwrap formats bordercolor-swizzled,Fail
 spec@arb_texture_rg@texwrap formats bordercolor-swizzled@GL_R16- swizzled- border color only,Fail
@@ -198,40 +185,17 @@ spec@arb_texture_rg@texwrap formats-float offset@GL_RG32F- NPOT,Fail
 spec@arb_texture_rg@texwrap formats-float,Fail
 spec@arb_texture_rg@texwrap formats-float@GL_R32F- NPOT,Fail
 spec@arb_texture_rg@texwrap formats-float@GL_RG32F- NPOT,Fail
-spec@arb_texture_storage@texture-storage@cube array texture,Fail
 spec@egl 1.4@eglterminate then unbind context,Fail
 spec@egl_khr_gl_image@egl_khr_gl_renderbuffer_image-clear-shared-image gl_depth_component24,Fail
 spec@egl_khr_gl_image@egl_khr_gl_renderbuffer_image-clear-shared-image gl_rgba,Fail
 spec@egl_khr_surfaceless_context@viewport,Fail
 spec@egl_mesa_configless_context@basic,Fail
-spec@ext_framebuffer_multisample@blit-mismatched-formats,Fail
 spec@ext_framebuffer_multisample@interpolation 2 centroid-edges,Fail
 spec@ext_framebuffer_multisample@interpolation 4 centroid-edges,Fail
 spec@ext_framebuffer_object@getteximage-formats init-by-clear-and-render,Fail
 spec@ext_framebuffer_object@getteximage-formats init-by-rendering,Fail
-spec@ext_image_dma_buf_import@ext_image_dma_buf_import-export,Fail
 spec@ext_image_dma_buf_import@ext_image_dma_buf_import-modifiers,Fail
 spec@ext_image_dma_buf_import@ext_image_dma_buf_import-modifiers@autogen-R16-DRM_FORMAT_MOD_LINEAR-clear_reimport,Fail
-spec@ext_image_dma_buf_import@ext_image_dma_buf_import-refcount,Fail
-spec@ext_image_dma_buf_import@ext_image_dma_buf_import-sample_argb8888,Fail
-spec@ext_image_dma_buf_import@ext_image_dma_buf_import-sample_nv12,Fail
-spec@ext_image_dma_buf_import@ext_image_dma_buf_import-sample_nv21,Fail
-spec@ext_image_dma_buf_import@ext_image_dma_buf_import-sample_p010,Fail
-spec@ext_image_dma_buf_import@ext_image_dma_buf_import-sample_p012,Fail
-spec@ext_image_dma_buf_import@ext_image_dma_buf_import-sample_p016,Fail
-spec@ext_image_dma_buf_import@ext_image_dma_buf_import-sample_uyvy,Fail
-spec@ext_image_dma_buf_import@ext_image_dma_buf_import-sample_vyuy,Fail
-spec@ext_image_dma_buf_import@ext_image_dma_buf_import-sample_xrgb8888,Fail
-spec@ext_image_dma_buf_import@ext_image_dma_buf_import-sample_y210,Fail
-spec@ext_image_dma_buf_import@ext_image_dma_buf_import-sample_y212,Fail
-spec@ext_image_dma_buf_import@ext_image_dma_buf_import-sample_y216,Fail
-spec@ext_image_dma_buf_import@ext_image_dma_buf_import-sample_y412,Fail
-spec@ext_image_dma_buf_import@ext_image_dma_buf_import-sample_y416,Fail
-spec@ext_image_dma_buf_import@ext_image_dma_buf_import-sample_yuv420,Fail
-spec@ext_image_dma_buf_import@ext_image_dma_buf_import-sample_yuyv,Fail
-spec@ext_image_dma_buf_import@ext_image_dma_buf_import-sample_yvu420,Fail
-spec@ext_image_dma_buf_import@ext_image_dma_buf_import-sample_yvyu,Fail
-spec@ext_image_dma_buf_import@ext_image_dma_buf_import-transcode-nv12-as-r8-gr88,Fail
 spec@ext_packed_depth_stencil@texwrap formats bordercolor,Fail
 spec@ext_packed_depth_stencil@texwrap formats bordercolor-swizzled,Fail
 spec@ext_packed_depth_stencil@texwrap formats bordercolor-swizzled@GL_DEPTH24_STENCIL8- swizzled- border color only,Fail
@@ -240,7 +204,6 @@ spec@ext_packed_depth_stencil@texwrap formats offset,Fail
 spec@ext_packed_depth_stencil@texwrap formats offset@GL_DEPTH24_STENCIL8- NPOT,Fail
 spec@ext_packed_depth_stencil@texwrap formats,Fail
 spec@ext_packed_depth_stencil@texwrap formats@GL_DEPTH24_STENCIL8- NPOT,Fail
-spec@ext_packed_float@query-rgba-signed-components,Fail
 spec@ext_texture_integer@fbo-blending,Fail
 spec@ext_texture_integer@getteximage-clamping gl_arb_texture_rg,Fail
 spec@ext_texture_integer@getteximage-clamping,Fail
@@ -548,19 +511,13 @@ spec@arb_texture_barrier@arb_texture_barrier-blending-in-shader 512 42 8 8 4,Fai
 spec@arb_texture_barrier@arb_texture_barrier-blending-in-shader 512 42 8 8 7,Fail
 spec@arb_texture_barrier@arb_texture_barrier-blending-in-shader 512 42 8 8 8,Fail
 
-# This seems to be a Vulkan Loader issue. Can be fixed by compiling the loader from the Github repo.
-dEQP-VK.api.get_device_proc_addr.non_enabled,Fail
-dEQP-VK.api.version_check.unavailable_entry_points,Fail
-
 # Piglit OpenCL tests
 api@clbuildprogram,Fail
 api@clcompileprogram,Fail
 api@clgetcommandqueueinfo,Fail
-api@clgetdeviceinfo,Fail
 api@clgetextensionfunctionaddressforplatform,Fail
 api@clgetkernelarginfo,Fail
 api@cllinkprogram,Fail
-program@build@include-directories,Fail
 program@build@vector-data-types,Fail
 program@execute@amdgcn-f32-inline-immediates,Fail
 program@execute@amdgcn-f32-inline-immediates@add integer 64,Fail
@@ -621,3 +578,18 @@ program@run kernel with max work item sizes,Fail
 
 # Failures from arm32
 arm32-KHR-GL31.texture_size_promotion.functional,Fail
+
+KHR-GL31.framebuffer_blit.framebuffer_blit_functionality_multisampled_to_singlesampled_blit,Fail
+KHR-GL31.transform_feedback3.multiple_streams,Fail
+KHR-GL31.transform_feedback3.skip_multiple_buffers,Fail
+KHR-GL31.transform_feedback3.skip_components,Fail
+asan-KHR-GL31.transform_feedback3.multiple_streams,Fail
+arm32-KHR-GL31.framebuffer_blit.framebuffer_blit_functionality_multisampled_to_singlesampled_blit,Fail
+arm32-KHR-GL31.transform_feedback3.multiple_streams,Fail
+arm32-KHR-GL31.transform_feedback3.skip_components,Fail
+arm32-KHR-GL31.transform_feedback3.skip_multiple_buffers,Fail
+
+ubsan-KHR-GL31.transform_feedback3.multiple_streams,Fail
+
+# This seems to be working with upstream
+program@execute@vector-conversion,Fail

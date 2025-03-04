@@ -21,6 +21,7 @@
  * IN THE SOFTWARE.
  */
 
+#include "nir.h"
 #include "nir_xfb_info.h"
 
 #include "util/u_dynarray.h"

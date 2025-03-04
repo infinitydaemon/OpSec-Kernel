@@ -23,6 +23,7 @@ anv_entrypoints = custom_target(
     '--device-prefix', 'gfx12',
     '--device-prefix', 'gfx125',
     '--device-prefix', 'gfx20',
+    '--device-prefix', 'gfx30',
     '--device-prefix', 'anv_doom64',
     '--device-prefix', 'anv_hitman3',
     '--device-prefix', 'anv_android',
@@ -36,14 +37,24 @@ idep_anv_headers = declare_dependency(
   include_directories : inc_anv,
 )
 
+bvh_spv = []
 if with_intel_vk_rt
-  subdir('grl')
-  optional_libgrl = [libgrl]
+  if with_intel_bvh_grl
+    subdir('grl')
+    optional_libgrl = [libgrl]
+    anv_flags += '-DANV_SUPPORT_RT_GRL=1'
+  else
+    subdir('bvh')
+    idep_grl = null_dep
+    optional_libgrl = []
+    anv_flags += '-DANV_SUPPORT_RT_GRL=0'
+  endif
   anv_flags += '-DANV_SUPPORT_RT=1'
 else
   idep_grl = null_dep
   optional_libgrl = []
   anv_flags += '-DANV_SUPPORT_RT=0'
+  anv_flags += '-DANV_SUPPORT_RT_GRL=0'
 endif
 
 intel_icd = custom_target(
@@ -52,7 +63,7 @@ intel_icd = custom_target(
   output : 'intel_icd.@0@.json'.format(host_machine.cpu()),
   command : [
     prog_python, '@INPUT0@',
-    '--api-version', '1.3', '--xml', '@INPUT1@',
+    '--api-version', '1.4', '--xml', '@INPUT1@',
     '--lib-path', join_paths(get_option('prefix'), get_option('libdir'),
                              'libvulkan_intel.so'),
     '--out', '@OUTPUT@',
@@ -70,7 +81,7 @@ _dev_icd = custom_target(
   output : _dev_icdname,
   command : [
     prog_python, '@INPUT0@',
-    '--api-version', '1.3', '--xml', '@INPUT1@',
+    '--api-version', '1.4', '--xml', '@INPUT1@',
     '--lib-path', meson.current_build_dir() / 'libvulkan_intel.so',
     '--out', '@OUTPUT@',
   ],
@@ -90,6 +101,7 @@ anv_per_hw_ver_files = files(
   'genX_cmd_draw_generated_flush.h',
   'genX_cmd_draw_generated_indirect.h',
   'genX_cmd_video.c',
+  'genX_cmd_video_enc.c',
   'genX_gfx_state.c',
   'genX_gpu_memcpy.c',
   'genX_init_state.c',
@@ -99,13 +111,21 @@ anv_per_hw_ver_files = files(
   'genX_simple_shader.c',
 )
 if with_intel_vk_rt
-  anv_per_hw_ver_files += files('genX_acceleration_structure.c',)
+  if with_intel_bvh_grl
+    anv_per_hw_ver_files += files(
+      'genX_acceleration_structure_grl.c',
+    )
+  else
+    anv_per_hw_ver_files += files(
+      'genX_acceleration_structure.c',
+    )
+  endif
 endif
 
-foreach _gfx_ver : ['90', '110', '120', '125', '200']
+foreach _gfx_ver : ['90', '110', '120', '125', '200', '300']
   libanv_per_hw_ver_libs += static_library(
     'anv_per_hw_ver@0@'.format(_gfx_ver),
-    [anv_per_hw_ver_files, anv_entrypoints[0]],
+    [anv_per_hw_ver_files, anv_entrypoints[0]] + bvh_spv,
     include_directories : [
       inc_include, inc_src, inc_intel,
     ],
@@ -157,6 +177,7 @@ libanv_files = files(
   'anv_formats.c',
   'anv_genX.h',
   'anv_image.c',
+  'anv_image_host_copy.c',
   'anv_image_view.c',
   'anv_internal_kernels.c',
   'anv_internal_kernels.h',
@@ -189,6 +210,8 @@ libanv_files = files(
   'anv_va.c',
   'anv_video.c',
   'anv_wsi.c',
+  'bvh/anv_bvh.h',
+  'bvh/anv_build_interface.h',
 )
 
 anv_deps = [
@@ -243,7 +266,7 @@ libanv_common = static_library(
 
 libvulkan_intel = shared_library(
   'vulkan_intel',
-  [files('anv_gem.c'), anv_entrypoints[0]],
+  [files('anv_gem.c'), anv_entrypoints[0], bvh_spv],
   include_directories : [
     inc_include, inc_src, inc_intel,
   ],
@@ -293,7 +316,7 @@ if with_tests
     dependencies : [
       dep_thread, dep_dl, dep_m, anv_deps,
       idep_nir, idep_vulkan_util, idep_vulkan_wsi, idep_vulkan_runtime,
-      idep_mesautil, idep_intel_dev, idep_intel_shaders, idep_intel_blorp,
+      idep_mesautil, idep_intel_dev, idep_intel_blorp,
       idep_intel_compiler_brw, idep_intel_decoder_brw,
     ],
     c_args : anv_flags,
@@ -324,13 +347,15 @@ if with_tests
         idep_gtest, dep_libdrm, dep_thread, dep_m, dep_valgrind,
         idep_vulkan_util, idep_vulkan_wsi_headers,
         idep_vulkan_runtime, idep_intel_driver_ds, idep_intel_dev,
-        idep_intel_shaders,
+        anv_deps,
       ],
       include_directories : [
-        inc_include, inc_src, inc_intel,
+        inc_include, inc_src, inc_intel, inc_compiler, inc_nir
       ],
     ),
     suite : ['intel'],
     protocol : 'gtest',
+    is_parallel : false,
+    timeout : 60,
   )
 endif

@@ -133,7 +133,7 @@ generate_pstip_fs(struct pstip_stage *pstip)
    struct pipe_shader_state pstip_fs;
    enum tgsi_file_type wincoord_file;
 
-   wincoord_file = screen->get_param(screen, PIPE_CAP_FS_POSITION_IS_SYSVAL) ?
+   wincoord_file = screen->caps.fs_position_is_sysval ?
                    TGSI_FILE_SYSTEM_VALUE : TGSI_FILE_INPUT;
 
    pstip_fs = *orig_fs; /* copy to init */
@@ -148,7 +148,7 @@ generate_pstip_fs(struct pstip_stage *pstip)
       pstip_fs.ir.nir = nir_shader_clone(NULL, orig_fs->ir.nir);
       nir_lower_pstipple_fs(pstip_fs.ir.nir,
                             &pstip->fs->sampler_unit, 0, wincoord_file == TGSI_FILE_SYSTEM_VALUE,
-                            nir_type_bool32);
+                            nir_type_bool1);
    }
 
    assert(pstip->fs->sampler_unit < PIPE_MAX_SAMPLERS);

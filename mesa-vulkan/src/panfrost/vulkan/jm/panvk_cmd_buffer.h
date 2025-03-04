@@ -15,6 +15,8 @@
 #include "vulkan/runtime/vk_command_buffer.h"
 
 #include "panvk_cmd_desc_state.h"
+#include "panvk_cmd_dispatch.h"
+#include "panvk_cmd_draw.h"
 #include "panvk_cmd_push_constant.h"
 #include "panvk_descriptor_set.h"
 #include "panvk_descriptor_set_layout.h"
@@ -28,10 +30,6 @@
 #include "util/list.h"
 
 #include "genxml/gen_macros.h"
-
-#define MAX_BIND_POINTS 2 /* compute + graphics */
-#define MAX_VBS         16
-#define MAX_RTS         8
 
 struct panvk_batch {
    struct list_head node;
@@ -75,92 +73,6 @@ struct panvk_cmd_event_op {
    struct panvk_event *event;
 };
 
-struct panvk_attrib_buf {
-   mali_ptr address;
-   unsigned size;
-};
-
-struct panvk_cmd_graphics_state {
-   struct panvk_descriptor_state desc_state;
-
-   struct {
-      struct vk_vertex_input_state vi;
-      struct vk_sample_locations_state sl;
-   } dynamic;
-
-   uint32_t dirty;
-
-   struct panvk_graphics_sysvals sysvals;
-
-   struct panvk_shader_link link;
-   bool linked;
-
-   struct {
-      struct panvk_shader *shader;
-      mali_ptr rsd;
-#if PAN_ARCH <= 7
-      struct panvk_shader_desc_state desc;
-#endif
-   } fs;
-
-   struct {
-      struct panvk_shader *shader;
-      mali_ptr attribs;
-      mali_ptr attrib_bufs;
-#if PAN_ARCH <= 7
-      struct panvk_shader_desc_state desc;
-#endif
-   } vs;
-
-   struct {
-      struct panvk_attrib_buf bufs[MAX_VBS];
-      unsigned count;
-   } vb;
-
-   /* Index buffer */
-   struct {
-      struct panvk_buffer *buffer;
-      uint64_t offset;
-      uint8_t index_size;
-      uint32_t first_vertex, base_vertex, base_instance;
-   } ib;
-
-   struct {
-      VkRenderingFlags flags;
-      uint32_t layer_count;
-
-      enum vk_rp_attachment_flags bound_attachments;
-      struct {
-         VkFormat fmts[MAX_RTS];
-         uint8_t samples[MAX_RTS];
-      } color_attachments;
-
-      struct pan_image_view zs_pview;
-
-      struct {
-         struct pan_fb_info info;
-         bool crc_valid[MAX_RTS];
-         uint32_t bo_count;
-         struct pan_kmod_bo *bos[MAX_RTS + 2];
-      } fb;
-   } render;
-
-   mali_ptr vpd;
-   mali_ptr push_uniforms;
-};
-
-struct panvk_cmd_compute_state {
-   struct panvk_descriptor_state desc_state;
-   const struct panvk_shader *shader;
-   struct panvk_compute_sysvals sysvals;
-   mali_ptr push_uniforms;
-#if PAN_ARCH <= 7
-   struct {
-      struct panvk_shader_desc_state desc;
-   } cs;
-#endif
-};
-
 struct panvk_cmd_buffer {
    struct vk_command_buffer vk;
 
@@ -168,6 +80,7 @@ struct panvk_cmd_buffer {
    struct panvk_pool varying_pool;
    struct panvk_pool tls_pool;
    struct list_head batches;
+   struct list_head push_sets;
    struct panvk_batch *cur_batch;
 
    struct {
@@ -179,6 +92,24 @@ struct panvk_cmd_buffer {
 
 VK_DEFINE_HANDLE_CASTS(panvk_cmd_buffer, vk.base, VkCommandBuffer,
                        VK_OBJECT_TYPE_COMMAND_BUFFER)
+
+#define panvk_cmd_buffer_obj_list_init(cmdbuf, list_name)                      \
+   list_inithead(&(cmdbuf)->list_name)
+
+#define panvk_cmd_buffer_obj_list_cleanup(cmdbuf, list_name)                   \
+   do {                                                                        \
+      struct panvk_cmd_pool *__pool =                                          \
+         container_of(cmdbuf->vk.pool, struct panvk_cmd_pool, vk);             \
+      list_splicetail(&(cmdbuf)->list_name, &__pool->list_name);               \
+   } while (0)
+
+#define panvk_cmd_buffer_obj_list_reset(cmdbuf, list_name)                     \
+   do {                                                                        \
+      struct panvk_cmd_pool *__pool =                                          \
+         container_of(cmdbuf->vk.pool, struct panvk_cmd_pool, vk);             \
+      list_splicetail(&(cmdbuf)->list_name, &__pool->list_name);               \
+      list_inithead(&(cmdbuf)->list_name);                                     \
+   } while (0)
 
 static inline struct panvk_descriptor_state *
 panvk_cmd_get_desc_state(struct panvk_cmd_buffer *cmdbuf,
@@ -204,13 +135,14 @@ struct panvk_batch *
 
 void panvk_per_arch(cmd_close_batch)(struct panvk_cmd_buffer *cmdbuf);
 
-void panvk_per_arch(cmd_alloc_fb_desc)(struct panvk_cmd_buffer *cmdbuf);
+VkResult panvk_per_arch(cmd_alloc_fb_desc)(struct panvk_cmd_buffer *cmdbuf);
 
-void panvk_per_arch(cmd_alloc_tls_desc)(struct panvk_cmd_buffer *cmdbuf,
-                                        bool gfx);
+VkResult panvk_per_arch(cmd_alloc_tls_desc)(struct panvk_cmd_buffer *cmdbuf,
+                                            bool gfx);
 
-void panvk_per_arch(cmd_prepare_tiler_context)(struct panvk_cmd_buffer *cmdbuf,
-                                               uint32_t layer_idx);
+VkResult
+   panvk_per_arch(cmd_prepare_tiler_context)(struct panvk_cmd_buffer *cmdbuf,
+                                             uint32_t layer_idx);
 
 void panvk_per_arch(cmd_preload_fb_after_batch_split)(
    struct panvk_cmd_buffer *cmdbuf);

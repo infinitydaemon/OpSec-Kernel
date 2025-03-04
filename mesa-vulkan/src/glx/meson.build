@@ -16,7 +16,6 @@ files_libglx = files(
   'dri_common.c',
   'dri_common.h',
   'dri_common_query_renderer.c',
-  'dri_common_interop.c',
   'drisw_glx.c',
   'drisw_priv.h',
   'eval.c',
@@ -70,7 +69,7 @@ if with_x11_dri2
   )
 endif
 
-if with_dri3
+if with_dri_platform == 'drm'
   files_libglx += files('dri3_glx.c', 'dri3_priv.h')
 endif
 
@@ -105,7 +104,7 @@ else
   )
 endif
 
-glx_gallium_link = []
+glx_gallium_link = [libpipe_loader_dynamic]
 if with_dri
   glx_gallium_link += libgallium_dri
 endif
@@ -114,14 +113,15 @@ if with_platform_windows
 endif
 libglx = static_library(
   'glx',
-  [files_libglx, glx_generated],
-  include_directories : [inc_include, inc_src, inc_glapi, inc_loader, inc_gallium],
+  [files_libglx, glx_generated, main_dispatch_h],
+  include_directories : [inc_include, inc_src, inc_glapi, inc_loader, inc_loader_x11,
+                         inc_gallium, inc_mesa, inc_st_dri, inc_gallium_aux],
   c_args : [
     '-DGL_LIB_NAME="lib@0@.so.@1@"'.format(gl_lib_name, gl_lib_version.split('.')[0]),
   ],
   gnu_symbol_visibility : 'hidden',
   link_with : [
-    libloader, libloader_dri3_helper,
+    libloader, libloader_x11,
     extra_libs_libglx, glx_gallium_link
   ],
   dependencies : [
@@ -130,10 +130,18 @@ libglx = static_library(
   ],
 )
 
+if with_shared_glapi
+  # libglapi_bridge contains GL functions that we need to export from libGL.so.
+  # Other than that, we don't need it.
+  libgl_link = with_glvnd ? [] : [libglapi_bridge]
+else
+  libgl_link = libglapi_static
+endif
+
 libgl = shared_library(
   gl_lib_name,
   [],
-  link_with : [libglapi_static, libglapi],
+  link_with : libgl_link,
   link_whole : libglx,
   link_args : [ld_args_bsymbolic, ld_args_gc_sections, extra_ld_args_libgl],
   dependencies : [

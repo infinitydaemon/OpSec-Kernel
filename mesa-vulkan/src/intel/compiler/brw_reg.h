@@ -39,8 +39,7 @@
  * the abstract brw_reg type into the actual hardware instruction encoding.
  */
 
-#ifndef BRW_REG_H
-#define BRW_REG_H
+#pragma once
 
 #include <stdbool.h>
 #include "util/compiler.h"
@@ -60,6 +59,7 @@ struct intel_device_info;
 /** Size of general purpose register space in REG_SIZE units */
 #define BRW_MAX_GRF 128
 #define XE2_MAX_GRF 256
+#define XE3_MAX_GRF 512
 
 /**
  * BRW hardware swizzles.
@@ -158,15 +158,21 @@ typedef struct brw_reg {
    union {
       struct {
          enum brw_reg_type type:5;
-         enum brw_reg_file file:3;      /* :2 hardware format */
+         enum brw_reg_file file:3;
          unsigned negate:1;             /* source only */
          unsigned abs:1;                /* source only */
          unsigned address_mode:1;       /* relative addressing, hopefully! */
-         unsigned pad0:16;
-         unsigned subnr:5;              /* :1 in align16 */
+         unsigned pad0:15;
+         unsigned subnr:6;              /* :1 in align16 */
       };
       uint32_t bits;
    };
+
+   /** Offset from the start of the virtual register in bytes. */
+   uint16_t offset;
+
+   /** Register region horizontal stride of virtual registers */
+   uint8_t stride;
 
    union {
       struct {
@@ -177,7 +183,19 @@ typedef struct brw_reg {
          unsigned vstride:4;      /* source only */
          unsigned width:3;        /* src only, align1 only */
          unsigned hstride:2;      /* align1 only */
-         unsigned pad1:1;
+
+         /**
+          * Does this register represent a scalar value?
+          *
+          * Registers are allocated in SIMD8 parcels, but may be used to
+          * represent convergent (i.e., scalar) values. As a destination, it
+          * is written as SIMD8. As a source, it may be read as <8,8,1> in
+          * SIMD8 instructions or <0,1,0> on other execution sizes.
+          *
+          * If the value represents a vector (e.g., a convergent load_uniform
+          * of a vec4), it will be stored as multiple SIMD8 registers.
+          */
+         unsigned is_scalar:1;
       };
 
       double df;
@@ -188,16 +206,10 @@ typedef struct brw_reg {
       unsigned ud;
    };
 
-   /** Offset from the start of the virtual register in bytes. */
-   uint16_t offset;
-
-   /** Register region horizontal stride of virtual registers */
-   uint8_t stride;
-
 #ifdef __cplusplus
-   /* TODO: Remove this constructor to make this type a POD.  To achieve this
-    * we need to make sure the zero value (currently ARF_NULL) is a good
-    * replacement for BAD_FILE or make the zero value BAD_FILE.
+   /* TODO: Remove this constructor to make this type a POD.  Need
+    * to make sure that rest of compiler doesn't rely on type or
+    * stride of BAD_FILE registers.
     */
    brw_reg() {
       memset((void*)this, 0, sizeof(*this));
@@ -215,6 +227,10 @@ typedef struct brw_reg {
    bool is_negative_one() const;
    bool is_null() const;
    bool is_accumulator() const;
+   bool is_ip() const;
+   bool is_address() const;
+
+   unsigned address_slot(unsigned byte_offset) const;
 
    /**
     * Return the size in bytes of a single logical component of the
@@ -225,17 +241,38 @@ typedef struct brw_reg {
 } brw_reg;
 
 static inline unsigned
+phys_file(const struct brw_reg reg)
+{
+   switch (reg.file) {
+   case ARF:
+   case FIXED_GRF:
+   case IMM:
+      return reg.file;
+
+   case ADDRESS:
+      return ARF;
+
+   default:
+      unreachable("register type should have been lowered");
+   }
+}
+
+static inline unsigned
 phys_nr(const struct intel_device_info *devinfo, const struct brw_reg reg)
 {
    if (devinfo->ver >= 20) {
-      if (reg.file == BRW_GENERAL_REGISTER_FILE)
+      if (reg.file == FIXED_GRF)
          return reg.nr / 2;
-      else if (reg.file == BRW_ARCHITECTURE_REGISTER_FILE &&
+      else if (reg.file == ADDRESS)
+         return BRW_ARF_ADDRESS;
+      else if (reg.file == ARF &&
                reg.nr >= BRW_ARF_ACCUMULATOR &&
                reg.nr < BRW_ARF_FLAG)
          return BRW_ARF_ACCUMULATOR + (reg.nr - BRW_ARF_ACCUMULATOR) / 2;
       else
          return reg.nr;
+   } else if (reg.file == ADDRESS) {
+      return BRW_ARF_ADDRESS;
    } else {
       return reg.nr;
    }
@@ -245,8 +282,8 @@ static inline unsigned
 phys_subnr(const struct intel_device_info *devinfo, const struct brw_reg reg)
 {
    if (devinfo->ver >= 20) {
-      if (reg.file == BRW_GENERAL_REGISTER_FILE ||
-          (reg.file == BRW_ARCHITECTURE_REGISTER_FILE &&
+      if (reg.file == FIXED_GRF ||
+          (reg.file == ARF &&
            reg.nr >= BRW_ARF_ACCUMULATOR &&
            reg.nr < BRW_ARF_FLAG))
          return (reg.nr & 1) * REG_SIZE + reg.subnr;
@@ -380,9 +417,9 @@ brw_make_reg(enum brw_reg_file file,
              unsigned writemask)
 {
    struct brw_reg reg;
-   if (file == BRW_GENERAL_REGISTER_FILE)
-      assert(nr < XE2_MAX_GRF);
-   else if (file == BRW_ARCHITECTURE_REGISTER_FILE)
+   if (file == FIXED_GRF)
+      assert(nr < XE3_MAX_GRF);
+   else if (file == ARF)
       assert(nr <= BRW_ARF_TIMESTAMP);
 
    reg.type = type;
@@ -406,7 +443,7 @@ brw_make_reg(enum brw_reg_file file,
    reg.vstride = vstride;
    reg.width = width;
    reg.hstride = hstride;
-   reg.pad1 = 0;
+   reg.is_scalar = 0;
 
    reg.offset = 0;
    reg.stride = 1;
@@ -565,6 +602,7 @@ byte_offset(struct brw_reg reg, unsigned bytes)
    case UNIFORM:
       reg.offset += bytes;
       break;
+   case ADDRESS:
    case ARF:
    case FIXED_GRF: {
       const unsigned suboffset = reg.subnr + bytes;
@@ -621,7 +659,7 @@ brw_ud1_reg(enum brw_reg_file file, unsigned nr, unsigned subnr)
 static inline struct brw_reg
 brw_imm_reg(enum brw_reg_type type)
 {
-   return brw_make_reg(BRW_IMMEDIATE_VALUE,
+   return brw_make_reg(IMM,
                   0,
                   0,
                   0,
@@ -766,107 +804,107 @@ brw_address(struct brw_reg reg)
 static inline struct brw_reg
 brw_vec1_grf(unsigned nr, unsigned subnr)
 {
-   return brw_vec1_reg(BRW_GENERAL_REGISTER_FILE, nr, subnr);
+   return brw_vec1_reg(FIXED_GRF, nr, subnr);
 }
 
 static inline struct brw_reg
 xe2_vec1_grf(unsigned nr, unsigned subnr)
 {
-   return brw_vec1_reg(BRW_GENERAL_REGISTER_FILE, 2 * nr + subnr / 8, subnr % 8);
+   return brw_vec1_reg(FIXED_GRF, 2 * nr + subnr / 8, subnr % 8);
 }
 
 /** Construct float[2] general-purpose register */
 static inline struct brw_reg
 brw_vec2_grf(unsigned nr, unsigned subnr)
 {
-   return brw_vec2_reg(BRW_GENERAL_REGISTER_FILE, nr, subnr);
+   return brw_vec2_reg(FIXED_GRF, nr, subnr);
 }
 
 static inline struct brw_reg
 xe2_vec2_grf(unsigned nr, unsigned subnr)
 {
-   return brw_vec2_reg(BRW_GENERAL_REGISTER_FILE, 2 * nr + subnr / 8, subnr % 8);
+   return brw_vec2_reg(FIXED_GRF, 2 * nr + subnr / 8, subnr % 8);
 }
 
 /** Construct float[4] general-purpose register */
 static inline struct brw_reg
 brw_vec4_grf(unsigned nr, unsigned subnr)
 {
-   return brw_vec4_reg(BRW_GENERAL_REGISTER_FILE, nr, subnr);
+   return brw_vec4_reg(FIXED_GRF, nr, subnr);
 }
 
 static inline struct brw_reg
 xe2_vec4_grf(unsigned nr, unsigned subnr)
 {
-   return brw_vec4_reg(BRW_GENERAL_REGISTER_FILE, 2 * nr + subnr / 8, subnr % 8);
+   return brw_vec4_reg(FIXED_GRF, 2 * nr + subnr / 8, subnr % 8);
 }
 
 /** Construct float[8] general-purpose register */
 static inline struct brw_reg
 brw_vec8_grf(unsigned nr, unsigned subnr)
 {
-   return brw_vec8_reg(BRW_GENERAL_REGISTER_FILE, nr, subnr);
+   return brw_vec8_reg(FIXED_GRF, nr, subnr);
 }
 
 static inline struct brw_reg
 xe2_vec8_grf(unsigned nr, unsigned subnr)
 {
-   return brw_vec8_reg(BRW_GENERAL_REGISTER_FILE, 2 * nr + subnr / 8, subnr % 8);
+   return brw_vec8_reg(FIXED_GRF, 2 * nr + subnr / 8, subnr % 8);
 }
 
 /** Construct float[16] general-purpose register */
 static inline struct brw_reg
 brw_vec16_grf(unsigned nr, unsigned subnr)
 {
-   return brw_vec16_reg(BRW_GENERAL_REGISTER_FILE, nr, subnr);
+   return brw_vec16_reg(FIXED_GRF, nr, subnr);
 }
 
 static inline struct brw_reg
 xe2_vec16_grf(unsigned nr, unsigned subnr)
 {
-   return brw_vec16_reg(BRW_GENERAL_REGISTER_FILE, 2 * nr + subnr / 8, subnr % 8);
+   return brw_vec16_reg(FIXED_GRF, 2 * nr + subnr / 8, subnr % 8);
 }
 
 static inline struct brw_reg
 brw_vecn_grf(unsigned width, unsigned nr, unsigned subnr)
 {
-   return brw_vecn_reg(width, BRW_GENERAL_REGISTER_FILE, nr, subnr);
+   return brw_vecn_reg(width, FIXED_GRF, nr, subnr);
 }
 
 static inline struct brw_reg
 xe2_vecn_grf(unsigned width, unsigned nr, unsigned subnr)
 {
-   return brw_vecn_reg(width, BRW_GENERAL_REGISTER_FILE, nr + subnr / 8, subnr % 8);
+   return brw_vecn_reg(width, FIXED_GRF, nr + subnr / 8, subnr % 8);
 }
 
 static inline struct brw_reg
 brw_uw1_grf(unsigned nr, unsigned subnr)
 {
-   return brw_uw1_reg(BRW_GENERAL_REGISTER_FILE, nr, subnr);
+   return brw_uw1_reg(FIXED_GRF, nr, subnr);
 }
 
 static inline struct brw_reg
 brw_uw8_grf(unsigned nr, unsigned subnr)
 {
-   return brw_uw8_reg(BRW_GENERAL_REGISTER_FILE, nr, subnr);
+   return brw_uw8_reg(FIXED_GRF, nr, subnr);
 }
 
 static inline struct brw_reg
 brw_uw16_grf(unsigned nr, unsigned subnr)
 {
-   return brw_uw16_reg(BRW_GENERAL_REGISTER_FILE, nr, subnr);
+   return brw_uw16_reg(FIXED_GRF, nr, subnr);
 }
 
 static inline struct brw_reg
 brw_ud8_grf(unsigned nr, unsigned subnr)
 {
-   return brw_ud8_reg(BRW_GENERAL_REGISTER_FILE, nr, subnr);
+   return brw_ud8_reg(FIXED_GRF, nr, subnr);
 }
 
 static inline struct brw_reg
 brw_ud1_grf(unsigned nr, unsigned subnr)
 {
-   return brw_ud1_reg(BRW_GENERAL_REGISTER_FILE, nr, subnr);
+   return brw_ud1_reg(FIXED_GRF, nr, subnr);
 }
 
 
@@ -874,25 +912,25 @@ brw_ud1_grf(unsigned nr, unsigned subnr)
 static inline struct brw_reg
 brw_null_reg(void)
 {
-   return brw_vec8_reg(BRW_ARCHITECTURE_REGISTER_FILE, BRW_ARF_NULL, 0);
+   return brw_vec8_reg(ARF, BRW_ARF_NULL, 0);
 }
 
 static inline struct brw_reg
 brw_null_vec(unsigned width)
 {
-   return brw_vecn_reg(width, BRW_ARCHITECTURE_REGISTER_FILE, BRW_ARF_NULL, 0);
+   return brw_vecn_reg(width, ARF, BRW_ARF_NULL, 0);
 }
 
 static inline struct brw_reg
 brw_address_reg(unsigned subnr)
 {
-   return brw_uw1_reg(BRW_ARCHITECTURE_REGISTER_FILE, BRW_ARF_ADDRESS, subnr);
+   return brw_uw1_reg(ADDRESS, 0, subnr);
 }
 
 static inline struct brw_reg
 brw_tdr_reg(void)
 {
-   return brw_uw1_reg(BRW_ARCHITECTURE_REGISTER_FILE, BRW_ARF_TDR, 0);
+   return brw_uw1_reg(ARF, BRW_ARF_TDR, 0);
 }
 
 /* If/else instructions break in align16 mode if writemask & swizzle
@@ -902,7 +940,7 @@ brw_tdr_reg(void)
 static inline struct brw_reg
 brw_ip_reg(void)
 {
-   return brw_make_reg(BRW_ARCHITECTURE_REGISTER_FILE,
+   return brw_make_reg(ARF,
                   BRW_ARF_IP,
                   0,
                   0,
@@ -918,7 +956,7 @@ brw_ip_reg(void)
 static inline struct brw_reg
 brw_notification_reg(void)
 {
-   return brw_make_reg(BRW_ARCHITECTURE_REGISTER_FILE,
+   return brw_make_reg(ARF,
                   BRW_ARF_NOTIFICATION_COUNT,
                   0,
                   0,
@@ -934,33 +972,33 @@ brw_notification_reg(void)
 static inline struct brw_reg
 brw_cr0_reg(unsigned subnr)
 {
-   return brw_ud1_reg(BRW_ARCHITECTURE_REGISTER_FILE, BRW_ARF_CONTROL, subnr);
+   return brw_ud1_reg(ARF, BRW_ARF_CONTROL, subnr);
 }
 
 static inline struct brw_reg
 brw_sr0_reg(unsigned subnr)
 {
-   return brw_ud1_reg(BRW_ARCHITECTURE_REGISTER_FILE, BRW_ARF_STATE, subnr);
+   return brw_ud1_reg(ARF, BRW_ARF_STATE, subnr);
 }
 
 static inline struct brw_reg
 brw_acc_reg(unsigned width)
 {
-   return brw_vecn_reg(width, BRW_ARCHITECTURE_REGISTER_FILE,
+   return brw_vecn_reg(width, ARF,
                        BRW_ARF_ACCUMULATOR, 0);
 }
 
 static inline struct brw_reg
 brw_flag_reg(int reg, int subreg)
 {
-   return brw_uw1_reg(BRW_ARCHITECTURE_REGISTER_FILE,
+   return brw_uw1_reg(ARF,
                       BRW_ARF_FLAG + reg, subreg);
 }
 
 static inline struct brw_reg
 brw_flag_subreg(unsigned subreg)
 {
-   return brw_uw1_reg(BRW_ARCHITECTURE_REGISTER_FILE,
+   return brw_uw1_reg(ARF,
                       BRW_ARF_FLAG + subreg / 2, subreg % 2);
 }
 
@@ -972,7 +1010,7 @@ brw_flag_subreg(unsigned subreg)
 static inline struct brw_reg
 brw_mask_reg(unsigned subnr)
 {
-   return brw_uw1_reg(BRW_ARCHITECTURE_REGISTER_FILE, BRW_ARF_MASK, subnr);
+   return brw_uw1_reg(ARF, BRW_ARF_MASK, subnr);
 }
 
 static inline struct brw_reg
@@ -985,21 +1023,6 @@ static inline struct brw_reg
 brw_dmask_reg()
 {
    return brw_sr0_reg(2);
-}
-
-static inline struct brw_reg
-brw_mask_stack_reg(unsigned subnr)
-{
-   return suboffset(retype(brw_vec16_reg(BRW_ARCHITECTURE_REGISTER_FILE,
-                                         BRW_ARF_MASK_STACK, 0),
-                           BRW_TYPE_UB), subnr);
-}
-
-static inline struct brw_reg
-brw_mask_stack_depth_reg(unsigned subnr)
-{
-   return brw_uw1_reg(BRW_ARCHITECTURE_REGISTER_FILE,
-                      BRW_ARF_MASK_STACK_DEPTH, subnr);
 }
 
 static inline struct brw_reg
@@ -1167,7 +1190,7 @@ get_element_d(struct brw_reg reg, unsigned elt)
 static inline struct brw_reg
 brw_swizzle(struct brw_reg reg, unsigned swz)
 {
-   if (reg.file == BRW_IMMEDIATE_VALUE)
+   if (reg.file == IMM)
       reg.ud = brw_swizzle_immediate(reg.type, reg.ud, swz);
    else
       reg.swizzle = brw_compose_swizzle(swz, reg.swizzle);
@@ -1178,7 +1201,7 @@ brw_swizzle(struct brw_reg reg, unsigned swz)
 static inline struct brw_reg
 brw_writemask(struct brw_reg reg, unsigned mask)
 {
-   assert(reg.file != BRW_IMMEDIATE_VALUE);
+   assert(reg.file != IMM);
    reg.writemask &= mask;
    return reg;
 }
@@ -1186,7 +1209,7 @@ brw_writemask(struct brw_reg reg, unsigned mask)
 static inline struct brw_reg
 brw_set_writemask(struct brw_reg reg, unsigned mask)
 {
-   assert(reg.file != BRW_IMMEDIATE_VALUE);
+   assert(reg.file != IMM);
    reg.writemask = mask;
    return reg;
 }
@@ -1262,7 +1285,7 @@ region_matches(struct brw_reg reg, enum brw_vertical_stride v,
 static inline unsigned
 element_sz(struct brw_reg reg)
 {
-   if (reg.file == BRW_IMMEDIATE_VALUE || has_scalar_region(reg)) {
+   if (reg.file == IMM || has_scalar_region(reg)) {
       return brw_type_size_bytes(reg.type);
 
    } else if (reg.width == BRW_WIDTH_1 &&
@@ -1306,6 +1329,7 @@ horiz_offset(const brw_reg &reg, unsigned delta)
    case VGRF:
    case ATTR:
       return byte_offset(reg, delta * reg.stride * brw_type_size_bytes(reg.type));
+   case ADDRESS:
    case ARF:
    case FIXED_GRF:
       if (reg.is_null()) {
@@ -1332,6 +1356,7 @@ offset(brw_reg reg, unsigned width, unsigned delta)
    switch (reg.file) {
    case BAD_FILE:
       break;
+   case ADDRESS:
    case ARF:
    case FIXED_GRF:
    case VGRF:
@@ -1382,9 +1407,9 @@ reg_space(const brw_reg &r)
 static inline unsigned
 reg_offset(const brw_reg &r)
 {
-   return (r.file == VGRF || r.file == IMM || r.file == ATTR ? 0 : r.nr) *
+   return (r.file == ADDRESS || r.file == VGRF || r.file == IMM || r.file == ATTR ? 0 : r.nr) *
           (r.file == UNIFORM ? 4 : REG_SIZE) + r.offset +
-          (r.file == ARF || r.file == FIXED_GRF ? r.subnr : 0);
+          (r.file == ADDRESS || r.file == ARF || r.file == FIXED_GRF ? r.subnr : 0);
 }
 
 /**
@@ -1395,7 +1420,9 @@ reg_offset(const brw_reg &r)
 static inline unsigned
 reg_padding(const brw_reg &r)
 {
-   const unsigned stride = ((r.file != ARF && r.file != FIXED_GRF) ? r.stride :
+   const unsigned stride = ((r.file != ADDRESS &&
+                             r.file != ARF &&
+                             r.file != FIXED_GRF) ? r.stride :
                             r.hstride == 0 ? 0 :
                             1 << (r.hstride - 1));
    return (MAX2(1, stride) - 1) * brw_type_size_bytes(r.type);
@@ -1452,7 +1479,7 @@ is_periodic(const brw_reg &reg, unsigned n)
                                1);
       return n % period == 0;
 
-   } else if (reg.file == ARF || reg.file == FIXED_GRF) {
+   } else if (reg.file == ADDRESS || reg.file == ARF || reg.file == FIXED_GRF) {
       const unsigned period = (reg.hstride == 0 && reg.vstride == 0 ? 1 :
                                reg.vstride == 0 ? 1 << reg.width :
                                ~0);
@@ -1503,6 +1530,7 @@ byte_stride(const brw_reg &reg)
    case VGRF:
    case ATTR:
       return reg.stride * brw_type_size_bytes(reg.type);
+   case ADDRESS:
    case ARF:
    case FIXED_GRF:
       if (reg.is_null()) {
@@ -1526,5 +1554,3 @@ byte_stride(const brw_reg &reg)
 }
 
 #endif /* __cplusplus */
-
-#endif

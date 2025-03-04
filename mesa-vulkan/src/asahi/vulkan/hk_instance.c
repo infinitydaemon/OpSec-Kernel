@@ -20,7 +20,7 @@ hk_EnumerateInstanceVersion(uint32_t *pApiVersion)
 {
    uint32_t version_override = vk_get_version_override();
    *pApiVersion = version_override ? version_override
-                                   : VK_MAKE_VERSION(1, 3, VK_HEADER_VERSION);
+                                   : VK_MAKE_VERSION(1, 4, VK_HEADER_VERSION);
 
    return VK_SUCCESS;
 }
@@ -76,18 +76,30 @@ hk_EnumerateInstanceExtensionProperties(const char *pLayerName,
       &instance_extensions, pPropertyCount, pProperties);
 }
 
+/* clang-format off */
 static const driOptionDescription hk_dri_options[] = {
-   DRI_CONF_SECTION_PERFORMANCE DRI_CONF_ADAPTIVE_SYNC(true)
+   DRI_CONF_SECTION_PERFORMANCE
+      DRI_CONF_ADAPTIVE_SYNC(true)
       DRI_CONF_VK_X11_OVERRIDE_MIN_IMAGE_COUNT(0)
-         DRI_CONF_VK_X11_STRICT_IMAGE_COUNT(false)
-            DRI_CONF_VK_X11_ENSURE_MIN_IMAGE_COUNT(false)
-               DRI_CONF_VK_KHR_PRESENT_WAIT(false)
-                  DRI_CONF_VK_XWAYLAND_WAIT_READY(false) DRI_CONF_SECTION_END
+      DRI_CONF_VK_X11_STRICT_IMAGE_COUNT(false)
+      DRI_CONF_VK_X11_ENSURE_MIN_IMAGE_COUNT(false)
+      DRI_CONF_VK_KHR_PRESENT_WAIT(false)
+      DRI_CONF_VK_XWAYLAND_WAIT_READY(false)
+   DRI_CONF_SECTION_END
 
-                     DRI_CONF_SECTION_DEBUG DRI_CONF_FORCE_VK_VENDOR()
-                        DRI_CONF_VK_WSI_FORCE_SWAPCHAIN_TO_CURRENT_EXTENT(false)
-                           DRI_CONF_VK_X11_IGNORE_SUBOPTIMAL(false)
-                              DRI_CONF_SECTION_END};
+   DRI_CONF_SECTION_DEBUG
+      DRI_CONF_FORCE_VK_VENDOR()
+      DRI_CONF_VK_WSI_FORCE_SWAPCHAIN_TO_CURRENT_EXTENT(false)
+      DRI_CONF_VK_X11_IGNORE_SUBOPTIMAL(false)
+   DRI_CONF_SECTION_END
+
+   DRI_CONF_SECTION_MISCELLANEOUS
+      DRI_CONF_HK_DISABLE_RGBA4_BORDER_COLOR_WORKAROUND(false)
+      DRI_CONF_HK_DISABLE_BORDER_EMULATION(false)
+      DRI_CONF_HK_FAKE_MINMAX(false)
+   DRI_CONF_SECTION_END
+};
+/* clang-format on */
 
 static void
 hk_init_dri_options(struct hk_instance *instance)
@@ -101,6 +113,15 @@ hk_init_dri_options(struct hk_instance *instance)
 
    instance->force_vk_vendor =
       driQueryOptioni(&instance->dri_options, "force_vk_vendor");
+
+   instance->workaround_rgba4 = !driQueryOptionb(
+      &instance->dri_options, "hk_disable_rgba4_border_color_workaround");
+
+   instance->no_border =
+      driQueryOptionb(&instance->dri_options, "hk_disable_border_emulation");
+
+   instance->fake_minmax =
+      driQueryOptionb(&instance->dri_options, "hk_fake_minmax");
 }
 
 VKAPI_ATTR VkResult VKAPI_CALL

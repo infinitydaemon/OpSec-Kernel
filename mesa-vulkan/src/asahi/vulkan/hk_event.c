@@ -31,9 +31,9 @@ hk_CreateEvent(VkDevice device, const VkEventCreateInfo *pCreateInfo,
     * XXX
     */
    event->bo =
-      agx_bo_create(&dev->dev, HK_EVENT_MEM_SIZE, AGX_BO_WRITEBACK, "Event");
-   event->status = event->bo->ptr.cpu;
-   event->addr = event->bo->ptr.gpu;
+      agx_bo_create(&dev->dev, HK_EVENT_MEM_SIZE, 0, AGX_BO_WRITEBACK, "Event");
+   event->status = agx_bo_map(event->bo);
+   event->addr = event->bo->va->addr;
 
    *event->status = VK_EVENT_RESET;
 
@@ -52,7 +52,7 @@ hk_DestroyEvent(VkDevice device, VkEvent _event,
    if (!event)
       return;
 
-   agx_bo_unreference(event->bo);
+   agx_bo_unreference(&dev->dev, event->bo);
    vk_object_free(&dev->vk, pAllocator, event);
 }
 
@@ -91,7 +91,10 @@ hk_CmdSetEvent2(VkCommandBuffer commandBuffer, VkEvent _event,
    VK_FROM_HANDLE(hk_cmd_buffer, cmd, commandBuffer);
    VK_FROM_HANDLE(hk_event, event, _event);
 
-   hk_queue_write(cmd, event->bo->ptr.gpu, VK_EVENT_SET, false);
+   perf_debug(cmd, "Set event");
+   hk_cmd_buffer_end_compute(cmd);
+   hk_cmd_buffer_end_graphics(cmd);
+   hk_queue_write(cmd, event->bo->va->addr, VK_EVENT_SET, false);
 }
 
 VKAPI_ATTR void VKAPI_CALL
@@ -101,7 +104,10 @@ hk_CmdResetEvent2(VkCommandBuffer commandBuffer, VkEvent _event,
    VK_FROM_HANDLE(hk_cmd_buffer, cmd, commandBuffer);
    VK_FROM_HANDLE(hk_event, event, _event);
 
-   hk_queue_write(cmd, event->bo->ptr.gpu, VK_EVENT_RESET, false);
+   perf_debug(cmd, "Reset event");
+   hk_cmd_buffer_end_compute(cmd);
+   hk_cmd_buffer_end_graphics(cmd);
+   hk_queue_write(cmd, event->bo->va->addr, VK_EVENT_RESET, false);
 }
 
 VKAPI_ATTR void VKAPI_CALL
@@ -109,5 +115,13 @@ hk_CmdWaitEvents2(VkCommandBuffer commandBuffer, uint32_t eventCount,
                   const VkEvent *pEvents,
                   const VkDependencyInfo *pDependencyInfos)
 {
-   /* Currently we barrier everything, so this is a no-op. */
+   VK_FROM_HANDLE(hk_cmd_buffer, cmd, commandBuffer);
+   perf_debug(cmd, "Wait events");
+
+   /* The big hammer. Need to check if this is actually needed.
+    *
+    * XXX: perf.
+    */
+   hk_cmd_buffer_end_compute(cmd);
+   hk_cmd_buffer_end_graphics(cmd);
 }

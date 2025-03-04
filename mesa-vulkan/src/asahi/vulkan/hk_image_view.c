@@ -9,7 +9,7 @@
 #include "vulkan/vulkan_core.h"
 
 #include "agx_helpers.h"
-#include "agx_nir_passes.h"
+#include "agx_nir_texture.h"
 #include "agx_pack.h"
 #include "hk_device.h"
 #include "hk_entrypoints.h"
@@ -18,6 +18,7 @@
 
 #include "layout.h"
 #include "vk_format.h"
+#include "vk_meta.h"
 
 enum hk_desc_usage {
    HK_DESC_USAGE_SAMPLED,
@@ -141,9 +142,9 @@ struct hk_3d {
 static struct hk_3d
 view_denominator(struct hk_image_view *view)
 {
-   enum pipe_format view_format = vk_format_to_pipe_format(view->vk.format);
+   enum pipe_format view_format = hk_format_to_pipe_format(view->vk.format);
    enum pipe_format img_format =
-      vk_format_to_pipe_format(view->vk.image->format);
+      hk_format_to_pipe_format(view->vk.image->format);
 
    if (util_format_is_compressed(view_format)) {
       /*
@@ -184,7 +185,7 @@ format_for_plane(struct hk_image_view *view, unsigned view_plane)
    VkFormat plane_format =
       ycbcr_info ? ycbcr_info->planes[view_plane].format : view->vk.format;
 
-   enum pipe_format p_format = vk_format_to_pipe_format(plane_format);
+   enum pipe_format p_format = hk_format_to_pipe_format(plane_format);
    if (view->vk.aspects == VK_IMAGE_ASPECT_STENCIL_BIT)
       p_format = get_stencil_format(p_format);
 
@@ -197,7 +198,8 @@ pack_texture(struct hk_image_view *view, unsigned view_plane,
 {
    struct hk_image *image = container_of(view->vk.image, struct hk_image, vk);
    const uint8_t image_plane = view->planes[view_plane].image_plane;
-   struct ail_layout *layout = &image->planes[image_plane].layout;
+   struct hk_image_plane *plane = &image->planes[image_plane];
+   struct ail_layout *layout = &plane->layout;
    uint64_t base_addr = hk_image_base_address(image, image_plane);
 
    bool cubes_to_2d = usage != HK_DESC_USAGE_SAMPLED;
@@ -255,8 +257,8 @@ pack_texture(struct hk_image_view *view, unsigned view_plane,
       cfg.dimension = translate_image_view_type(
          view->vk.view_type, view->vk.image->samples > 1, layers > 1, usage);
       cfg.layout = agx_translate_layout(layout->tiling);
-      cfg.channels = agx_pixel_format[p_format].channels;
-      cfg.type = agx_pixel_format[p_format].type;
+      cfg.channels = ail_pixel_format[p_format].channels;
+      cfg.type = ail_pixel_format[p_format].type;
       cfg.srgb = util_format_is_srgb(p_format);
 
       cfg.swizzle_r = agx_channel_from_pipe(out_swizzle[0]);
@@ -281,16 +283,52 @@ pack_texture(struct hk_image_view *view, unsigned view_plane,
          cfg.last_level = level + view->vk.level_count - 1;
       }
 
+      /* To implement sparse resident textures, the hardware texture descriptor
+       * can instead point to a secondary page table controlled in userspace.
+       * This allows remapping pages and - crucially - disabling unmapped pages
+       * to read zero and report non-resident with shader residency queries.
+       * When we have a sparse map, we need to point to it here.
+       *
+       * However, there's a wrinkle: when handling uncompressed views of
+       * compressed images in the above code, we need to offset the image
+       * address to point to the specific mip level rather than use the hardware
+       * "first level" field. This ensures the layouts are consistent despite us
+       * munging the image dimensions. In that case, we need to also offset the
+       * sparse page table accordingly. Of course, the sparse page table is in
+       * terms of pages, so this trick only works when the mip level is
+       * page-aligned.
+       *
+       * However, if the mip level is NOT page-aligned, it is in the mip tail by
+       * definition. As the mip tail is always resident, there is no need for a
+       * sparse page table. So either:
+       *
+       * 1. We are in the mip tail and don't need a sparse map, or
+       * 2. We are not but the level is page-aligned in the sparse map.
+       *
+       * Either way we're okay.
+       */
+      if (plane->sparse_map && level < layout->mip_tail_first_lod) {
+         unsigned page = 0;
+         if (denom.x > 1) {
+            page = ail_bytes_to_pages(layout->level_offsets_B[level]);
+         }
+
+         cfg.mode = AGX_IMAGE_MODE_SPARSE;
+         cfg.address = plane->sparse_map->va->addr +
+                       ail_page_to_sparse_index_el(layout, layer, page) *
+                          AIL_SPARSE_ELSIZE_B;
+      }
+
       cfg.srgb = (desc->colorspace == UTIL_FORMAT_COLORSPACE_SRGB);
       cfg.unk_mipmapped = layout->levels > 1;
       cfg.srgb_2_channel = cfg.srgb && util_format_colormask(desc) == 0x3;
 
-      if (ail_is_compressed(layout)) {
+      if (layout->compressed) {
          cfg.compressed_1 = true;
          cfg.extended = true;
       }
 
-      if (ail_is_compressed(layout)) {
+      if (layout->compressed) {
          cfg.acceleration_buffer = base_addr + layout->metadata_offset_B +
                                    (layer * layout->compression_layer_stride_B);
       }
@@ -313,9 +351,6 @@ pack_texture(struct hk_image_view *view, unsigned view_plane,
       if (layout->tiling == AIL_TILING_LINEAR) {
          cfg.stride = ail_get_linear_stride_B(layout, 0) - 16;
       } else {
-         assert(layout->tiling == AIL_TILING_TWIDDLED ||
-                layout->tiling == AIL_TILING_TWIDDLED_COMPRESSED);
-
          cfg.page_aligned_layers = layout->page_aligned_layers;
       }
    }
@@ -357,8 +392,8 @@ pack_pbe(struct hk_device *dev, struct hk_image_view *view, unsigned view_plane,
       cfg.dimension =
          translate_image_view_type(view->vk.view_type, msaa, layers > 1, usage);
       cfg.layout = agx_translate_layout(layout->tiling);
-      cfg.channels = agx_pixel_format[p_format].channels;
-      cfg.type = agx_pixel_format[p_format].type;
+      cfg.channels = ail_pixel_format[p_format].channels;
+      cfg.type = ail_pixel_format[p_format].type;
       cfg.srgb = util_format_is_srgb(p_format);
 
       assert(desc->nr_channels >= 1 && desc->nr_channels <= 4);
@@ -442,7 +477,7 @@ pack_pbe(struct hk_device *dev, struct hk_image_view *view, unsigned view_plane,
             cfg.samples = agx_translate_sample_count(image->vk.samples);
       }
 
-      if (ail_is_compressed(layout)) {
+      if (layout->compressed && usage != HK_DESC_USAGE_EMRT) {
          cfg.compressed_1 = true;
          cfg.extended = true;
 
@@ -453,7 +488,9 @@ pack_pbe(struct hk_device *dev, struct hk_image_view *view, unsigned view_plane,
       /* When the descriptor isn't extended architecturally, we use
        * the last 8 bytes as a sideband to accelerate image atomics.
        */
-      if (!cfg.extended && layout->writeable_image) {
+      if (!cfg.extended &&
+          (layout->writeable_image || usage == HK_DESC_USAGE_EMRT)) {
+
          if (msaa) {
             assert(denom.x == 1 && "no MSAA of block-compressed");
 
@@ -466,7 +503,7 @@ pack_pbe(struct hk_device *dev, struct hk_image_view *view, unsigned view_plane,
 
          cfg.sample_count_log2_sw = util_logbase2(image->vk.samples);
 
-         if (layout->tiling == AIL_TILING_TWIDDLED) {
+         if (layout->tiling != AIL_TILING_LINEAR) {
             struct ail_tile tile_size = layout->tilesize_el[level];
             cfg.tile_width_sw = tile_size.width_el;
             cfg.tile_height_sw = tile_size.height_el;
@@ -640,7 +677,8 @@ hk_CreateImageView(VkDevice _device, const VkImageViewCreateInfo *pCreateInfo,
       return vk_error(dev, VK_ERROR_OUT_OF_HOST_MEMORY);
 
    result = hk_image_view_init(
-      dev, view, pCreateInfo->flags & VK_IMAGE_VIEW_CREATE_INTERNAL_MESA,
+      dev, view,
+      pCreateInfo->flags & VK_IMAGE_VIEW_CREATE_DRIVER_INTERNAL_BIT_MESA,
       pCreateInfo);
    if (result != VK_SUCCESS) {
       hk_DestroyImageView(_device, hk_image_view_to_handle(view), pAllocator);

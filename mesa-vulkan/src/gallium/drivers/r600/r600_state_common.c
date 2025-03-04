@@ -2211,30 +2211,16 @@ static void r600_draw_vbo(struct pipe_context *ctx, const struct pipe_draw_info 
 			struct pipe_resource *out_buffer = NULL;
 			unsigned out_offset;
 			void *ptr;
-			unsigned start, count;
+			const unsigned out_size = sizeof(uint16_t);
+			const unsigned start = 0;
+			const unsigned count = likely(!indirect) ?
+				draws[0].count :
+				indexbuf->width0 - index_offset;
+			const unsigned out_width = count * out_size;
 
-			if (likely(!indirect)) {
-				start = 0;
-				count = draws[0].count;
-			}
-			else {
-				/* Have to get start/count from indirect buffer, slow path ahead... */
-				struct r600_resource *indirect_resource = (struct r600_resource *)indirect->buffer;
-				unsigned *data = r600_buffer_map_sync_with_rings(&rctx->b, indirect_resource,
-					PIPE_MAP_READ);
-				if (data) {
-					data += indirect->offset / sizeof(unsigned);
-					start = data[2] * index_size;
-					count = data[0];
-				}
-				else {
-					start = 0;
-					count = 0;
-				}
-			}
-
-			u_upload_alloc(ctx->stream_uploader, start, count * 2,
+			u_upload_alloc(ctx->stream_uploader, start, out_width,
                                        256, &out_offset, &out_buffer, &ptr);
+
 			if (unlikely(!ptr))
 				return;
 
@@ -2243,7 +2229,7 @@ static void r600_draw_vbo(struct pipe_context *ctx, const struct pipe_draw_info 
 
 			indexbuf = out_buffer;
 			index_offset = out_offset;
-			index_size = 2;
+			index_size = out_size;
 			has_user_indices = false;
 		}
 
@@ -2289,8 +2275,27 @@ static void r600_draw_vbo(struct pipe_context *ctx, const struct pipe_draw_info 
 		r600_mark_atom_dirty(rctx, &rctx->cb_misc_state.atom);
 	}
 
-	if (rctx->b.gfx_level >= EVERGREEN)
-		evergreen_setup_tess_constants(rctx, info, &num_patches);
+	if (rctx->b.gfx_level >= EVERGREEN) {
+		const bool vertexid = rctx->vs_shader->current->shader.vs_vertexid;
+
+		if (unlikely(indirect && vertexid)) {
+			const uint32_t indirect_offset =
+				indirect->offset + (info->index_size ?
+						    3 * sizeof(uint32_t) :
+						    2 * sizeof(uint32_t));
+			uint8_t *indirect_data =
+				r600_buffer_map_sync_with_rings(&rctx->b,
+								(struct r600_resource *)indirect->buffer,
+								PIPE_MAP_READ);
+
+			rctx->lds_constant_buffer.vertexid_base =
+				*(uint32_t *)(indirect_data + indirect_offset);
+		} else {
+			rctx->lds_constant_buffer.vertexid_base = 0;
+		}
+
+		evergreen_setup_tess_constants(rctx, info, &num_patches, vertexid);
+	}
 
 	/* Emit states. */
 	r600_need_cs_space(rctx, has_user_indices ? 5 : 0, true, util_bitcount(atomic_used_mask));
@@ -2432,7 +2437,10 @@ static void r600_draw_vbo(struct pipe_context *ctx, const struct pipe_draw_info 
                                                                           RADEON_PRIO_INDEX_BUFFER));
 			}
 			else {
-				uint32_t max_size = (indexbuf->width0 - index_offset) / index_size;
+				const uint32_t max_size =
+					likely(indexbuf == info->index.resource) ?
+					(indexbuf->width0 - index_offset) / index_size :
+					info->index.resource->width0 - draws[0].start;
 
 				radeon_emit(cs, PKT3(EG_PKT3_INDEX_BASE, 1, 0));
 				radeon_emit(cs, va);
@@ -3246,6 +3254,7 @@ uint32_t r600_colorformat_endian_swap(uint32_t colorformat, bool do_endian_swap)
 		case V_0280A0_COLOR_5_6_5:
 		case V_0280A0_COLOR_1_5_5_5:
 		case V_0280A0_COLOR_4_4_4_4:
+		case V_0280A0_COLOR_16_FLOAT:
 		case V_0280A0_COLOR_16:
 			return (do_endian_swap ? ENDIAN_8IN16 : ENDIAN_NONE);
 
@@ -3258,10 +3267,12 @@ uint32_t r600_colorformat_endian_swap(uint32_t colorformat, bool do_endian_swap)
 			 */
 			return ENDIAN_NONE;
 
+		case V_0280A0_COLOR_10_11_11_FLOAT:
 		case V_0280A0_COLOR_2_10_10_10:
 		case V_0280A0_COLOR_8_24:
 		case V_0280A0_COLOR_24_8:
 		case V_0280A0_COLOR_32_FLOAT:
+		case V_0280A0_COLOR_32:
 			return (do_endian_swap ? ENDIAN_8IN32 : ENDIAN_NONE);
 
 		case V_0280A0_COLOR_16_16_FLOAT:

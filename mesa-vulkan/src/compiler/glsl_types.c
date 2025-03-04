@@ -1053,6 +1053,8 @@ glsl_texture_type(enum glsl_sampler_dim dim, bool array, enum glsl_base_type typ
          return (array ? &glsl_type_builtin_error : &glsl_type_builtin_vtexture3D);
       case GLSL_SAMPLER_DIM_BUF:
          return (array ? &glsl_type_builtin_error : &glsl_type_builtin_vtextureBuffer);
+      case GLSL_SAMPLER_DIM_MS:
+         return (array ? &glsl_type_builtin_vtexture2DMSArray : &glsl_type_builtin_vtexture2DMS);
       default:
          return &glsl_type_builtin_error;
       }
@@ -1223,6 +1225,8 @@ glsl_image_type(enum glsl_sampler_dim dim, bool array, enum glsl_base_type type)
          return (array ? &glsl_type_builtin_error : &glsl_type_builtin_vimage3D);
       case GLSL_SAMPLER_DIM_BUF:
          return (array ? &glsl_type_builtin_error : &glsl_type_builtin_vbuffer);
+      case GLSL_SAMPLER_DIM_MS:
+         return (array ? &glsl_type_builtin_vimage2DMSArray : &glsl_type_builtin_vimage2DMS);
       default:
          return &glsl_type_builtin_error;
       }
@@ -3685,7 +3689,7 @@ glsl_channel_type(const glsl_type *t)
    }
 }
 
-static void
+void
 glsl_size_align_handle_array_and_structs(const glsl_type *type,
                                          glsl_type_size_align_func size_align,
                                          unsigned *size, unsigned *align)
@@ -3745,6 +3749,65 @@ glsl_get_natural_size_align_bytes(const glsl_type *type,
    case GLSL_TYPE_STRUCT:
       glsl_size_align_handle_array_and_structs(type,
                                                glsl_get_natural_size_align_bytes,
+                                               size, align);
+      break;
+
+   case GLSL_TYPE_SAMPLER:
+   case GLSL_TYPE_TEXTURE:
+   case GLSL_TYPE_IMAGE:
+      /* Bindless samplers and images. */
+      *size = 8;
+      *align = 8;
+      break;
+
+   case GLSL_TYPE_COOPERATIVE_MATRIX:
+   case GLSL_TYPE_ATOMIC_UINT:
+   case GLSL_TYPE_SUBROUTINE:
+   case GLSL_TYPE_VOID:
+   case GLSL_TYPE_ERROR:
+      unreachable("type does not have a natural size");
+   }
+}
+
+/**
+ * Returns a byte size/alignment for a type where each array element or struct
+ * field is aligned to 4 bytes.
+ */
+void
+glsl_get_word_size_align_bytes(const glsl_type *type,
+                               unsigned *size, unsigned *align)
+{
+   switch (type->base_type) {
+   case GLSL_TYPE_BOOL:
+      /* We special-case Booleans to 32 bits to not cause heartburn for
+       * drivers that suddenly get an 8-bit load.
+       */
+      *size = 4 * glsl_get_components(type);
+      *align = 4;
+      break;
+
+   case GLSL_TYPE_UINT8:
+   case GLSL_TYPE_INT8:
+   case GLSL_TYPE_UINT16:
+   case GLSL_TYPE_INT16:
+   case GLSL_TYPE_FLOAT16:
+   case GLSL_TYPE_UINT:
+   case GLSL_TYPE_INT:
+   case GLSL_TYPE_FLOAT:
+   case GLSL_TYPE_DOUBLE:
+   case GLSL_TYPE_UINT64:
+   case GLSL_TYPE_INT64: {
+      unsigned N = MAX2(glsl_get_bit_size(type) / 8, 4);
+      *size = N * glsl_get_components(type);
+      *align = N;
+      break;
+   }
+
+   case GLSL_TYPE_ARRAY:
+   case GLSL_TYPE_INTERFACE:
+   case GLSL_TYPE_STRUCT:
+      glsl_size_align_handle_array_and_structs(type,
+                                               glsl_get_word_size_align_bytes,
                                                size, align);
       break;
 

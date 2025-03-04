@@ -253,6 +253,10 @@ llvmpipe_create_context(struct pipe_screen *screen, void *priv,
 
    llvmpipe_init_sampler_matrix(llvmpipe);
 
+#ifdef HAVE_LIBDRM
+   llvmpipe_init_fence_funcs(&llvmpipe->pipe);
+#endif
+
 #ifdef USE_GLOBAL_LLVM_CONTEXT
    llvmpipe->context.ref = LLVMGetGlobalContext();
    llvmpipe->context.owned = false;
@@ -318,7 +322,7 @@ llvmpipe_create_context(struct pipe_screen *screen, void *priv,
 
    /* plug in AA line/point stages */
    draw_install_aaline_stage(llvmpipe->draw, &llvmpipe->pipe);
-   draw_install_aapoint_stage(llvmpipe->draw, &llvmpipe->pipe, nir_type_bool32);
+   draw_install_aapoint_stage(llvmpipe->draw, &llvmpipe->pipe, nir_type_bool1);
    draw_install_pstipple_stage(llvmpipe->draw, &llvmpipe->pipe);
 
    /* convert points and lines into triangles:

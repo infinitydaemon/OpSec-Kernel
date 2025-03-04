@@ -38,6 +38,8 @@ static const struct vk_instance_extension_table
       .KHR_get_surface_capabilities2 = true,
       .KHR_surface = true,
       .KHR_surface_protected_capabilities = true,
+      .EXT_surface_maintenance1 = true,
+      .EXT_swapchain_colorspace = true,
 #endif
 #ifdef VK_USE_PLATFORM_WAYLAND_KHR
       .KHR_wayland_surface = true,
@@ -48,8 +50,18 @@ static const struct vk_instance_extension_table
 #ifdef VK_USE_PLATFORM_XLIB_KHR
       .KHR_xlib_surface = true,
 #endif
+#ifdef VK_USE_PLATFORM_XLIB_XRANDR_EXT
+      .EXT_acquire_xlib_display = true,
+#endif
 #ifndef VK_USE_PLATFORM_WIN32_KHR
       .EXT_headless_surface = true,
+#endif
+#ifdef VK_USE_PLATFORM_DISPLAY_KHR
+      .KHR_display = true,
+      .KHR_get_display_properties2 = true,
+      .EXT_direct_mode_display = true,
+      .EXT_display_surface_counter = true,
+      .EXT_acquire_drm_display = true,
 #endif
    };
 
@@ -276,6 +288,7 @@ vn_CreateInstance(const VkInstanceCreateInfo *pCreateInfo,
       return vn_error(NULL, result);
    }
 
+   VkInstance instance_handle = vn_instance_to_handle(instance);
    /* ring_idx = 0 reserved for CPU timeline */
    instance->ring_idx_used_mask = 0x1;
 
@@ -294,6 +307,10 @@ vn_CreateInstance(const VkInstanceCreateInfo *pCreateInfo,
    }
 
    result = vn_instance_init_renderer(instance);
+   if (result == VK_ERROR_INITIALIZATION_FAILED) {
+      *pInstance = instance_handle;
+      return VK_SUCCESS;
+   }
    if (result != VK_SUCCESS)
       goto out_mtx_destroy;
 
@@ -333,7 +350,6 @@ vn_CreateInstance(const VkInstanceCreateInfo *pCreateInfo,
       local_create_info.pApplicationInfo = &local_app_info;
    }
 
-   VkInstance instance_handle = vn_instance_to_handle(instance);
    result = vn_call_vkCreateInstance(instance->ring.ring, pCreateInfo, NULL,
                                      &instance_handle);
    if (result != VK_SUCCESS)
@@ -407,16 +423,18 @@ vn_DestroyInstance(VkInstance _instance,
    mtx_destroy(&instance->physical_device.mutex);
    mtx_destroy(&instance->ring_idx_mutex);
 
-   vn_call_vkDestroyInstance(instance->ring.ring, _instance, NULL);
+   if (instance->renderer) {
+      vn_call_vkDestroyInstance(instance->ring.ring, _instance, NULL);
 
-   vn_instance_fini_ring(instance);
+      vn_instance_fini_ring(instance);
 
-   vn_renderer_shmem_pool_fini(instance->renderer,
-                               &instance->reply_shmem_pool);
+      vn_renderer_shmem_pool_fini(instance->renderer,
+                                  &instance->reply_shmem_pool);
 
-   vn_renderer_shmem_pool_fini(instance->renderer, &instance->cs_shmem_pool);
+      vn_renderer_shmem_pool_fini(instance->renderer, &instance->cs_shmem_pool);
 
-   vn_renderer_destroy(instance->renderer, alloc);
+      vn_renderer_destroy(instance->renderer, alloc);
+   }
 
    driDestroyOptionCache(&instance->dri_options);
    driDestroyOptionInfo(&instance->available_dri_options);

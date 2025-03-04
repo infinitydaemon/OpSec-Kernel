@@ -25,8 +25,7 @@
  *
  */
 
-#ifndef ELK_FS_LIVE_VARIABLES_H
-#define ELK_FS_LIVE_VARIABLES_H
+#pragma once
 
 #include "elk_ir_analysis.h"
 #include "elk_ir_fs.h"
@@ -78,7 +77,9 @@ public:
    };
 
    fs_live_variables(const elk_backend_shader *s);
+   fs_live_variables(const fs_live_variables &) = delete;
    ~fs_live_variables();
+   fs_live_variables & operator=(const fs_live_variables &) = delete;
 
    bool validate(const elk_backend_shader *s) const;
 
@@ -144,5 +145,3 @@ protected:
 };
 
 } /* namespace elk */
-
-#endif /* ELK_FS_LIVE_VARIABLES_H */

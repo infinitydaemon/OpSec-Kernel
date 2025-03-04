@@ -6,6 +6,7 @@
  */
 #include "hk_descriptor_set.h"
 #include "asahi/lib/agx_bo.h"
+#include "util/half_float.h"
 #include "vulkan/vulkan_core.h"
 
 #include "hk_buffer.h"
@@ -73,6 +74,11 @@ write_sampled_image_view_desc(struct hk_descriptor_set *set,
 
          assert(index < (1 << 20));
          desc[plane].image_offset = index * HK_IMAGE_STRIDE;
+
+         float min_lod = MAX2(view->vk.min_lod - view->vk.base_mip_level, 0.0);
+
+         desc[plane].min_lod_fp16 = _mesa_float_to_half(min_lod);
+         desc[plane].min_lod_uint16 = min_lod;
       }
    }
 
@@ -107,12 +113,16 @@ write_sampled_image_view_desc(struct hk_descriptor_set *set,
          desc[plane].sampler_index =
             sampler->planes[sampler_plane].hw->index + 28;
          desc[plane].lod_bias_fp16 = sampler->lod_bias_fp16;
-         desc[plane].has_border = sampler->has_border;
+         desc[plane].clamp_0_sampler_index_or_negative = -1;
       }
 
       if (sampler->has_border) {
          assert(sampler->plane_count == 2);
-         desc[0].clamp_0_sampler_index = sampler->planes[1].hw->index + 28;
+         desc[0].clamp_0_sampler_index_or_negative =
+            sampler->planes[1].hw->index + 28;
+
+         assert(desc[0].clamp_0_sampler_index_or_negative >= 0 &&
+                "we have a border colour");
 
          static_assert(sizeof(desc[0].border) == sizeof(sampler->custom_border),
                        "fixed format");
@@ -316,9 +326,7 @@ hk_UpdateDescriptorSets(VkDevice device, uint32_t descriptorWriteCount,
          }
       }
 
-      switch (src_binding_layout->type) {
-      case VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC:
-      case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC: {
+      if (vk_descriptor_type_is_dynamic(src_binding_layout->type)) {
          const uint32_t dst_dyn_start =
             dst_binding_layout->dynamic_buffer_index + copy->dstArrayElement;
          const uint32_t src_dyn_start =
@@ -326,10 +334,6 @@ hk_UpdateDescriptorSets(VkDevice device, uint32_t descriptorWriteCount,
          typed_memcpy(&dst->dynamic_buffers[dst_dyn_start],
                       &src->dynamic_buffers[src_dyn_start],
                       copy->descriptorCount);
-         break;
-      }
-      default:
-         break;
       }
    }
 }
@@ -419,7 +423,7 @@ hk_destroy_descriptor_pool(struct hk_device *dev,
       hk_descriptor_set_destroy(dev, pool, set);
 
    util_vma_heap_finish(&pool->heap);
-   agx_bo_unreference(pool->bo);
+   agx_bo_unreference(&dev->dev, pool->bo);
 
    vk_object_free(&dev->vk, pAllocator, pool);
 }
@@ -483,19 +487,19 @@ hk_CreateDescriptorPool(VkDevice _device,
    bo_size += HK_MIN_UBO_ALIGNMENT * pCreateInfo->maxSets;
 
    if (bo_size) {
-      pool->bo = agx_bo_create(&dev->dev, bo_size, 0, "Descriptor pool");
+      pool->bo = agx_bo_create(&dev->dev, bo_size, 0, 0, "Descriptor pool");
       if (!pool->bo) {
          hk_destroy_descriptor_pool(dev, pAllocator, pool);
          return vk_error(dev, VK_ERROR_OUT_OF_DEVICE_MEMORY);
       }
 
-      pool->mapped_ptr = pool->bo->ptr.cpu;
+      pool->mapped_ptr = agx_bo_map(pool->bo);
 
       /* The BO may be larger thanks to GPU page alignment.  We may as well
        * make that extra space available to the client.
        */
       assert(pool->bo->size >= bo_size);
-      util_vma_heap_init(&pool->heap, pool->bo->ptr.gpu, pool->bo->size);
+      util_vma_heap_init(&pool->heap, pool->bo->va->addr, pool->bo->size);
    } else {
       util_vma_heap_init(&pool->heap, 0, 0);
    }
@@ -513,9 +517,9 @@ hk_descriptor_pool_alloc(struct hk_descriptor_pool *pool, uint64_t size,
    if (addr == 0)
       return VK_ERROR_OUT_OF_POOL_MEMORY;
 
-   assert(addr >= pool->bo->ptr.gpu);
-   assert(addr + size <= pool->bo->ptr.gpu + pool->bo->size);
-   uint64_t offset = addr - pool->bo->ptr.gpu;
+   assert(addr >= pool->bo->va->addr);
+   assert(addr + size <= pool->bo->va->addr + pool->bo->size);
+   uint64_t offset = addr - pool->bo->va->addr;
 
    *addr_out = addr;
    *map_out = pool->mapped_ptr + offset;
@@ -528,8 +532,8 @@ hk_descriptor_pool_free(struct hk_descriptor_pool *pool, uint64_t addr,
                         uint64_t size)
 {
    assert(size > 0);
-   assert(addr >= pool->bo->ptr.gpu);
-   assert(addr + size <= pool->bo->ptr.gpu + pool->bo->size);
+   assert(addr >= pool->bo->va->addr);
+   assert(addr + size <= pool->bo->va->addr + pool->bo->size);
    util_vma_heap_free(&pool->heap, addr, size);
 }
 
@@ -557,7 +561,11 @@ hk_descriptor_set_create(struct hk_device *dev, struct hk_descriptor_pool *pool,
        (layout->binding[layout->binding_count - 1].flags &
         VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT)) {
       uint32_t stride = layout->binding[layout->binding_count - 1].stride;
-      set->size += stride * variable_count;
+
+      /* Off by one so we don't underallocate the end. Otherwise vkd3d-proton
+       * descriptor-performance underallocates.
+       */
+      set->size += stride * (variable_count + 1);
    }
 
    set->size = align64(set->size, HK_MIN_UBO_ALIGNMENT);

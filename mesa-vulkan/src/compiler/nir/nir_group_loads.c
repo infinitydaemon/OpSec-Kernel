@@ -289,8 +289,9 @@ static void
 handle_load_range(nir_instr **first, nir_instr **last,
                   nir_instr *current, unsigned max_distance)
 {
+   assert(!current || !*first || current->index >= (*first)->index);
    if (*first && *last &&
-       (!current || current->index > (*first)->index + max_distance)) {
+       (!current || current->index - (*first)->index > max_distance)) {
       assert(*first != *last);
       group_loads(*first, *last);
       set_instr_indices((*first)->block);
@@ -475,7 +476,7 @@ nir_group_loads(nir_shader *shader, nir_load_grouping grouping,
          process_block(block, grouping, max_distance);
       }
 
-      nir_metadata_preserve(impl, nir_metadata_control_flow |
-                                     nir_metadata_loop_analysis);
+      nir_progress(true, impl,
+                   nir_metadata_control_flow | nir_metadata_loop_analysis);
    }
 }

@@ -1,8 +1,6 @@
 # Copyright © 2021 Intel Corporation
 # SPDX-License-Identifier: MIT
 
-fs = import('fs')
-
 grl_lib_files = [
   'gpu/libs/libraries.grl',
 ]
@@ -83,7 +81,8 @@ foreach grl_file : grl_grl_files
 endforeach
 
 grl_genX_libs = []
-foreach t : [['125', 'gfx125', 'dg2'], ['200', 'gfx20', 'lnl'], ]
+foreach t : [['125', 'gfx125', 'dg2'], ['200', 'gfx20', 'lnl'],
+             ['300', 'gfx30', 'ptl'], ]
   verX10 = t[0]
   genX_prefix = t[1]
   platform = t[2]

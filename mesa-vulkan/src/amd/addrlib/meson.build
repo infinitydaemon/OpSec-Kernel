@@ -18,6 +18,8 @@ files_addrlib = files(
   'src/core/addrlib3.h',
   'src/core/addrobject.cpp',
   'src/core/addrobject.h',
+  'src/core/addrswizzler.cpp',
+  'src/core/addrswizzler.h',
   'src/core/coord.cpp',
   'src/core/coord.h',
   'src/gfx9/gfx9addrlib.cpp',
@@ -54,10 +56,16 @@ else
   cpp_args_addrlib += '-DBIGENDIAN_CPU'
 endif
 
+if with_mesa_ndebug
+  cpp_args_addrlib += '-DDEBUG=0'
+else
+  cpp_args_addrlib += '-DDEBUG=1'
+endif
+
 cpp_args_addrlib += cpp.get_supported_arguments(
   ['-Wno-unused-variable', '-Wno-unused-local-typedefs',
    '-Wno-unused-but-set-variable', '-Wno-maybe-uninitialized',
-   '-Wno-self-assign', '/wd4189']
+   '-Wno-self-assign', '/wd4189', '-Wno-uninitialized']
 )
 
 libamdgpu_addrlib = static_library(

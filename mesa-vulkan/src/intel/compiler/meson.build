@@ -21,6 +21,13 @@ intel_nir_files = files(
 )
 
 libintel_compiler_brw_files = files(
+  'brw_analysis.h',
+  'brw_analysis.cpp',
+  'brw_analysis_def.cpp',
+  'brw_analysis_liveness.cpp',
+  'brw_analysis_performance.cpp',
+  'brw_builder.cpp',
+  'brw_builder.h',
   'brw_cfg.cpp',
   'brw_cfg.h',
   'brw_compile_bs.cpp',
@@ -33,9 +40,7 @@ libintel_compiler_brw_files = files(
   'brw_compile_vs.cpp',
   'brw_compiler.c',
   'brw_compiler.h',
-  'brw_dead_control_flow.cpp',
   'brw_debug_recompile.c',
-  'brw_def_analysis.cpp',
   'brw_disasm.c',
   'brw_disasm_info.cpp',
   'brw_disasm_info.h',
@@ -43,48 +48,24 @@ libintel_compiler_brw_files = files(
   'brw_eu_compact.c',
   'brw_eu_defines.h',
   'brw_eu_emit.c',
+  'brw_eu_inst.h',
   'brw_eu.h',
   'brw_eu_validate.c',
-  'brw_fs_bank_conflicts.cpp',
-  'brw_fs_builder.h',
-  'brw_fs_cmod_propagation.cpp',
-  'brw_fs_combine_constants.cpp',
-  'brw_fs_copy_propagation.cpp',
-  'brw_fs.cpp',
-  'brw_fs_cse.cpp',
-  'brw_fs_dead_code_eliminate.cpp',
-  'brw_fs_generator.cpp',
-  'brw_fs.h',
-  'brw_fs_live_variables.cpp',
-  'brw_fs_live_variables.h',
-  'brw_fs_lower.cpp',
-  'brw_fs_lower_dpas.cpp',
-  'brw_fs_lower_integer_multiplication.cpp',
-  'brw_fs_lower_pack.cpp',
-  'brw_fs_lower_regioning.cpp',
-  'brw_fs_lower_simd_width.cpp',
-  'brw_fs_nir.cpp',
-  'brw_fs_opt.cpp',
-  'brw_fs_opt_algebraic.cpp',
-  'brw_fs_opt_virtual_grfs.cpp',
-  'brw_fs_reg_allocate.cpp',
-  'brw_fs_register_coalesce.cpp',
-  'brw_fs_saturate_propagation.cpp',
-  'brw_fs_scoreboard.cpp',
-  'brw_fs_sel_peephole.cpp',
-  'brw_fs_thread_payload.cpp',
-  'brw_fs_validate.cpp',
-  'brw_fs_visitor.cpp',
-  'brw_fs_workaround.cpp',
+  'brw_from_nir.cpp',
+  'brw_generator.cpp',
+  'brw_generator.h',
+  'brw_inst.cpp',
   'brw_inst.h',
-  'brw_ir.h',
-  'brw_ir_allocator.h',
-  'brw_ir_analysis.h',
-  'brw_ir_fs.h',
-  'brw_ir_performance.h',
-  'brw_ir_performance.cpp',
   'brw_isa_info.h',
+  'brw_lower.cpp',
+  'brw_lower_dpas.cpp',
+  'brw_lower_integer_multiplication.cpp',
   'brw_lower_logical_sends.cpp',
+  'brw_lower_pack.cpp',
+  'brw_lower_regioning.cpp',
+  'brw_lower_scoreboard.cpp',
+  'brw_lower_simd_width.cpp',
+  'brw_lower_subgroup_ops.cpp',
   'brw_nir.h',
   'brw_nir.c',
   'brw_nir_analyze_ubo_ranges.c',
@@ -96,22 +77,44 @@ libintel_compiler_brw_files = files(
   'brw_nir_lower_rt_intrinsics.c',
   'brw_nir_lower_shader_calls.c',
   'brw_nir_lower_storage_image.c',
+  'brw_nir_lower_texel_address.c',
+  'brw_nir_opt_fsat.c',
   'brw_nir_rt.h',
   'brw_nir_rt.c',
   'brw_nir_rt_builder.h',
+  'brw_opt.cpp',
+  'brw_opt_address_reg_load.cpp',
+  'brw_opt_algebraic.cpp',
+  'brw_opt_bank_conflicts.cpp',
+  'brw_opt_cmod_propagation.cpp',
+  'brw_opt_combine_constants.cpp',
+  'brw_opt_copy_propagation.cpp',
+  'brw_opt_cse.cpp',
+  'brw_opt_dead_code_eliminate.cpp',
+  'brw_opt_register_coalesce.cpp',
+  'brw_opt_saturate_propagation.cpp',
+  'brw_opt_txf_combiner.cpp',
+  'brw_opt_virtual_grfs.cpp',
   'brw_packed_float.c',
-  'brw_predicated_break.cpp',
   'brw_print.cpp',
   'brw_prim.h',
   'brw_private.h',
+  'brw_reg.cpp',
   'brw_reg.h',
+  'brw_reg_allocate.cpp',
   'brw_reg_type.c',
   'brw_reg_type.h',
   'brw_rt.h',
   'brw_schedule_instructions.cpp',
   'brw_shader.cpp',
+  'brw_shader.h',
   'brw_simd_selection.cpp',
+  'brw_spirv.c',
+  'brw_thread_payload.cpp',
+  'brw_thread_payload.h',
+  'brw_validate.cpp',
   'brw_vue_map.c',
+  'brw_workaround.cpp',
 )
 
 brw_device_sha1_gen_src = custom_target('brw_device_sha1_gen.c',
@@ -147,6 +150,7 @@ libintel_compiler_brw = static_library(
   [libintel_compiler_brw_files, intel_nir_files, brw_nir_lower_fsign, brw_nir_trig, ir_expression_operation_h, [brw_device_sha1_gen_src]],
   include_directories : [inc_include, inc_src, inc_intel],
   c_args : [no_override_init_args],
+  cpp_args : ['-Werror=vla'],
   gnu_symbol_visibility : 'hidden',
   dependencies : [idep_nir_headers, idep_mesautil, idep_intel_dev],
   build_by_default : false,
@@ -157,37 +161,44 @@ idep_intel_compiler_brw = declare_dependency(
   dependencies : [
     idep_nir,
     idep_mesautil,
+    idep_vtn,
   ],
 )
 
 # For now this tool is only going to be used by Anv
-if get_option('intel-clc') == 'system'
-  prog_intel_clc = find_program('intel_clc', native : true)
-  dep_prog_intel_clc = []
-elif with_intel_clc
-  prog_intel_clc = executable(
-    'intel_clc',
-    [
-      'intel_clc.c',
-      'brw_kernel.c',
+if with_intel_bvh_grl
+  if get_option('intel-clc') == 'system' or get_option('precomp-compiler') == 'system'
+    prog_intel_clc = find_program('intel_clc', native : true)
+    dep_prog_intel_clc = []
+  elif with_intel_clc
+    prog_intel_clc = executable(
+      'intel_clc',
+      [
+        'intel_clc.c',
+        'brw_kernel.c',
 
-      # Use just the nir_options part of ELK instead of fully linking.
-      'elk/elk_nir_options.h',
-      'elk/elk_nir_options.c',
-    ],
-    link_with : [libisl],
-    include_directories : [inc_include, inc_src, inc_intel],
-    c_args : [pre_args, no_override_init_args],
-    link_args : [ld_args_build_id],
-    dependencies : [idep_nir, idep_vtn, idep_mesaclc, idep_mesautil, idep_intel_dev,
-                    idep_intel_compiler_brw],
-    # If we can run host binaries directly, just build intel_clc for the host.
-    # Most commonly this happens when doing a cross compile from an x86_64 build
-    # machine to an x86 host
-    native : not meson.can_run_host_binaries(),
-    install : get_option('install-intel-clc'),
-  )
-  dep_prog_intel_clc = [prog_intel_clc]
+        # Use just the nir_options part of ELK instead of fully linking.
+        'elk/elk_nir_options.h',
+        'elk/elk_nir_options.c',
+        'elk/elk_spirv.c',
+      ],
+      link_with : [libisl],
+      include_directories : [inc_include, inc_src, inc_intel],
+      c_args : [pre_args, no_override_init_args],
+      cpp_args : ['-Werror=vla'],
+      link_args : [ld_args_build_id],
+      dependencies : [idep_nir, idep_mesaclc, idep_mesautil, idep_intel_dev,
+                      idep_intel_compiler_brw],
+      # If we can run host binaries directly, just build intel_clc for the host.
+      # Most commonly this happens when doing a cross compile from an x86_64 build
+      # machine to an x86 host
+      native : not meson.can_run_host_binaries(),
+      install : get_option('install-intel-clc') or get_option('install-precomp-compiler'),
+    )
+    dep_prog_intel_clc = [prog_intel_clc]
+  endif
+else
+  dep_prog_intel_clc = []
 endif
 
 if with_tests
@@ -196,20 +207,20 @@ if with_tests
     executable(
       'intel_compiler_brw_tests',
       files(
-        'test_predicated_break.cpp',
         'test_eu_compact.cpp',
         'test_eu_validate.cpp',
-        'test_fs_cmod_propagation.cpp',
-        'test_fs_combine_constants.cpp',
-        'test_fs_copy_propagation.cpp',
-        'test_fs_cse.cpp',
-        'test_fs_saturate_propagation.cpp',
-        'test_fs_scoreboard.cpp',
+        'test_lower_scoreboard.cpp',
+        'test_opt_cmod_propagation.cpp',
+        'test_opt_combine_constants.cpp',
+        'test_opt_copy_propagation.cpp',
+        'test_opt_cse.cpp',
+        'test_opt_saturate_propagation.cpp',
         'test_simd_selection.cpp',
         'test_vf_float_conversions.cpp',
       ),
       ir_expression_operation_h,
       include_directories : [inc_include, inc_src, inc_intel],
+      cpp_args : ['-Werror=vla'],
       link_with : libisl,
       dependencies : [idep_gtest, idep_nir, idep_mesautil, idep_intel_dev,
                       idep_intel_compiler_brw],
@@ -317,4 +328,8 @@ brw_disasm_tool = executable(
 
 endif
 
-subdir('elk')
+if with_intel_elk
+  subdir('elk')
+else
+  idep_intel_compiler_elk = null_dep
+endif

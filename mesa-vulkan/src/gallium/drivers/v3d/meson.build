@@ -16,6 +16,7 @@ files_libv3d = files(
   'v3d_program.c',
   'v3d_query.c',
   'v3d_query.h',
+  'v3d_query_perfcnt.c',
   'v3d_query_pipe.c',
   'v3d_resource.c',
   'v3d_resource.h',
@@ -29,7 +30,6 @@ files_per_version = files(
   'v3dx_emit.c',
   'v3dx_format_table.c',
   'v3dx_job.c',
-  'v3dx_query_perfcnt.c',
   'v3dx_rcl.c',
   'v3dx_state.c',
   'v3dx_tfu.c',
@@ -63,7 +63,7 @@ libv3d = static_library(
   ],
   include_directories : [
     inc_src, inc_include, inc_gallium, inc_gallium_aux, inc_broadcom,
-    inc_simulator, inc_gallium_drivers,
+    inc_gallium_drivers,
   ],
   c_args : [v3d_args],
   cpp_args : [v3d_args],
@@ -78,5 +78,5 @@ libv3d = static_library(
 driver_v3d = declare_dependency(
   compile_args : '-DGALLIUM_V3D',
   link_with : [libv3d, libv3dwinsys, libbroadcom_cle, libbroadcom_v3d],
-  dependencies : idep_nir,
+  dependencies : [idep_nir, idep_broadcom_perfcntrs],
 )

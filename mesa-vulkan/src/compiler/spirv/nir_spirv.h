@@ -25,7 +25,7 @@
 #define _NIR_SPIRV_H_
 
 #include "util/disk_cache.h"
-#include "compiler/nir/nir.h"
+#include "compiler/nir/nir_defines.h"
 #include "compiler/shader_info.h"
 
 #ifdef __cplusplus
@@ -76,7 +76,7 @@ struct spirv_to_nir_options {
     */
    bool mediump_16bit_alu;
 
-   /* When mediump_16bit_alu is set, determines whether nir_op_fddx/fddy can be
+   /* When mediump_16bit_alu is set, determines whether ddx/ddy can be
     * performed in 16-bit math.
     */
    bool mediump_16bit_derivatives;
@@ -89,6 +89,9 @@ struct spirv_to_nir_options {
 
    /* Whether or not printf is supported */
    bool printf;
+
+   /* Whether or not the driver wants consume debug information (Debugging purposes). */
+   bool debug_info;
 
    const struct spirv_capabilities *capabilities;
 
@@ -125,10 +128,18 @@ struct spirv_to_nir_options {
       void *private_data;
    } debug;
 
+   /* Whether debug_break instructions should be emitted. */
+   bool emit_debug_break;
+
    /* Force texture sampling to be non-uniform. */
    bool force_tex_non_uniform;
    /* Force SSBO accesses to be non-uniform. */
    bool force_ssbo_non_uniform;
+
+   /* Whether OpTerminateInvocation should be lowered to OpKill to workaround
+    * game bugs.
+    */
+   bool lower_terminate_to_discard;
 
    /* In Debug Builds, instead of emitting an OS break on failure, just return NULL from
     * spirv_to_nir().  This is useful for the unit tests that want to report a test failed
@@ -159,9 +170,7 @@ nir_shader *spirv_to_nir(const uint32_t *words, size_t word_count,
                          const struct spirv_to_nir_options *options,
                          const nir_shader_compiler_options *nir_options);
 
-bool
-spirv_library_to_nir_builder(FILE *fp, const uint32_t *words, size_t word_count,
-                             const struct spirv_to_nir_options *options);
+void spirv_print_asm(FILE *fp, const uint32_t *words, size_t word_count);
 
 #ifdef __cplusplus
 }

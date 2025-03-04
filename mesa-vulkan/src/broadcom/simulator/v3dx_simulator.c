@@ -31,8 +31,6 @@
  * we support.
  */
 
-#if USE_V3D_SIMULATOR
-
 #include <assert.h>
 #include <stdbool.h>
 #include <stdio.h>
@@ -314,14 +312,14 @@ v3dX(simulator_perfmon_get_counter_ioctl)(uint32_t perfcnt_total,
 
         counter = v3d_performance_counters[args->counter];
 
-        memcpy(args->name, counter[V3D_PERFCNT_NAME],
-               DRM_V3D_PERFCNT_MAX_NAME);
+        strncpy((char *)args->name, counter[V3D_PERFCNT_NAME],
+                DRM_V3D_PERFCNT_MAX_NAME);
 
-        memcpy(args->category, counter[V3D_PERFCNT_CATEGORY],
-               DRM_V3D_PERFCNT_MAX_CATEGORY);
+        strncpy((char *)args->category, counter[V3D_PERFCNT_CATEGORY],
+                DRM_V3D_PERFCNT_MAX_CATEGORY);
 
-        memcpy(args->description, counter[V3D_PERFCNT_DESCRIPTION],
-               DRM_V3D_PERFCNT_MAX_DESCRIPTION);
+        strncpy((char *)args->description, counter[V3D_PERFCNT_DESCRIPTION],
+                DRM_V3D_PERFCNT_MAX_DESCRIPTION);
 
         return 0;
 }
@@ -594,5 +592,3 @@ void v3dX(simulator_get_perfcnt_total)(uint32_t *count)
 {
         *count = ARRAY_SIZE(v3d_performance_counters);
 }
-
-#endif /* USE_V3D_SIMULATOR */

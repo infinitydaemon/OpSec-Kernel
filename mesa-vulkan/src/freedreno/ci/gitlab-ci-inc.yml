@@ -10,7 +10,11 @@
         - src/freedreno/ci/$GPU_VERSION-fails.txt
         - src/freedreno/ci/$GPU_VERSION-flakes.txt
         - src/freedreno/ci/$GPU_VERSION-skips.txt
+        - src/freedreno/ci/$GPU_VERSION-slow-skips.txt
         - src/freedreno/ci/$PIGLIT_TRACES_FILE
+        - src/freedreno/ci/$GPU_VERSION-vkd3d-fails.txt
+        - src/freedreno/ci/$GPU_VERSION-vkd3d-flakes.txt
+        - src/freedreno/ci/$GPU_VERSION-vkd3d-skips.txt
         - src/freedreno/common/**/*
         - src/freedreno/drm/**/*
         - src/freedreno/fdl/**/*
@@ -28,101 +32,99 @@
         *freedreno_core_file_list
       when: manual
 
-
-# Two different farms (Google Freedreno and Collabora farm)
-.google-freedreno-rules:
-  stage: freedreno
+.freedreno-rules:
   rules:
-    - !reference [.test, rules]
-    - !reference [.freedreno-farm-rules, rules]
     - !reference [.freedreno-common-rules, rules]
     - !reference [.gl-rules, rules]
-    - changes: &freedreno_gl_file_list
+    - changes: &freedreno_file_list
         - src/freedreno/ir2/**/*
         - src/gallium/drivers/freedreno/**/*
         - src/gallium/winsys/freedreno/**/*
       when: on_success
+
+.freedreno-manual-rules:
+  rules:
+    - !reference [.freedreno-common-manual-rules, rules]
+    - !reference [.gl-manual-rules, rules]
+    - changes: *freedreno_file_list
+      when: manual
+
+.turnip-rules:
+  rules:
+    - !reference [.freedreno-common-rules, rules]
+    - !reference [.vulkan-rules, rules]
+    - changes: &turnip_file_list
+        - src/freedreno/vulkan/**/*
+      when: on_success
+
+.turnip-manual-rules:
+  rules:
+    - !reference [.freedreno-common-manual-rules, rules]
+    - !reference [.vulkan-manual-rules, rules]
+    - changes: *turnip_file_list
+      when: manual
+
+
+.google-freedreno-rules:
+  stage: freedreno
+  rules:
+    - !reference [.test, rules]
+    - !reference [.google-freedreno-farm-rules, rules]
+    - !reference [.freedreno-rules, rules]
 
 .collabora-freedreno-rules:
   stage: freedreno
   rules:
     - !reference [.test, rules]
     - !reference [.collabora-farm-rules, rules]
-    - !reference [.freedreno-common-rules, rules]
-    - !reference [.gl-rules, rules]
-    - changes:
-        *freedreno_gl_file_list
-      when: on_success
+    - !reference [.freedreno-rules, rules]
 
 .google-freedreno-manual-rules:
-  stage: freedreno
+  stage: freedreno-postmerge
   extends: .no-auto-retry
   rules:
     - !reference [.test, rules]
-    - !reference [.freedreno-farm-manual-rules, rules]
-    - !reference [.freedreno-common-manual-rules, rules]
-    - !reference [.gl-manual-rules, rules]
-    - changes:
-        *freedreno_gl_file_list
-      when: manual
+    - !reference [.google-freedreno-farm-manual-rules, rules]
+    - !reference [.freedreno-manual-rules, rules]
 
 .collabora-freedreno-manual-rules:
-  stage: freedreno
+  stage: freedreno-postmerge
   extends: .no-auto-retry
   rules:
     - !reference [.test, rules]
     - !reference [.collabora-farm-manual-rules, rules]
-    - !reference [.freedreno-common-manual-rules, rules]
-    - !reference [.gl-manual-rules, rules]
-    - changes:
-        *freedreno_gl_file_list
-      when: manual
+    - !reference [.freedreno-manual-rules, rules]
 
 
 .google-turnip-rules:
   stage: freedreno
   rules:
     - !reference [.test, rules]
-    - !reference [.freedreno-farm-rules, rules]
-    - !reference [.freedreno-common-rules, rules]
-    - !reference [.vulkan-rules, rules]
-    - changes: &freedreno_vulkan_file_list
-        - src/freedreno/vulkan/**/*
-      when: on_success
+    - !reference [.google-freedreno-farm-rules, rules]
+    - !reference [.turnip-rules, rules]
 
 .collabora-turnip-rules:
   stage: freedreno
   rules:
     - !reference [.test, rules]
     - !reference [.collabora-farm-rules, rules]
-    - !reference [.freedreno-common-rules, rules]
-    - !reference [.vulkan-rules, rules]
-    - changes: *freedreno_vulkan_file_list
-      when: on_success
+    - !reference [.turnip-rules, rules]
 
 .google-turnip-manual-rules:
-  stage: freedreno
+  stage: freedreno-postmerge
   extends: .no-auto-retry
   rules:
     - !reference [.test, rules]
-    - !reference [.freedreno-farm-manual-rules, rules]
-    - !reference [.freedreno-common-manual-rules, rules]
-    - !reference [.vulkan-manual-rules, rules]
-    - changes:
-        *freedreno_vulkan_file_list
-      when: manual
+    - !reference [.google-freedreno-farm-manual-rules, rules]
+    - !reference [.turnip-manual-rules, rules]
 
 .collabora-turnip-manual-rules:
-  stage: freedreno
+  stage: freedreno-postmerge
   extends: .no-auto-retry
   rules:
     - !reference [.test, rules]
     - !reference [.collabora-farm-manual-rules, rules]
-    - !reference [.freedreno-common-manual-rules, rules]
-    - !reference [.vulkan-manual-rules, rules]
-    - changes:
-        *freedreno_vulkan_file_list
-      when: manual
+    - !reference [.turnip-manual-rules, rules]
 
 # For piglit and skqp test jobs that run both GL and VK tests.
 .google-freedreno-turnip-rules:
@@ -133,7 +135,8 @@
     - !reference [.google-turnip-rules, rules]
 
 .google-freedreno-turnip-manual-rules:
-  stage: freedreno
+  stage: freedreno-postmerge
+  extends: .no-auto-retry
   rules:
     - !reference [.test, rules]
     - !reference [.google-freedreno-manual-rules, rules]
@@ -147,23 +150,28 @@
     - !reference [.collabora-turnip-rules, rules]
 
 .collabora-freedreno-turnip-manual-rules:
-  stage: freedreno
+  stage: freedreno-postmerge
+  extends: .no-auto-retry
   rules:
     - !reference [.test, rules]
     - !reference [.collabora-freedreno-manual-rules, rules]
     - !reference [.collabora-turnip-manual-rules, rules]
 
-.valve-freedreno-turnip-manual-rules:
-  stage: freedreno
+.valve-freedreno-manual-rules:
+  stage: freedreno-postmerge
   extends: .no-auto-retry
   rules:
     - !reference [.test, rules]
     - !reference [.valve-farm-manual-rules, rules]
-    - !reference [.freedreno-common-manual-rules, rules]
-    - !reference [.vulkan-manual-rules, rules]
-    - changes:
-        *freedreno_vulkan_file_list
-      when: manual
+    - !reference [.freedreno-manual-rules, rules]
+
+.valve-turnip-manual-rules:
+  stage: freedreno-postmerge
+  extends: .no-auto-retry
+  rules:
+    - !reference [.test, rules]
+    - !reference [.valve-farm-manual-rules, rules]
+    - !reference [.turnip-manual-rules, rules]
 
 .google-freedreno-rules-restricted:
   stage: freedreno
@@ -180,7 +188,7 @@
     - !reference [.collabora-freedreno-rules, rules]
 
 .google-freedreno-rules-performance:
-  stage: freedreno
+  stage: performance
   extends: .no-auto-retry
   rules:
     - !reference [.test, rules]
@@ -196,7 +204,7 @@
   dependencies: null
 
 .collabora-freedreno-rules-performance:
-  stage: freedreno
+  stage: performance
   extends: .no-auto-retry
   rules:
     - !reference [.test, rules]
@@ -206,7 +214,8 @@
   variables:
     JOB_PRIORITY: 40
     # Ensure that we are using the release build artifact
-    S3_ARTIFACT_NAME: mesa-arm64-default-release
+    LAVA_S3_ARTIFACT_NAME: mesa-arm64-default-release
+    S3_ARTIFACT_NAME: mesa-python-ci-artifacts
   needs:
     - debian/x86_64_build
     - debian-arm64-release
@@ -276,15 +285,6 @@
   script:
     - ./install/bare-metal/fastboot.sh
 
-.baremetal-deqp-test-freedreno-vk:
-  extends:
-    - .baremetal-deqp-test
-  variables:
-    DEQP_VER: vk
-    # Increase the hangcheck timer for our spilling tests which bump up against
-    # the .5s default.
-    FREEDRENO_HANGCHECK_MS: 2000
-
 .google-freedreno-test-traces:
   extends:
     - .piglit-traces-test
@@ -301,9 +301,9 @@
     - .google-freedreno-test
   variables:
     BM_KERNEL: Image.gz
-    BM_DTB: apq8016-sbc
-    DEVICE_TYPE: apq8016-sbc
-    GPU_VERSION: freedreno-a307
+    BM_DTB: apq8016-sbc-usb-host
+    DEVICE_TYPE: apq8016-sbc-usb-host
+    GPU_VERSION: freedreno-a306
   timeout: 20m
   tags:
     - google-freedreno-db410c
@@ -320,28 +320,6 @@
   timeout: 20m
   tags:
     - google-freedreno-db820c
-
-# piglit and piglit_gl since it takes a bit under 20 minutes and has a lot of flakes, so
-# leave it as manual.  The shader_tests are in the main a530_gl suite.
-#
-# Disabled for now because something reliably takes out the board 19-20 minutes in,
-# and then it reboots and tries again until the job timeout.
-.a530_piglit:
-  extends:
-    - .baremetal-deqp-test
-    - .a530-test
-  parallel: 2
-  variables:
-    DEQP_SUITE: freedreno-a530-piglit
-    HWCI_START_WESTON: 1
-
-.a530_piglit_gl:
-  extends:
-    - .a530_piglit
-    - .google-freedreno-manual-rules
-  parallel: null
-  variables:
-    PIGLIT_PROFILES: quick_gl
 
 # 6 devices (2023-07-06)
 .a630-test:
@@ -365,25 +343,24 @@
 
 # CI-tron
 
-.b2c-freedreno-vk-test:
-  stage: freedreno
-  extends:
-    - .b2c-arm64-test-vk
-  variables:
-    VK_DRIVER: freedreno
-
 .a750-mupuf:
   variables:
     FDO_CI_CONCURRENT: 8
     RUNNER_FARM_LOCATION: mupuf
-    B2C_KERNEL_URL: 'https://fs.mupuf.org/hdk8650/linux-6.8-hdk8650.gz'
-    B2C_INITRAMFS_URL: 'https://fs.mupuf.org/hdk8650/initramfs.linux_arm64.cpio.xz'
-    B2C_DTB_URL: 'https://fs.mupuf.org/hdk8650/sm8650-hdk.dtb'
+    B2C_MARS_SETUP_TAGS: dt_gpu:codename:a750
+    B2C_KERNEL_URL: 'https://fs.mupuf.org/hdk8650/2025-01-23-msm-gpu-fault-fixes-msm-next-6dbabc6/linux-arm64'
+    B2C_FIRMWARE_URL: 'https://fs.mupuf.org/hdk8650/sm8650-hdk-firmware.cpio.xz'
+    B2C_DTB_URL: 'https://fs.mupuf.org/hdk8650/2025-01-23-msm-gpu-fault-fixes-msm-next-6dbabc6/linux-arm64.dtbs.cpio.xz'
+    B2C_DTB_MATCH: 'boot/dtbs/qcom/sm8650-hdk.dtb'
     B2C_KERNEL_CMDLINE_EXTRAS: 'b2c.swap=16g'
-    B2C_SESSION_REBOOT_REGEX: 'Sahara Open\r?$'
     B2C_TIMEOUT_FIRST_CONSOLE_ACTIVITY_SECONDS: 30
     B2C_TIMEOUT_FIRST_CONSOLE_ACTIVITY_RETRIES: 3
+    B2C_TIMEOUT_BOOT_WD_SECONDS: 20
+    B2C_TIMEOUT_BOOT_WD_RETRIES: 5
+    B2C_BOOT_WD_START_REGEX: 'VB: RWDeviceState: Succeed using devinfo!'  # A line repeated during firmware boot
+    B2C_BOOT_WD_STOP_REGEX: 'CPU features: detected:'                     # A line repeated during Linux boot
     GPU_VERSION: freedreno-a750
+    VK_DRIVER: freedreno
   tags:
     - farm:$RUNNER_FARM_LOCATION
-    - dt_gpu:codename:a750
+    - $B2C_MARS_SETUP_TAGS

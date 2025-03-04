@@ -34,6 +34,8 @@ files_etnaviv = files(
   'etnaviv_internal.h',
   'etnaviv_ml.c',
   'etnaviv_ml.h',
+  'etnaviv_ml_nn_v7.c',
+  'etnaviv_ml_nn_v8.c',
   'etnaviv_ml_nn.c',
   'etnaviv_ml_nn.h',
   'etnaviv_ml_tp.c',
@@ -87,7 +89,7 @@ files_etnaviv = files(
 
 libetnaviv = static_library(
   'etnaviv',
-  files_etnaviv, enums_h,
+  files_etnaviv, etnaviv_enums_h,
   gnu_symbol_visibility : 'hidden',
   include_directories : [
     inc_include, inc_src, inc_gallium, inc_gallium_aux, inc_etnaviv,

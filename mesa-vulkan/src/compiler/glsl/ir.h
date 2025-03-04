@@ -201,17 +201,6 @@ public:
    #undef AS_CHILD
    /*@}*/
 
-   /**
-    * IR equality method: Return true if the referenced instruction would
-    * return the same value as this one.
-    *
-    * This intended to be used for CSE and algebraic optimizations, on rvalues
-    * in particular.  No support for other instruction types (assignments,
-    * jumps, calls, etc.) is planned.
-    */
-   virtual bool equals(const ir_instruction *ir,
-                       enum ir_node_type ignore = ir_type_unset) const;
-
 protected:
    ir_instruction(enum ir_node_type t)
       : ir_type(t)
@@ -281,7 +270,7 @@ public:
     * for vector and scalar types that have all elements set to the value
     * zero (or \c false for booleans).
     *
-    * \sa ir_constant::has_value, ir_rvalue::is_one, ir_rvalue::is_negative_one
+    * \sa ir_constant::has_value, ir_rvalue::is_one
     */
    virtual bool is_zero() const;
 
@@ -293,29 +282,9 @@ public:
     * for vector and scalar types that have all elements set to the value
     * one (or \c true for booleans).
     *
-    * \sa ir_constant::has_value, ir_rvalue::is_zero, ir_rvalue::is_negative_one
+    * \sa ir_constant::has_value, ir_rvalue::is_zero
     */
    virtual bool is_one() const;
-
-   /**
-    * Determine if an r-value has the value negative one
-    *
-    * The base implementation of this function always returns \c false.  The
-    * \c ir_constant class over-rides this function to return \c true \b only
-    * for vector and scalar types that have all elements set to the value
-    * negative one.  For boolean types, the result is always \c false.
-    *
-    * \sa ir_constant::has_value, ir_rvalue::is_zero, ir_rvalue::is_one
-    */
-   virtual bool is_negative_one() const;
-
-   /**
-    * Determine if an r-value is an unsigned integer constant which can be
-    * stored in 16 bits.
-    *
-    * \sa ir_constant::is_uint16_constant.
-    */
-   virtual bool is_uint16_constant() const { return false; }
 
    /**
     * Return a generic value of error_type.
@@ -620,13 +589,6 @@ public:
     * Enable emitting extension warnings for this variable
     */
    void enable_extension_warning(const char *extension);
-
-   /**
-    * Get the extension warning string for this variable
-    *
-    * If warnings are not enabled, \c NULL is returned.
-    */
-   const char *get_extension_warning() const;
 
    /**
     * Declared type of the variable
@@ -1126,12 +1088,68 @@ enum ir_intrinsic_id {
    ir_intrinsic_vote_any,
    ir_intrinsic_vote_eq,
    ir_intrinsic_ballot,
+   ir_intrinsic_inverse_ballot,
+   ir_intrinsic_ballot_bit_extract,
+   ir_intrinsic_ballot_bit_count,
+   ir_intrinsic_ballot_inclusive_bit_count,
+   ir_intrinsic_ballot_exclusive_bit_count,
+   ir_intrinsic_ballot_find_lsb,
+   ir_intrinsic_ballot_find_msb,
    ir_intrinsic_read_invocation,
    ir_intrinsic_read_first_invocation,
 
    ir_intrinsic_helper_invocation,
 
    ir_intrinsic_is_sparse_texels_resident,
+
+   ir_intrinsic_subgroup_barrier,
+   ir_intrinsic_subgroup_memory_barrier,
+   ir_intrinsic_subgroup_memory_barrier_buffer,
+   ir_intrinsic_subgroup_memory_barrier_shared,
+   ir_intrinsic_subgroup_memory_barrier_image,
+   ir_intrinsic_elect,
+
+   ir_intrinsic_shuffle,
+   ir_intrinsic_shuffle_xor,
+   ir_intrinsic_shuffle_up,
+   ir_intrinsic_shuffle_down,
+
+   ir_intrinsic_reduce_add,
+   ir_intrinsic_reduce_mul,
+   ir_intrinsic_reduce_min,
+   ir_intrinsic_reduce_max,
+   ir_intrinsic_reduce_and,
+   ir_intrinsic_reduce_or,
+   ir_intrinsic_reduce_xor,
+
+   ir_intrinsic_inclusive_add,
+   ir_intrinsic_inclusive_mul,
+   ir_intrinsic_inclusive_min,
+   ir_intrinsic_inclusive_max,
+   ir_intrinsic_inclusive_and,
+   ir_intrinsic_inclusive_or,
+   ir_intrinsic_inclusive_xor,
+
+   ir_intrinsic_exclusive_add,
+   ir_intrinsic_exclusive_mul,
+   ir_intrinsic_exclusive_min,
+   ir_intrinsic_exclusive_max,
+   ir_intrinsic_exclusive_and,
+   ir_intrinsic_exclusive_or,
+   ir_intrinsic_exclusive_xor,
+
+   ir_intrinsic_clustered_add,
+   ir_intrinsic_clustered_mul,
+   ir_intrinsic_clustered_min,
+   ir_intrinsic_clustered_max,
+   ir_intrinsic_clustered_and,
+   ir_intrinsic_clustered_or,
+   ir_intrinsic_clustered_xor,
+
+   ir_intrinsic_quad_broadcast,
+   ir_intrinsic_quad_swap_horizontal,
+   ir_intrinsic_quad_swap_vertical,
+   ir_intrinsic_quad_swap_diagonal,
 };
 
 /*@{*/
@@ -1313,6 +1331,8 @@ public:
     */
    ir_function_signature *matching_signature(_mesa_glsl_parse_state *state,
                                              const exec_list *actual_param,
+                                             bool has_implicit_conversions,
+                                             bool has_implicit_int_to_uint_conversion,
                                              bool allow_builtins,
 					     bool *match_is_exact);
 
@@ -1322,6 +1342,8 @@ public:
     */
    ir_function_signature *matching_signature(_mesa_glsl_parse_state *state,
                                              const exec_list *actual_param,
+                                             bool has_implicit_conversions,
+                                             bool has_implicit_int_to_uint_conversion,
                                              bool allow_builtins);
 
    /**
@@ -1518,9 +1540,6 @@ public:
     */
    ir_expression(int op, ir_rvalue *op0, ir_rvalue *op1, ir_rvalue *op2);
 
-   virtual bool equals(const ir_instruction *ir,
-                       enum ir_node_type ignore = ir_type_unset) const;
-
    virtual ir_expression *clone(void *mem_ctx, struct hash_table *ht) const;
 
    /**
@@ -1554,11 +1573,6 @@ public:
              operation == ir_triop_vector_insert ||
              operation == ir_quadop_vector;
    }
-
-   /**
-    * Do a reverse-lookup to translate the given string into an operator.
-    */
-   static ir_expression_operation get_operator(const char *);
 
    virtual void accept(ir_visitor *v)
    {
@@ -1871,9 +1885,6 @@ public:
 
    virtual ir_visitor_status accept(ir_hierarchical_visitor *);
 
-   virtual bool equals(const ir_instruction *ir,
-                       enum ir_node_type ignore = ir_type_unset) const;
-
    /**
     * Return a string representing the ir_texture_opcode.
     */
@@ -1881,11 +1892,6 @@ public:
 
    /** Set the sampler and type. */
    void set_sampler(ir_dereference *sampler, const glsl_type *type);
-
-   /**
-    * Do a reverse-lookup to translate a string into an ir_texture_opcode.
-    */
-   static ir_texture_opcode get_opcode(const char *);
 
    enum ir_texture_opcode op;
 
@@ -1980,9 +1986,6 @@ public:
 
    virtual ir_visitor_status accept(ir_hierarchical_visitor *);
 
-   virtual bool equals(const ir_instruction *ir,
-                       enum ir_node_type ignore = ir_type_unset) const;
-
    bool is_lvalue(const struct _mesa_glsl_parse_state *state) const
    {
       return val->is_lvalue(state) && !mask.has_duplicates;
@@ -2041,9 +2044,6 @@ public:
    virtual ir_constant *constant_expression_value(void *mem_ctx,
                                                   struct hash_table *variable_context = NULL);
 
-   virtual bool equals(const ir_instruction *ir,
-                       enum ir_node_type ignore = ir_type_unset) const;
-
    /**
     * Get the variable that is ultimately referenced by an r-value
     */
@@ -2093,10 +2093,6 @@ public:
 
    virtual ir_constant *constant_expression_value(void *mem_ctx,
                                                   struct hash_table *variable_context = NULL);
-
-   virtual bool equals(const ir_instruction *ir,
-                       enum ir_node_type ignore = ir_type_unset) const;
-
    /**
     * Get the variable that is ultimately referenced by an r-value
     */
@@ -2234,9 +2230,6 @@ public:
 
    virtual ir_visitor_status accept(ir_hierarchical_visitor *);
 
-   virtual bool equals(const ir_instruction *ir,
-                       enum ir_node_type ignore = ir_type_unset) const;
-
    /**
     * Get a particular component of a constant as a specific type
     *
@@ -2302,15 +2295,6 @@ public:
    virtual bool is_value(float f, int i) const;
    virtual bool is_zero() const;
    virtual bool is_one() const;
-   virtual bool is_negative_one() const;
-
-   /**
-    * Return true for constants that could be stored as 16-bit unsigned values.
-    *
-    * Note that this will return true even for signed integer ir_constants, as
-    * long as the value is non-negative and fits in 16-bits.
-    */
-   virtual bool is_uint16_constant() const;
 
    /**
     * Value of the constant.

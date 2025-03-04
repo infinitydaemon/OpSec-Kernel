@@ -40,7 +40,8 @@
 
 #include "util/u_prim.h"
 
-#define PAN_GPU_INDIRECTS (PAN_ARCH == 7 || PAN_ARCH >= 10)
+#define PAN_GPU_SUPPORTS_DISPATCH_INDIRECT (PAN_ARCH == 7 || PAN_ARCH >= 10)
+#define PAN_GPU_SUPPORTS_DRAW_INDIRECT     (PAN_ARCH >= 10)
 
 struct panfrost_rasterizer {
    struct pipe_rasterizer_state base;
@@ -91,6 +92,12 @@ struct panfrost_vertex_state {
    struct pan_vertex_buffer buffers[PIPE_MAX_ATTRIBS];
    unsigned element_buffer[PIPE_MAX_ATTRIBS];
    unsigned nr_bufs;
+
+   /* Bitmask flagging attributes with a non-zero instance divisor which
+    * require an attribute offset adjustment when base_instance != 0.
+    * This is used to force attributes re-emission even if the vertex state
+    * isn't dirty to take the new base instance into account. */
+   uint32_t attr_depends_on_base_instance_mask;
 
    unsigned formats[PIPE_MAX_ATTRIBS];
 #endif
@@ -152,7 +159,8 @@ panfrost_overdraw_alpha(const struct panfrost_context *ctx, bool zero)
 
 static inline void
 panfrost_emit_primitive_size(struct panfrost_context *ctx, bool points,
-                             mali_ptr size_array, void *prim_size)
+                             uint64_t size_array,
+                             struct mali_primitive_size_packed *prim_size)
 {
    struct panfrost_rasterizer *rast = ctx->rasterizer;
 
@@ -160,7 +168,7 @@ panfrost_emit_primitive_size(struct panfrost_context *ctx, bool points,
       if (panfrost_writes_point_size(ctx)) {
          cfg.size_array = size_array;
       } else {
-         cfg.constant = points ? rast->base.point_size : rast->base.line_width;
+         cfg.fixed_sized = points ? rast->base.point_size : rast->base.line_width;
       }
    }
 }
@@ -234,12 +242,12 @@ panfrost_fs_required(struct panfrost_compiled_shader *fs,
 }
 
 #if PAN_ARCH >= 9
-static inline mali_ptr
+static inline uint64_t
 panfrost_get_position_shader(struct panfrost_batch *batch,
                              const struct pipe_draw_info *info)
 {
    /* IDVS/points vertex shader */
-   mali_ptr vs_ptr = batch->rsd[PIPE_SHADER_VERTEX];
+   uint64_t vs_ptr = batch->rsd[PIPE_SHADER_VERTEX];
 
    /* IDVS/triangle vertex shader */
    if (vs_ptr && info->mode != MESA_PRIM_POINTS)
@@ -248,7 +256,7 @@ panfrost_get_position_shader(struct panfrost_batch *batch,
    return vs_ptr;
 }
 
-static inline mali_ptr
+static inline uint64_t
 panfrost_get_varying_shader(struct panfrost_batch *batch)
 {
    return batch->rsd[PIPE_SHADER_VERTEX] + (2 * pan_size(SHADER_PROGRAM));
@@ -267,7 +275,7 @@ panfrost_vertex_attribute_stride(struct panfrost_compiled_shader *vs,
    return slots * 16;
 }
 
-static inline mali_ptr
+static inline uint64_t
 panfrost_emit_resources(struct panfrost_batch *batch,
                         enum pipe_shader_type stage)
 {
@@ -280,6 +288,9 @@ panfrost_emit_resources(struct panfrost_batch *batch,
     */
    T = pan_pool_alloc_aligned(&batch->pool.base, nr_tables * pan_size(RESOURCE),
                               64);
+   if (!T.cpu)
+      return 0;
+
    memset(T.cpu, 0, nr_tables * pan_size(RESOURCE));
 
    panfrost_make_resource_table(T, PAN_TABLE_UBO, batch->uniform_buffers[stage],
@@ -304,6 +315,9 @@ panfrost_emit_resources(struct panfrost_batch *batch,
                                    batch->attrib_bufs[stage],
                                    util_last_bit(ctx->vb_mask));
    }
+
+   panfrost_make_resource_table(T, PAN_TABLE_SSBO, batch->ssbos[stage],
+                                util_last_bit(ctx->ssbo_mask[stage]));
 
    return T.gpu | nr_tables;
 }
