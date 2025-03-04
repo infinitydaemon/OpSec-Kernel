@@ -1,14 +1,6 @@
 `Mesa <https://mesa3d.org>`_ - The 3D Graphics Library
 ======================================================
 
-
-Source
-------
-
-This repository lives at https://gitlab.freedesktop.org/mesa/mesa.
-Other repositories are likely forks, and code found there is not supported.
-
-
 Build & install
 ---------------
 
