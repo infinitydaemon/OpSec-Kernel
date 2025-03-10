@@ -1,0 +1,87 @@
+Sign a ZerOS image for Secure Boot on the Zymbit Edge Node 400 (SCM4)
+--------------------------------------------------------------------
+Follow these steps:
+
+1. Prerequisites
+
+Before signing your ZerOS, make sure you have:
+A working Zymbit Edge Node 400
+A ZerOS OS image (.img file)
+Access to Zymbit’s Secure Boot tools (zboot or bootware)
+A trusted keypair for signing
+
+2. Generate Secure Boot Keys (If Not Already Setup)
+Zymbit Secure Boot requires a trusted keypair. 
+
+Generate one:
+
+openssl genpkey -algorithm RSA -out secureboot_private.pem -pkeyopt rsa_keygen_bits:2048
+openssl rsa -in secureboot_private.pem -pubout -out secureboot_public.pem
+
+This creates:
+
+secureboot_private.pem → Used to sign images (Keep this as secret!)
+secureboot_public.pem → Used to verify boot images (Load this onto SCM4)
+
+3. Embed the Public Key in the SCM4 Secure Bootloader
+To allow your board to recognize your signed OS, install the public key:
+
+sudo zboot --install-key secureboot_public.pem
+
+This step may require root privileges. If zboot is not found, check your Zymbit firmware documentation.
+
+4. Sign Your Custom OS Image
+
+Now, sign your OS image using zboot:
+
+zboot --sign-image <your-image.img> --key secureboot_private.pem --output <signed-image.img>
+
+This ensures that only your signed image will boot on the Edge Node 400.
+
+
+Flash a New Image on Zymbit Edge Node 400
+----------------------------------------
+1. Boot into USB Recovery Mode
+
+Unlike some SCM4 setups, the Edge Node 400 should automatically enter recovery mode when no valid OS is found. If needed, force it into USB recovery:
+
+* Power off the device.
+* Hold down the BOOTSEL button (if available) on the Edge Node 400.
+* Connect it to your Linux PC via USB while holding the button.
+* The device should now appear as a USB mass storage drive (/dev/sdX).
+
+If no BOOTSEL button is available, try just powering the device via USB and checking lsblk to see if it appears.
+
+2. Flash the Image
+
+Once the device is recognized, use one of these methods:
+
+Option 1: Using dd (Simpler)
+
+sudo dd if=<your-image-file.img> of=/dev/sdX bs=4M status=progress
+sync
+
+(Replace /dev/sdX with the correct USB device name.)
+
+3. Reboot and Verify
+
+Safely eject the device:
+
+sudo eject /dev/sdX
+
+Power cycle the Edge Node 400.
+
+Connect via SSH or check its status via UART.
+
+Troubleshooting
+
+a. Device doesn’t show up as USB storage?
+
+Try a different USB port or cable.
+Make sure the board is fully powered before checking lsblk.
+Check dmesg | tail -20 for any connection errors.
+
+b. Flashing completes, but the device doesn’t boot?
+
+Your image might not be properly signed if Secure Boot is enabled.
+Try flashing a Zymbit-provided recovery image first.
