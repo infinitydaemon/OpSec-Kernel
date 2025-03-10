@@ -1,3 +1,5 @@
+This guide is strictly a Work in Progress and needs to be verified first!!!!
+
 Sign a ZerOS image for Secure Boot on the Zymbit Edge Node 400 (SCM4)
 --------------------------------------------------------------------
 Follow these steps:
