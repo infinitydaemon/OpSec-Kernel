@@ -5,6 +5,7 @@
 #ifndef _VC4_DRV_H_
 #define _VC4_DRV_H_
 
+#include <linux/debugfs.h>
 #include <linux/delay.h>
 #include <linux/of.h>
 #include <linux/refcount.h>
@@ -23,7 +24,6 @@
 #include <kunit/test-bug.h>
 
 #include "uapi/drm/vc4_drm.h"
-#include "vc4_regs.h"
 
 struct drm_device;
 struct drm_gem_object;
@@ -78,13 +78,14 @@ struct vc4_perfmon {
 	 * Note that counter values can't be reset, but you can fake a reset by
 	 * destroying the perfmon and creating a new one.
 	 */
-	u64 counters[];
+	u64 counters[] __counted_by(ncounters);
 };
 
 enum vc4_gen {
 	VC4_GEN_4,
 	VC4_GEN_5,
-	VC4_GEN_6,
+	VC4_GEN_6_C,
+	VC4_GEN_6_D,
 };
 
 struct vc4_dev {
@@ -92,7 +93,6 @@ struct vc4_dev {
 	struct device *dev;
 
 	enum vc4_gen gen;
-	bool step_d0;
 
 	unsigned int irq;
 
@@ -556,17 +556,6 @@ struct drm_encoder *vc4_find_encoder_by_type(struct drm_device *drm,
 	return NULL;
 }
 
-struct vc5_gamma_entry {
-	u32 x_c_terms;
-	u32 grad_term;
-};
-
-#define VC5_HVS_SET_GAMMA_ENTRY(x, c, g) (struct vc5_gamma_entry){	\
-	.x_c_terms = VC4_SET_FIELD((x), SCALER5_DSPGAMMA_OFF_X) | 	\
-		     VC4_SET_FIELD((c), SCALER5_DSPGAMMA_OFF_C),	\
-	.grad_term = (g)						\
-}
-
 struct vc4_crtc_data {
 	const char *name;
 
@@ -626,19 +615,9 @@ struct vc4_crtc {
 	/* Timestamp at start of vblank irq - unaffected by lock delays. */
 	ktime_t t_vblank;
 
-	union {
-		struct {  /* VC4 gamma LUT */
-			u8 lut_r[256];
-			u8 lut_g[256];
-			u8 lut_b[256];
-		};
-		struct {  /* VC5 gamma PWL entries */
-			struct vc5_gamma_entry pwl_r[SCALER5_DSPGAMMA_NUM_POINTS];
-			struct vc5_gamma_entry pwl_g[SCALER5_DSPGAMMA_NUM_POINTS];
-			struct vc5_gamma_entry pwl_b[SCALER5_DSPGAMMA_NUM_POINTS];
-			struct vc5_gamma_entry pwl_a[SCALER5_DSPGAMMA_NUM_POINTS];
-		};
-	};
+	u8 lut_r[256];
+	u8 lut_g[256];
+	u8 lut_b[256];
 
 	struct drm_pending_vblank_event *event;
 
@@ -688,9 +667,6 @@ vc4_crtc_to_vc4_pv_data(const struct vc4_crtc *crtc)
 
 	return container_of_const(data, struct vc4_pv_data, base);
 }
-
-struct drm_connector *vc4_get_crtc_connector(struct drm_crtc *crtc,
-					     struct drm_crtc_state *state);
 
 struct drm_encoder *vc4_get_crtc_encoder(struct drm_crtc *crtc,
 					 struct drm_crtc_state *state);
@@ -747,10 +723,10 @@ struct vc4_crtc_state {
 	} while (0)
 
 #define HVS_READ6(offset) \
-	HVS_READ(hvs->vc4->step_d0 ? SCALER6_ ## offset : SCALER6D0_ ## offset)		\
+	HVS_READ(hvs->vc4->gen == VC4_GEN_6_C ? SCALER6_ ## offset : SCALER6D_ ## offset)
 
 #define HVS_WRITE6(offset, val) \
-	HVS_WRITE(hvs->vc4->step_d0 ? SCALER6_ ## offset : SCALER6D0_ ## offset, val)	\
+	HVS_WRITE(hvs->vc4->gen == VC4_GEN_6_C ? SCALER6_ ## offset : SCALER6D_ ## offset, val)
 
 #define VC4_REG32(reg) { .name = #reg, .offset = reg }
 

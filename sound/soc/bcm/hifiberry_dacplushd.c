@@ -71,7 +71,7 @@ static void snd_rpi_hifiberry_dacplushd_set_sclk(
 static int snd_rpi_hifiberry_dacplushd_init(struct snd_soc_pcm_runtime *rtd)
 {
 	struct snd_soc_dai_link *dai = rtd->dai_link;
-	struct snd_soc_dai *cpu_dai = asoc_rtd_to_cpu(rtd, 0);
+	struct snd_soc_dai *cpu_dai = snd_soc_rtd_to_cpu(rtd, 0);
 
 	dai->name = "HiFiBerry DAC+ HD";
 	dai->stream_name = "HiFiBerry DAC+ HD HiFi";
@@ -90,7 +90,7 @@ static int snd_rpi_hifiberry_dacplushd_hw_params(
 	int ret = 0;
 	struct snd_soc_pcm_runtime *rtd = substream->private_data;
 
-	struct snd_soc_component *component = asoc_rtd_to_codec(rtd, 0)->component;
+	struct snd_soc_component *component = snd_soc_rtd_to_codec(rtd, 0)->component;
 
 	snd_rpi_hifiberry_dacplushd_set_sclk(component, params_rate(params));
 	return ret;
@@ -202,16 +202,11 @@ static int snd_rpi_hifiberry_dacplushd_probe(struct platform_device *pdev)
 	return ret;
 }
 
-static int snd_rpi_hifiberry_dacplushd_remove(struct platform_device *pdev)
+static void snd_rpi_hifiberry_dacplushd_remove(struct platform_device *pdev)
 {
-	if (IS_ERR(reset_gpio))
-		return -EINVAL;
-
 	/* put DAC into RESET and release GPIO */
 	gpiod_set_value(reset_gpio, 0);
 	gpiod_put(reset_gpio);
-
-	return 0;
 }
 
 static const struct of_device_id snd_rpi_hifiberry_dacplushd_of_match[] = {

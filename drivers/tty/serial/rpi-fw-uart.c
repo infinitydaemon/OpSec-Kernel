@@ -89,7 +89,7 @@ static unsigned int rpi_fw_uart_tx_is_empty(struct uart_port *port)
 	return rd == wr;
 }
 
-unsigned int rpi_fw_uart_rx_is_empty(struct uart_port *port)
+static unsigned int rpi_fw_uart_rx_is_empty(struct uart_port *port)
 {
 	struct rpi_fw_uart *rfu = container_of(port, struct rpi_fw_uart, port);
 	u32 rd, wr;
@@ -169,17 +169,18 @@ static unsigned int rpi_fw_write(struct uart_port *port, const char *s,
 /* Called with port.lock taken */
 static void rpi_fw_uart_start_tx(struct uart_port *port)
 {
-	struct circ_buf *xmit;
+	struct tty_port *tport = &port->state->port;
 
-	xmit = &port->state->xmit;
 	for (;;) {
 		unsigned int consumed;
-		unsigned long count = CIRC_CNT_TO_END(xmit->head, xmit->tail,
-				UART_XMIT_SIZE);
+		unsigned char *tail;
+		unsigned int count;
+
+		count = kfifo_out_linear_ptr(&tport->xmit_fifo, &tail, port->fifosize);
 		if (!count)
 			break;
 
-		consumed = rpi_fw_write(port, &xmit->buf[xmit->tail], count);
+		consumed = rpi_fw_write(port, tail, count);
 		uart_xmit_advance(port, consumed);
 	}
 	uart_write_wakeup(port);
@@ -532,14 +533,12 @@ unregister_uart:
 	return err;
 }
 
-static int rpi_fw_uart_remove(struct platform_device *pdev)
+static void rpi_fw_uart_remove(struct platform_device *pdev)
 {
 	struct rpi_fw_uart *rfu = platform_get_drvdata(pdev);
 
 	uart_remove_one_port(&rfu->driver, &rfu->port);
 	uart_unregister_driver(&rfu->driver);
-
-	return 0;
 }
 
 static const struct of_device_id rpi_fw_match[] = {

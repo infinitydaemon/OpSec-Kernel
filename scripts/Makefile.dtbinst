@@ -8,33 +8,41 @@
 #   $INSTALL_PATH/dtbs/$KERNELRELEASE
 # ==========================================================================
 
-src := $(obj)
-
 PHONY := __dtbs_install
 __dtbs_install:
 
 include include/config/auto.conf
 include $(srctree)/scripts/Kbuild.include
-include $(kbuild-file)
 
-dtbs    := $(addprefix $(dst)/, $(dtb-y) $(if $(CONFIG_OF_ALL_DTBS),$(dtb-)))
-dtbos   := $(addprefix $(dst)/, $(dtbo-y) $(if $(CONFIG_OF_ALL_DTBS),$(dtb-)))
-subdirs := $(addprefix $(obj)/, $(subdir-y) $(subdir-m))
-
-__dtbs_install: $(dtbs) $(dtbos) $(subdirs)
-	@:
+dst := $(INSTALL_DTBS_PATH)
 
 quiet_cmd_dtb_install = INSTALL $@
       cmd_dtb_install = install -D -m 0644 $< $@
 
-$(dst)/%.dtb: $(obj)/%.dtb
+$(dst)/%: $(obj)/%
 	$(call cmd,dtb_install)
 
-$(dst)/%.dtbo: $(obj)/%.dtbo
-	$(call cmd,dtb_install)
+dtbs := $(patsubst $(obj)/%,%,$(call read-file, $(obj)/dtbs-list))
 
-PHONY += $(subdirs)
-$(subdirs):
-	$(Q)$(MAKE) $(dtbinst)=$@ dst=$(if $(if $(subst $(obj)/overlays,,$@),$(CONFIG_ARCH_WANT_FLAT_DTB_INSTALL),),$(dst),$(patsubst $(obj)/%,$(dst)/%,$@))
+ifdef CONFIG_ARCH_WANT_FLAT_DTB_INSTALL
+
+define gen_install_rules
+$(dst)/%: $(obj)/$(1)%
+	$$(call cmd,dtb_install)
+endef
+
+define overlays_install_rules
+$(dst)/overlays/%: $(obj)/$(1)%
+	$$(call cmd,dtb_install)
+endef
+
+$(foreach d, $(sort $(dir $(dtbs))), $(if $(findstring "overlays/","$(d)"),$(eval $(call overlays_install_rules,$(d))),$(eval $(call gen_install_rules,$(d)))))
+
+dtbs := $(foreach d, $(dtbs), $(if $(findstring overlays/,$(d)),$(d),$(notdir $(d))))
+
+endif # CONFIG_ARCH_WANT_FLAT_DTB_INSTALL
+
+__dtbs_install: $(addprefix $(dst)/, $(dtbs))
+	@:
 
 .PHONY: $(PHONY)

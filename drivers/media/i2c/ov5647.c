@@ -137,7 +137,6 @@ struct ov5647 {
 	struct v4l2_ctrl		*hflip;
 	struct v4l2_ctrl		*vflip;
 	struct v4l2_ctrl		*link_freq;
-	bool				streaming;
 };
 
 static inline struct ov5647 *to_sensor(struct v4l2_subdev *sd)
@@ -782,7 +781,7 @@ __ov5647_get_pad_crop(struct ov5647 *ov5647,
 {
 	switch (which) {
 	case V4L2_SUBDEV_FORMAT_TRY:
-		return v4l2_subdev_get_try_crop(&ov5647->sd, sd_state, pad);
+		return v4l2_subdev_state_get_crop(sd_state, pad);
 	case V4L2_SUBDEV_FORMAT_ACTIVE:
 		return &ov5647->mode->crop;
 	}
@@ -797,10 +796,6 @@ static int ov5647_s_stream(struct v4l2_subdev *sd, int enable)
 	int ret;
 
 	mutex_lock(&sensor->lock);
-	if (sensor->streaming == enable) {
-		mutex_unlock(&sensor->lock);
-		return 0;
-	}
 
 	if (enable) {
 		ret = pm_runtime_resume_and_get(&client->dev);
@@ -821,7 +816,6 @@ static int ov5647_s_stream(struct v4l2_subdev *sd, int enable)
 		pm_runtime_put(&client->dev);
 	}
 
-	sensor->streaming = enable;
 	mutex_unlock(&sensor->lock);
 
 	return 0;
@@ -899,8 +893,8 @@ static int ov5647_get_pad_fmt(struct v4l2_subdev *sd,
 	mutex_lock(&sensor->lock);
 	switch (format->which) {
 	case V4L2_SUBDEV_FORMAT_TRY:
-		sensor_format = v4l2_subdev_get_try_format(sd, sd_state,
-							   format->pad);
+		sensor_format = v4l2_subdev_state_get_format(sd_state,
+							     format->pad);
 		break;
 	default:
 		sensor_format = &sensor->mode->format;
@@ -930,7 +924,7 @@ static int ov5647_set_pad_fmt(struct v4l2_subdev *sd,
 	/* Update the sensor mode and apply at it at streamon time. */
 	mutex_lock(&sensor->lock);
 	if (format->which == V4L2_SUBDEV_FORMAT_TRY) {
-		*v4l2_subdev_get_try_format(sd, sd_state, format->pad) = mode->format;
+		*v4l2_subdev_state_get_format(sd_state, format->pad) = mode->format;
 	} else {
 		int exposure_max, exposure_def;
 		int hblank, vblank;
@@ -1052,8 +1046,8 @@ static int ov5647_detect(struct v4l2_subdev *sd)
 static int ov5647_open(struct v4l2_subdev *sd, struct v4l2_subdev_fh *fh)
 {
 	struct v4l2_mbus_framefmt *format =
-				v4l2_subdev_get_try_format(sd, fh->state, 0);
-	struct v4l2_rect *crop = v4l2_subdev_get_try_crop(sd, fh->state, 0);
+				v4l2_subdev_state_get_format(fh->state, 0);
+	struct v4l2_rect *crop = v4l2_subdev_state_get_crop(fh->state, 0);
 
 	crop->left = OV5647_PIXEL_ARRAY_LEFT;
 	crop->top = OV5647_PIXEL_ARRAY_TOP;
@@ -1357,24 +1351,21 @@ static int ov5647_parse_dt(struct ov5647 *sensor, struct device_node *np)
 	struct v4l2_fwnode_endpoint bus_cfg = {
 		.bus_type = V4L2_MBUS_CSI2_DPHY,
 	};
-	struct device_node *ep;
+	struct device_node *ep __free(device_node) =
+		of_graph_get_endpoint_by_regs(np, 0, -1);
 	int ret;
 
-	ep = of_graph_get_next_endpoint(np, NULL);
 	if (!ep)
 		return -EINVAL;
 
 	ret = v4l2_fwnode_endpoint_parse(of_fwnode_handle(ep), &bus_cfg);
 	if (ret)
-		goto out;
+		return ret;
 
 	sensor->clock_ncont = bus_cfg.bus.mipi_csi2.flags &
 			      V4L2_MBUS_CSI2_NONCONTINUOUS_CLOCK;
 
-out:
-	of_node_put(ep);
-
-	return ret;
+	return 0;
 }
 
 static int ov5647_probe(struct i2c_client *client)
@@ -1493,7 +1484,7 @@ static const struct dev_pm_ops ov5647_pm_ops = {
 };
 
 static const struct i2c_device_id ov5647_id[] = {
-	{ "ov5647", 0 },
+	{ "ov5647" },
 	{ /* sentinel */ }
 };
 MODULE_DEVICE_TABLE(i2c, ov5647_id);

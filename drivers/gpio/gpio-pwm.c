@@ -118,9 +118,8 @@ static int pwm_gpio_probe(struct platform_device *pdev)
 	return devm_gpiochip_add_data(dev, &pwm_gpio->gc, pwm_gpio);
 }
 
-static int pwm_gpio_remove(struct platform_device *pdev)
+static void pwm_gpio_remove(struct platform_device *pdev)
 {
-	return 0;
 }
 
 static const struct of_device_id pwm_gpio_of_match[] = {

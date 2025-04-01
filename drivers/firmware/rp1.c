@@ -285,13 +285,11 @@ static int rp1_firmware_probe(struct platform_device *pdev)
 	return 0;
 }
 
-static int rp1_firmware_remove(struct platform_device *pdev)
+static void rp1_firmware_remove(struct platform_device *pdev)
 {
 	struct rp1_firmware *fw = platform_get_drvdata(pdev);
 
 	rp1_firmware_put(fw);
-
-	return 0;
 }
 
 static struct platform_driver rp1_firmware_driver = {

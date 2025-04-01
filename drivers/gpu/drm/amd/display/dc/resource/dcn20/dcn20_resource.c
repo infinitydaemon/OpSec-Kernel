@@ -1251,7 +1251,7 @@ static void get_pixel_clock_parameters(
 
 	if (opp_cnt == 4)
 		pixel_clk_params->requested_pix_clk_100hz /= 4;
-	else if (optc2_is_two_pixels_per_containter(&stream->timing) || opp_cnt == 2)
+	else if (pipe_ctx->stream_res.tg->funcs->is_two_pixels_per_container(&stream->timing) || opp_cnt == 2)
 		pixel_clk_params->requested_pix_clk_100hz /= 2;
 	else if (hws->funcs.is_dp_dig_pixel_rate_div_policy) {
 		if (hws->funcs.is_dp_dig_pixel_rate_div_policy(pipe_ctx))
@@ -1261,6 +1261,15 @@ static void get_pixel_clock_parameters(
 	if (stream->timing.timing_3d_format == TIMING_3D_FORMAT_HW_FRAME_PACKING)
 		pixel_clk_params->requested_pix_clk_100hz *= 2;
 
+	if ((pipe_ctx->stream_res.tg->funcs->is_two_pixels_per_container &&
+			pipe_ctx->stream_res.tg->funcs->is_two_pixels_per_container(&pipe_ctx->stream->timing)) ||
+			(hws->funcs.is_dp_dig_pixel_rate_div_policy &&
+			hws->funcs.is_dp_dig_pixel_rate_div_policy(pipe_ctx)) ||
+			opp_cnt > 1) {
+		pixel_clk_params->dio_se_pix_per_cycle = 2;
+	} else {
+		pixel_clk_params->dio_se_pix_per_cycle = 1;
+	}
 }
 
 static void build_clamping_params(struct dc_stream_state *stream)
@@ -1502,6 +1511,7 @@ bool dcn20_split_stream_for_odm(
 
 	if (prev_odm_pipe->plane_state) {
 		struct scaler_data *sd = &prev_odm_pipe->plane_res.scl_data;
+		struct output_pixel_processor *opp = next_odm_pipe->stream_res.opp;
 		int new_width;
 
 		/* HACTIVE halved for odm combine */
@@ -1535,7 +1545,28 @@ bool dcn20_split_stream_for_odm(
 		sd->viewport_c.x += dc_fixpt_floor(dc_fixpt_mul_int(
 				sd->ratios.horz_c, sd->h_active - sd->recout.x));
 		sd->recout.x = 0;
+
+		/*
+		 * When odm is used in YcbCr422 or 420 colour space, a split screen
+		 * will be seen with the previous calculations since the extra left
+		 *  edge pixel is accounted for in fmt but not in viewport.
+		 *
+		 * Below are calculations which fix the split by fixing the calculations
+		 * if there is an extra left edge pixel.
+		 */
+		if (opp && opp->funcs->opp_get_left_edge_extra_pixel_count
+				&& opp->funcs->opp_get_left_edge_extra_pixel_count(
+					opp, next_odm_pipe->stream->timing.pixel_encoding,
+					resource_is_pipe_type(next_odm_pipe, OTG_MASTER)) == 1) {
+			sd->h_active += 1;
+			sd->recout.width += 1;
+			sd->viewport.x -= dc_fixpt_ceil(dc_fixpt_mul_int(sd->ratios.horz, 1));
+			sd->viewport_c.x -= dc_fixpt_ceil(dc_fixpt_mul_int(sd->ratios.horz, 1));
+			sd->viewport_c.width += dc_fixpt_ceil(dc_fixpt_mul_int(sd->ratios.horz, 1));
+			sd->viewport.width += dc_fixpt_ceil(dc_fixpt_mul_int(sd->ratios.horz, 1));
+		}
 	}
+
 	if (!next_odm_pipe->top_pipe)
 		next_odm_pipe->stream_res.opp = pool->opps[next_odm_pipe->pipe_idx];
 	else
@@ -1603,7 +1634,7 @@ unsigned int dcn20_calc_max_scaled_time(
 	if (time_per_byte == 0)
 		time_per_byte = 1;
 
-	small_free_entry  = (total_y_free_entry > total_c_free_entry) ? total_c_free_entry : total_y_free_entry;
+	small_free_entry  = total_c_free_entry;
 	max_free_entry    = (mode == PACKED_444) ? total_y_free_entry + total_c_free_entry : small_free_entry;
 	buf_lh_capability = max_free_entry*time_per_byte*32/16; /* there is 4bit fraction */
 	max_scaled_time   = buf_lh_capability - urgent_watermark;
@@ -1657,8 +1688,6 @@ void dcn20_set_mcif_arb_params(
 			if (dwb_pipe >= MAX_DWB_PIPES)
 				return;
 		}
-		if (dwb_pipe >= MAX_DWB_PIPES)
-			return;
 	}
 }
 
@@ -2033,6 +2062,7 @@ bool dcn20_fast_validate_bw(
 {
 	bool out = false;
 	int split[MAX_PIPES] = { 0 };
+	bool merge[MAX_PIPES] = { false };
 	int pipe_cnt, i, pipe_idx, vlevel;
 
 	ASSERT(pipes);
@@ -2057,7 +2087,7 @@ bool dcn20_fast_validate_bw(
 	if (vlevel > context->bw_ctx.dml.soc.num_states)
 		goto validate_fail;
 
-	vlevel = dcn20_validate_apply_pipe_split_flags(dc, context, vlevel, split, NULL);
+	vlevel = dcn20_validate_apply_pipe_split_flags(dc, context, vlevel, split, merge);
 
 	/*initialize pipe_just_split_from to invalid idx*/
 	for (i = 0; i < MAX_PIPES; i++)
@@ -2125,6 +2155,7 @@ bool dcn20_fast_validate_bw(
 			ASSERT(0);
 		}
 	}
+
 	/* Actual dsc count per stream dsc validation*/
 	if (!dcn20_validate_dsc(dc, context)) {
 		context->bw_ctx.dml.vba.ValidationStatus[context->bw_ctx.dml.vba.soc.num_states] =
@@ -2193,10 +2224,11 @@ bool dcn20_get_dcc_compression_cap(const struct dc *dc,
 		const struct dc_dcc_surface_param *input,
 		struct dc_surface_dcc_cap *output)
 {
-	return dc->res_pool->hubbub->funcs->get_dcc_compression_cap(
-			dc->res_pool->hubbub,
-			input,
-			output);
+	if (dc->res_pool->hubbub->funcs->get_dcc_compression_cap)
+		return dc->res_pool->hubbub->funcs->get_dcc_compression_cap(
+			dc->res_pool->hubbub, input, output);
+
+	return false;
 }
 
 static void dcn20_destroy_resource_pool(struct resource_pool **pool)
@@ -2340,7 +2372,6 @@ static struct _vcs_dpi_soc_bounding_box_st *get_asic_rev_soc_bb(
 static struct _vcs_dpi_ip_params_st *get_asic_rev_ip_params(
 	uint32_t hw_internal_rev)
 {
-	/* NV14 */
 	if (ASICREV_IS_NAVI14_M(hw_internal_rev))
 		return &dcn2_0_nv14_ip;
 
@@ -2622,7 +2653,7 @@ static bool dcn20_resource_construct(
 		ranges.writer_wm_sets[0].max_drain_clk_mhz = PP_SMU_WM_SET_RANGE_CLK_UNCONSTRAINED_MAX;
 
 		/* Notify PP Lib/SMU which Watermarks to use for which clock ranges */
-		if (pool->base.pp_smu->nv_funcs.set_wm_ranges)
+		if (pool->base.pp_smu && pool->base.pp_smu->nv_funcs.set_wm_ranges)
 			pool->base.pp_smu->nv_funcs.set_wm_ranges(&pool->base.pp_smu->nv_funcs.pp_smu, &ranges);
 	}
 

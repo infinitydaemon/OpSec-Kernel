@@ -33,7 +33,6 @@ struct rpi_firmware {
 	u32 enabled;
 
 	struct kref consumers;
-	u32 get_throttled;
 };
 
 static struct platform_device *g_pdev;
@@ -66,7 +65,6 @@ rpi_firmware_transaction(struct rpi_firmware *fw, u32 chan, u32 data)
 			ret = 0;
 		} else {
 			ret = -ETIMEDOUT;
-			WARN_ONCE(1, "Firmware transaction timeout");
 		}
 	} else {
 		dev_err(fw->cl.dev, "mbox_send_message returned %d\n", ret);
@@ -129,6 +127,8 @@ int rpi_firmware_property_list(struct rpi_firmware *fw,
 		dev_err(fw->cl.dev, "Request 0x%08x returned status 0x%08x\n",
 			buf[2], buf[1]);
 		ret = -EINVAL;
+	} else if (ret == -ETIMEDOUT) {
+		WARN_ONCE(1, "Firmware transaction 0x%08x timeout", buf[2]);
 	}
 
 	dma_free_coherent(fw->chan->mbox->dev, PAGE_ALIGN(size), buf, bus_addr);
@@ -179,12 +179,6 @@ int rpi_firmware_property(struct rpi_firmware *fw,
 
 	kfree(data);
 
-	if ((tag == RPI_FIRMWARE_GET_THROTTLED) &&
-	     memcmp(&fw->get_throttled, tag_data, sizeof(fw->get_throttled))) {
-		memcpy(&fw->get_throttled, tag_data, sizeof(fw->get_throttled));
-		sysfs_notify(&fw->cl.dev->kobj, NULL, "get_throttled");
-	}
-
 	return ret;
 }
 EXPORT_SYMBOL_GPL(rpi_firmware_property);
@@ -229,27 +223,6 @@ static int rpi_firmware_notify_reboot(struct notifier_block *nb,
 
 	return 0;
 }
-
-static ssize_t get_throttled_show(struct device *dev,
-				  struct device_attribute *attr, char *buf)
-{
-	struct rpi_firmware *fw = dev_get_drvdata(dev);
-
-	WARN_ONCE(1, "deprecated, use hwmon sysfs instead\n");
-
-	return sprintf(buf, "%x\n", fw->get_throttled);
-}
-
-static DEVICE_ATTR_RO(get_throttled);
-
-static struct attribute *rpi_firmware_dev_attrs[] = {
-	&dev_attr_get_throttled.attr,
-	NULL,
-};
-
-static const struct attribute_group rpi_firmware_dev_group = {
-	.attrs = rpi_firmware_dev_attrs,
-};
 
 static void
 rpi_firmware_print_firmware_revision(struct rpi_firmware *fw)
@@ -317,11 +290,6 @@ rpi_register_hwmon_driver(struct device *dev, struct rpi_firmware *fw)
 
 	rpi_hwmon = platform_device_register_data(dev, "raspberrypi-hwmon",
 						  -1, NULL, 0);
-
-	if (!IS_ERR_OR_NULL(rpi_hwmon)) {
-		if (devm_device_add_group(dev, &rpi_firmware_dev_group))
-			dev_err(dev, "Failed to create get_trottled attr\n");
-	}
 }
 
 static void rpi_register_clk_driver(struct device *dev)
@@ -434,7 +402,7 @@ static void rpi_firmware_shutdown(struct platform_device *pdev)
 	rpi_firmware_property(fw, RPI_FIRMWARE_NOTIFY_REBOOT, NULL, 0);
 }
 
-static int rpi_firmware_remove(struct platform_device *pdev)
+static void rpi_firmware_remove(struct platform_device *pdev)
 {
 	struct rpi_firmware *fw = platform_get_drvdata(pdev);
 
@@ -445,8 +413,6 @@ static int rpi_firmware_remove(struct platform_device *pdev)
 
 	rpi_firmware_put(fw);
 	g_pdev = NULL;
-
-	return 0;
 }
 
 static const struct of_device_id rpi_firmware_of_match[] = {
@@ -496,6 +462,7 @@ EXPORT_SYMBOL_GPL(rpi_firmware_get);
 
 /**
  * devm_rpi_firmware_get - Get pointer to rpi_firmware structure.
+ * @dev:              The firmware device structure
  * @firmware_node:    Pointer to the firmware Device Tree node.
  *
  * Returns NULL is the firmware device is not ready.
@@ -523,7 +490,7 @@ static struct platform_driver rpi_firmware_driver = {
 	},
 	.probe		= rpi_firmware_probe,
 	.shutdown	= rpi_firmware_shutdown,
-	.remove		= rpi_firmware_remove,
+	.remove_new	= rpi_firmware_remove,
 };
 
 static struct notifier_block rpi_firmware_reboot_notifier = {

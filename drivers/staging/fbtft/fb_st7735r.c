@@ -186,13 +186,13 @@ static struct fbtft_display display = {
 	},
 };
 
-int variant_adafruit18(struct fbtft_display *display)
+static int variant_adafruit18(struct fbtft_display *display)
 {
 	display->gamma = ADAFRUIT18_GAMMA;
 	return 0;
 }
 
-int variant_adafruit18_green(struct fbtft_display *display)
+static int variant_adafruit18_green(struct fbtft_display *display)
 {
 	display->gamma = ADAFRUIT18_GAMMA;
 	display->fbtftops.set_addr_win = adafruit18_green_tab_set_addr_win;

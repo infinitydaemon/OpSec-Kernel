@@ -295,7 +295,7 @@ void start_next_request(dwc_otg_pcd_ep_t * ep)
  * This function handles the SOF Interrupts. At this time the SOF
  * Interrupt is disabled.
  */
-int32_t dwc_otg_pcd_handle_sof_intr(dwc_otg_pcd_t * pcd)
+static int32_t dwc_otg_pcd_handle_sof_intr(dwc_otg_pcd_t * pcd)
 {
 	dwc_otg_core_if_t *core_if = GET_CORE_IF(pcd);
 
@@ -328,7 +328,7 @@ int32_t dwc_otg_pcd_handle_sof_intr(dwc_otg_pcd_t * pcd)
  *	 -# If OUT Data Packet call dwc_otg_read_packet to copy the data
  *		to the destination buffer
  */
-int32_t dwc_otg_pcd_handle_rx_status_q_level_intr(dwc_otg_pcd_t * pcd)
+static int32_t dwc_otg_pcd_handle_rx_status_q_level_intr(dwc_otg_pcd_t * pcd)
 {
 	dwc_otg_core_if_t *core_if = GET_CORE_IF(pcd);
 	dwc_otg_core_global_regs_t *global_regs = core_if->core_global_regs;
@@ -494,7 +494,7 @@ static inline int get_ep_of_last_in_token(dwc_otg_core_if_t * core_if)
  * The active request is checked for the next packet to be loaded into
  * the non-periodic Tx FIFO.
  */
-int32_t dwc_otg_pcd_handle_np_tx_fifo_empty_intr(dwc_otg_pcd_t * pcd)
+static int32_t dwc_otg_pcd_handle_np_tx_fifo_empty_intr(dwc_otg_pcd_t * pcd)
 {
 	dwc_otg_core_if_t *core_if = GET_CORE_IF(pcd);
 	dwc_otg_core_global_regs_t *global_regs = core_if->core_global_regs;
@@ -676,7 +676,7 @@ void dwc_otg_pcd_stop(dwc_otg_pcd_t * pcd)
 /**
  * This interrupt indicates that ...
  */
-int32_t dwc_otg_pcd_handle_i2c_intr(dwc_otg_pcd_t * pcd)
+static int32_t dwc_otg_pcd_handle_i2c_intr(dwc_otg_pcd_t * pcd)
 {
 	gintmsk_data_t intr_mask = {.d32 = 0 };
 	gintsts_data_t gintsts;
@@ -697,7 +697,7 @@ int32_t dwc_otg_pcd_handle_i2c_intr(dwc_otg_pcd_t * pcd)
 /**
  * This interrupt indicates that ...
  */
-int32_t dwc_otg_pcd_handle_early_suspend_intr(dwc_otg_pcd_t * pcd)
+static int32_t dwc_otg_pcd_handle_early_suspend_intr(dwc_otg_pcd_t * pcd)
 {
 	gintsts_data_t gintsts;
 #if defined(VERBOSE)
@@ -833,7 +833,7 @@ static inline void ep0_out_start(dwc_otg_core_if_t * core_if,
  * At this point, all the required initialization, except for enabling
  * the control 0 OUT endpoint is done, for receiving SETUP packets.
  */
-int32_t dwc_otg_pcd_handle_usb_reset_intr(dwc_otg_pcd_t * pcd)
+static int32_t dwc_otg_pcd_handle_usb_reset_intr(dwc_otg_pcd_t * pcd)
 {
 	dwc_otg_core_if_t *core_if = GET_CORE_IF(pcd);
 	dwc_otg_dev_if_t *dev_if = core_if->dev_if;
@@ -1054,7 +1054,7 @@ static int get_device_speed(dwc_otg_core_if_t * core_if)
  * data structure.
  * Set up EP0 to receive SETUP packets by calling dwc_ep0_activate.
  */
-int32_t dwc_otg_pcd_handle_enum_done_intr(dwc_otg_pcd_t * pcd)
+static int32_t dwc_otg_pcd_handle_enum_done_intr(dwc_otg_pcd_t * pcd)
 {
 	dwc_otg_pcd_ep_t *ep0 = &pcd->ep0;
 	gintsts_data_t gintsts;
@@ -1152,7 +1152,7 @@ int32_t dwc_otg_pcd_handle_enum_done_intr(dwc_otg_pcd_t * pcd)
  * Rx FIFO full or Rx Status Queue Full.  If this interrupt occurs
  * read all the data from the Rx FIFO.
  */
-int32_t dwc_otg_pcd_handle_isoc_out_packet_dropped_intr(dwc_otg_pcd_t * pcd)
+static int32_t dwc_otg_pcd_handle_isoc_out_packet_dropped_intr(dwc_otg_pcd_t * pcd)
 {
 	gintmsk_data_t intr_mask = {.d32 = 0 };
 	gintsts_data_t gintsts;
@@ -1178,7 +1178,7 @@ int32_t dwc_otg_pcd_handle_isoc_out_packet_dropped_intr(dwc_otg_pcd_t * pcd)
  * for periodic transactions.  If there is a periodic transaction for
  * the next frame, load the packets into the EP periodic Tx FIFO.
  */
-int32_t dwc_otg_pcd_handle_end_periodic_frame_intr(dwc_otg_pcd_t * pcd)
+static int32_t dwc_otg_pcd_handle_end_periodic_frame_intr(dwc_otg_pcd_t * pcd)
 {
 	gintmsk_data_t intr_mask = {.d32 = 0 };
 	gintsts_data_t gintsts;
@@ -1206,7 +1206,7 @@ int32_t dwc_otg_pcd_handle_end_periodic_frame_intr(dwc_otg_pcd_t * pcd)
  * is flushed, so it can be reloaded in the order seen in the IN Token
  * Queue.
  */
-int32_t dwc_otg_pcd_handle_ep_mismatch_intr(dwc_otg_pcd_t * pcd)
+static int32_t dwc_otg_pcd_handle_ep_mismatch_intr(dwc_otg_pcd_t * pcd)
 {
 	gintsts_data_t gintsts;
 	dwc_otg_core_if_t *core_if = GET_CORE_IF(pcd);
@@ -1254,7 +1254,7 @@ int32_t dwc_otg_pcd_handle_ep_mismatch_intr(dwc_otg_pcd_t * pcd)
  *
  * @param pcd The PCD
  */
-int32_t dwc_otg_pcd_handle_ep_fetsusp_intr(dwc_otg_pcd_t * pcd)
+static int32_t dwc_otg_pcd_handle_ep_fetsusp_intr(dwc_otg_pcd_t * pcd)
 {
 	gintsts_data_t gintsts;
 	gintmsk_data_t gintmsk_data;
@@ -3367,7 +3367,7 @@ static void restart_transfer(dwc_otg_pcd_t * pcd, const uint32_t epnum)
  *
  * @param core_if Programming view of DWC_otg controller
  */
-void predict_nextep_seq( dwc_otg_core_if_t * core_if)
+static void predict_nextep_seq( dwc_otg_core_if_t * core_if)
 {
 	dwc_otg_device_global_regs_t *dev_global_regs =
 	    core_if->dev_if->dev_global_regs;
@@ -4677,7 +4677,7 @@ static int drop_transfer(uint32_t trgt_fr, uint32_t curr_fr, uint8_t frm_overrun
  *	-#	Disable EP; when "Endpoint Disabled" interrupt is received
  *		Flush FIFO
  */
-int32_t dwc_otg_pcd_handle_incomplete_isoc_in_intr(dwc_otg_pcd_t * pcd)
+static int32_t dwc_otg_pcd_handle_incomplete_isoc_in_intr(dwc_otg_pcd_t * pcd)
 {
 	gintsts_data_t gintsts;
 
@@ -4787,7 +4787,7 @@ int32_t dwc_otg_pcd_handle_incomplete_isoc_in_intr(dwc_otg_pcd_t * pcd)
  *	-#	Disable EP. When "Endpoint Disabled" interrupt is received
  *		re-enable EP.
  */
-int32_t dwc_otg_pcd_handle_incomplete_isoc_out_intr(dwc_otg_pcd_t * pcd)
+static int32_t dwc_otg_pcd_handle_incomplete_isoc_out_intr(dwc_otg_pcd_t * pcd)
 {
 
 	gintsts_data_t gintsts;
@@ -4905,7 +4905,7 @@ int32_t dwc_otg_pcd_handle_incomplete_isoc_out_intr(dwc_otg_pcd_t * pcd)
  * This function handles the Global IN NAK Effective interrupt.
  *
  */
-int32_t dwc_otg_pcd_handle_in_nak_effective(dwc_otg_pcd_t * pcd)
+static int32_t dwc_otg_pcd_handle_in_nak_effective(dwc_otg_pcd_t * pcd)
 {
 	dwc_otg_dev_if_t *dev_if = GET_CORE_IF(pcd)->dev_if;
 	depctl_data_t diepctl = {.d32 = 0 };
@@ -4947,7 +4947,7 @@ int32_t dwc_otg_pcd_handle_in_nak_effective(dwc_otg_pcd_t * pcd)
  * OUT NAK Effective.
  *
  */
-int32_t dwc_otg_pcd_handle_out_nak_effective(dwc_otg_pcd_t * pcd)
+static int32_t dwc_otg_pcd_handle_out_nak_effective(dwc_otg_pcd_t * pcd)
 {
 	dwc_otg_dev_if_t *dev_if = GET_CORE_IF(pcd)->dev_if;
 	gintmsk_data_t intr_mask = {.d32 = 0 };

@@ -908,7 +908,7 @@ err:
 *
 ***************************************************************************/
 
-static int bcm2835_smi_remove(struct platform_device *pdev)
+static void bcm2835_smi_remove(struct platform_device *pdev)
 {
 	struct bcm2835_smi_instance *inst = platform_get_drvdata(pdev);
 	struct device *dev = inst->dev;
@@ -919,7 +919,6 @@ static int bcm2835_smi_remove(struct platform_device *pdev)
 	clk_disable_unprepare(inst->clk);
 
 	dev_info(dev, "SMI device removed - OK");
-	return 0;
 }
 
 /****************************************************************************

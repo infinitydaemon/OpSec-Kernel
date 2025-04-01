@@ -17,7 +17,6 @@
 #include <linux/regmap.h>
 #include <linux/reset.h>
 
-#include <drm/display/drm_dp_helper.h>
 #include <drm/drm_atomic_helper.h>
 #include <drm/drm_bridge.h>
 #include <drm/drm_bridge_connector.h>
@@ -750,6 +749,6 @@ struct platform_driver rockchip_lvds_driver = {
 	.remove_new = rockchip_lvds_remove,
 	.driver = {
 		   .name = "rockchip-lvds",
-		   .of_match_table = of_match_ptr(rockchip_lvds_dt_ids),
+		   .of_match_table = rockchip_lvds_dt_ids,
 	},
 };

@@ -82,7 +82,7 @@
 #include <asm/io.h>
 #include <asm/irq.h>
 #include <asm/system.h>
-#include <asm/unaligned.h>
+#include <linux/unaligned.h>
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,21)
 # include <linux/usb/ch9.h>

@@ -33,11 +33,13 @@ dtbo-$(CONFIG_ARCH_BCM2835) += \
 	audioinjector-wm8731-audio.dtbo \
 	audiosense-pi.dtbo \
 	audremap.dtbo \
+	audremap-pi5.dtbo \
 	balena-fin.dtbo \
 	bcm2712d0.dtbo \
 	camera-mux-2port.dtbo \
 	camera-mux-4port.dtbo \
 	cap1106.dtbo \
+	chipcap2.dtbo \
 	chipdip-dac.dtbo \
 	cirrus-wm5102.dtbo \
 	cm-swap-i2c0.dtbo \
@@ -64,6 +66,7 @@ dtbo-$(CONFIG_ARCH_BCM2835) += \
 	enc28j60.dtbo \
 	enc28j60-spi2.dtbo \
 	exc3000.dtbo \
+	ezsound-6x8iso.dtbo \
 	fbtft.dtbo \
 	fe-pi-audio.dtbo \
 	fsm-demo.dtbo \
@@ -210,6 +213,7 @@ dtbo-$(CONFIG_ARCH_BCM2835) += \
 	piscreen.dtbo \
 	piscreen2r.dtbo \
 	pisound.dtbo \
+	pisound-micro.dtbo \
 	pisound-pi5.dtbo \
 	pitft22.dtbo \
 	pitft28-capacitive.dtbo \
@@ -288,6 +292,7 @@ dtbo-$(CONFIG_ARCH_BCM2835) += \
 	spi6-2cs.dtbo \
 	ssd1306.dtbo \
 	ssd1306-spi.dtbo \
+	ssd1327-spi.dtbo \
 	ssd1331-spi.dtbo \
 	ssd1351-spi.dtbo \
 	sunfounder-pipower3.dtbo \
@@ -344,6 +349,7 @@ dtbo-$(CONFIG_ARCH_BCM2835) += \
 	watterott-display.dtbo \
 	waveshare-can-fd-hat-mode-a.dtbo \
 	waveshare-can-fd-hat-mode-b.dtbo \
+	wifimac.dtbo \
 	wittypi.dtbo \
 	wm8960-soundcard.dtbo \
 	ws2812-pio.dtbo

@@ -49,8 +49,8 @@ static int pifi_40_vol_set(struct snd_kcontrol *kcontrol,
 	struct snd_soc_component *dac[2];
 
 	rtd = snd_soc_get_pcm_runtime(card, &card->dai_link[0]);
-	dac[0] = asoc_rtd_to_codec(rtd, 0)->component;
-	dac[1] = asoc_rtd_to_codec(rtd, 1)->component;
+	dac[0] = snd_soc_rtd_to_codec(rtd, 0)->component;
+	dac[1] = snd_soc_rtd_to_codec(rtd, 1)->component;
 
 	snd_soc_component_write(dac[0], 0x07, 255 - v);
 	snd_soc_component_write(dac[1], 0x07, 255 - v);
@@ -82,8 +82,8 @@ static int snd_pifi_40_init(struct snd_soc_pcm_runtime *rtd)
 	struct snd_kcontrol *kctl;
 	int i, j;
 
-	dac[0] = asoc_rtd_to_codec(rtd, 0)->component;
-	dac[1] = asoc_rtd_to_codec(rtd, 1)->component;
+	dac[0] = snd_soc_rtd_to_codec(rtd, 0)->component;
+	dac[1] = snd_soc_rtd_to_codec(rtd, 1)->component;
 
 
 	// Set up cards - pulse power down first
@@ -139,7 +139,7 @@ static int snd_pifi_40_hw_params(struct snd_pcm_substream *substream,
 				 struct snd_pcm_hw_params *params)
 {
 	struct snd_soc_pcm_runtime *rtd = substream->private_data;
-	struct snd_soc_dai *cpu_dai = asoc_rtd_to_cpu(rtd, 0);
+	struct snd_soc_dai *cpu_dai = snd_soc_rtd_to_cpu(rtd, 0);
 
 	return snd_soc_dai_set_bclk_ratio(cpu_dai, 64);
 }
@@ -246,14 +246,13 @@ static int snd_pifi_40_probe(struct platform_device *pdev)
 	return -EINVAL;
 }
 
-static int snd_pifi_40_remove(struct platform_device *pdev)
+static void snd_pifi_40_remove(struct platform_device *pdev)
 {
 	struct snd_soc_card *card = platform_get_drvdata(pdev);
 
 	kfree(&card->drvdata);
 	snd_pifi_40_pdn(&snd_pifi_40, 0);
 	snd_soc_unregister_card(&snd_pifi_40);
-	return 0;
 }
 
 static const struct of_device_id snd_pifi_40_of_match[] = {

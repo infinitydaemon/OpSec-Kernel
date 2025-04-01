@@ -41,11 +41,18 @@ static int rxe_query_port(struct ib_device *ibdev,
 			  u32 port_num, struct ib_port_attr *attr)
 {
 	struct rxe_dev *rxe = to_rdev(ibdev);
+	struct net_device *ndev;
 	int err, ret;
 
 	if (port_num != 1) {
 		err = -EINVAL;
 		rxe_dbg_dev(rxe, "bad port_num = %d\n", port_num);
+		goto err_out;
+	}
+
+	ndev = rxe_ib_device_get_netdev(ibdev);
+	if (!ndev) {
+		err = -ENODEV;
 		goto err_out;
 	}
 
@@ -57,13 +64,14 @@ static int rxe_query_port(struct ib_device *ibdev,
 
 	if (attr->state == IB_PORT_ACTIVE)
 		attr->phys_state = IB_PORT_PHYS_STATE_LINK_UP;
-	else if (dev_get_flags(rxe->ndev) & IFF_UP)
+	else if (dev_get_flags(ndev) & IFF_UP)
 		attr->phys_state = IB_PORT_PHYS_STATE_POLLING;
 	else
 		attr->phys_state = IB_PORT_PHYS_STATE_DISABLED;
 
 	mutex_unlock(&rxe->usdev_lock);
 
+	dev_put(ndev);
 	return ret;
 
 err_out:
@@ -905,12 +913,7 @@ static int rxe_post_send_kernel(struct rxe_qp *qp,
 
 	/* kickoff processing of any posted wqes */
 	if (good)
-		rxe_sched_task(&qp->req.task);
-
-	spin_lock_irqsave(&qp->state_lock, flags);
-	if (qp_state(qp) == IB_QPS_ERR)
-		rxe_sched_task(&qp->comp.task);
-	spin_unlock_irqrestore(&qp->state_lock, flags);
+		rxe_sched_task(&qp->send_task);
 
 	return err;
 }
@@ -940,7 +943,7 @@ static int rxe_post_send(struct ib_qp *ibqp, const struct ib_send_wr *wr,
 
 	if (qp->is_user) {
 		/* Utilize process context to do protocol processing */
-		rxe_run_task(&qp->req.task);
+		rxe_sched_task(&qp->send_task);
 	} else {
 		err = rxe_post_send_kernel(qp, wr, bad_wr);
 		if (err)
@@ -1049,7 +1052,7 @@ static int rxe_post_recv(struct ib_qp *ibqp, const struct ib_recv_wr *wr,
 
 	spin_lock_irqsave(&qp->state_lock, flags);
 	if (qp_state(qp) == IB_QPS_ERR)
-		rxe_sched_task(&qp->resp.task);
+		rxe_sched_task(&qp->recv_task);
 	spin_unlock_irqrestore(&qp->state_lock, flags);
 
 	return err;
@@ -1057,8 +1060,9 @@ static int rxe_post_recv(struct ib_qp *ibqp, const struct ib_recv_wr *wr,
 
 /* cq */
 static int rxe_create_cq(struct ib_cq *ibcq, const struct ib_cq_init_attr *attr,
-			 struct ib_udata *udata)
+			 struct uverbs_attr_bundle *attrs)
 {
+	struct ib_udata *udata = &attrs->driver_udata;
 	struct ib_device *dev = ibcq->device;
 	struct rxe_dev *rxe = to_rdev(dev);
 	struct rxe_cq *cq = to_rcq(ibcq);
@@ -1281,7 +1285,7 @@ static struct ib_mr *rxe_reg_user_mr(struct ib_pd *ibpd, u64 start,
 	mr->ibmr.pd = ibpd;
 	mr->ibmr.device = ibpd->device;
 
-	err = rxe_mr_init_user(rxe, start, length, iova, access, mr);
+	err = rxe_mr_init_user(rxe, start, length, access, mr);
 	if (err) {
 		rxe_dbg_mr(mr, "reg_user_mr failed, err = %d\n", err);
 		goto err_cleanup;
@@ -1428,9 +1432,16 @@ static const struct attribute_group rxe_attr_group = {
 static int rxe_enable_driver(struct ib_device *ib_dev)
 {
 	struct rxe_dev *rxe = container_of(ib_dev, struct rxe_dev, ib_dev);
+	struct net_device *ndev;
+
+	ndev = rxe_ib_device_get_netdev(ib_dev);
+	if (!ndev)
+		return -ENODEV;
 
 	rxe_set_port_state(rxe);
-	dev_info(&rxe->ib_dev.dev, "added %s\n", netdev_name(rxe->ndev));
+	dev_info(&rxe->ib_dev.dev, "added %s\n", netdev_name(ndev));
+
+	dev_put(ndev);
 	return 0;
 }
 
@@ -1498,7 +1509,8 @@ static const struct ib_device_ops rxe_dev_ops = {
 	INIT_RDMA_OBJ_SIZE(ib_mw, rxe_mw, ibmw),
 };
 
-int rxe_register_device(struct rxe_dev *rxe, const char *ibdev_name)
+int rxe_register_device(struct rxe_dev *rxe, const char *ibdev_name,
+						struct net_device *ndev)
 {
 	int err;
 	struct ib_device *dev = &rxe->ib_dev;
@@ -1510,13 +1522,13 @@ int rxe_register_device(struct rxe_dev *rxe, const char *ibdev_name)
 	dev->num_comp_vectors = num_possible_cpus();
 	dev->local_dma_lkey = 0;
 	addrconf_addr_eui48((unsigned char *)&dev->node_guid,
-			    rxe->ndev->dev_addr);
+			    ndev->dev_addr);
 
 	dev->uverbs_cmd_mask |= BIT_ULL(IB_USER_VERBS_CMD_POST_SEND) |
 				BIT_ULL(IB_USER_VERBS_CMD_REQ_NOTIFY_CQ);
 
 	ib_set_device_ops(dev, &rxe_dev_ops);
-	err = ib_device_set_netdev(&rxe->ib_dev, rxe->ndev, 1);
+	err = ib_device_set_netdev(&rxe->ib_dev, ndev, 1);
 	if (err)
 		return err;
 

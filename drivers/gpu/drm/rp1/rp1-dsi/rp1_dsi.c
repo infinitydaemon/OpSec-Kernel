@@ -26,7 +26,7 @@
 #include <drm/drm_encoder.h>
 #include <drm/drm_fourcc.h>
 #include <drm/drm_fb_helper.h>
-#include <drm/drm_fbdev_generic.h>
+#include <drm/drm_fbdev_ttm.h>
 #include <drm/drm_framebuffer.h>
 #include <drm/drm_gem.h>
 #include <drm/drm_gem_atomic_helper.h>
@@ -318,7 +318,7 @@ static int rp1dsi_bind(struct rp1_dsi *dsi)
 	ret = drm_dev_register(drm, 0);
 
 	if (ret == 0)
-		drm_fbdev_generic_setup(drm, 32);
+		drm_fbdev_ttm_setup(drm, 32);
 
 rtn:
 	if (ret)
@@ -338,7 +338,7 @@ static void rp1dsi_unbind(struct rp1_dsi *dsi)
 	drm_atomic_helper_shutdown(drm);
 }
 
-int rp1dsi_host_attach(struct mipi_dsi_host *host, struct mipi_dsi_device *dsi_dev)
+static int rp1dsi_host_attach(struct mipi_dsi_host *host, struct mipi_dsi_device *dsi_dev)
 {
 	struct rp1_dsi *dsi = container_of(host, struct rp1_dsi, dsi_host);
 
@@ -371,7 +371,7 @@ int rp1dsi_host_attach(struct mipi_dsi_host *host, struct mipi_dsi_device *dsi_d
 	return rp1dsi_bind(dsi);
 }
 
-int rp1dsi_host_detach(struct mipi_dsi_host *host, struct mipi_dsi_device *dsi_dev)
+static int rp1dsi_host_detach(struct mipi_dsi_host *host, struct mipi_dsi_device *dsi_dev)
 {
 	struct rp1_dsi *dsi = container_of(host, struct rp1_dsi, dsi_host);
 
@@ -383,7 +383,7 @@ int rp1dsi_host_detach(struct mipi_dsi_host *host, struct mipi_dsi_device *dsi_d
 	return 0;
 }
 
-ssize_t rp1dsi_host_transfer(struct mipi_dsi_host *host, const struct mipi_dsi_msg *msg)
+static ssize_t rp1dsi_host_transfer(struct mipi_dsi_host *host, const struct mipi_dsi_msg *msg)
 {
 	struct rp1_dsi *dsi = container_of(host, struct rp1_dsi, dsi_host);
 	struct mipi_dsi_packet packet;
@@ -498,13 +498,12 @@ err_free_drm:
 	return ret;
 }
 
-static int rp1dsi_platform_remove(struct platform_device *pdev)
+static void rp1dsi_platform_remove(struct platform_device *pdev)
 {
 	struct drm_device *drm = platform_get_drvdata(pdev);
 	struct rp1_dsi *dsi = drm->dev_private;
 
 	mipi_dsi_host_unregister(&dsi->dsi_host);
-	return 0;
 }
 
 static void rp1dsi_platform_shutdown(struct platform_device *pdev)

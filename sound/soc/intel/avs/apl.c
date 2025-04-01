@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 //
-// Copyright(c) 2021-2022 Intel Corporation. All rights reserved.
+// Copyright(c) 2021-2022 Intel Corporation
 //
 // Authors: Cezary Rojewski <cezary.rojewski@intel.com>
 //          Amadeusz Slawinski <amadeuszx.slawinski@linux.intel.com>
@@ -8,14 +8,32 @@
 
 #include <linux/devcoredump.h>
 #include <linux/slab.h>
+#include <sound/hdaudio_ext.h>
 #include "avs.h"
 #include "messages.h"
 #include "path.h"
+#include "registers.h"
 #include "topology.h"
 
-static int __maybe_unused
-avs_apl_enable_logs(struct avs_dev *adev, enum avs_log_enable enable, u32 aging_period,
-		    u32 fifo_full_period, unsigned long resource_mask, u32 *priorities)
+static irqreturn_t avs_apl_dsp_interrupt(struct avs_dev *adev)
+{
+	u32 adspis = snd_hdac_adsp_readl(adev, AVS_ADSP_REG_ADSPIS);
+	irqreturn_t ret = IRQ_NONE;
+
+	if (adspis == UINT_MAX)
+		return ret;
+
+	if (adspis & AVS_ADSP_ADSPIS_IPC) {
+		avs_skl_ipc_interrupt(adev);
+		ret = IRQ_HANDLED;
+	}
+
+	return ret;
+}
+
+#ifdef CONFIG_DEBUG_FS
+int avs_apl_enable_logs(struct avs_dev *adev, enum avs_log_enable enable, u32 aging_period,
+			u32 fifo_full_period, unsigned long resource_mask, u32 *priorities)
 {
 	struct avs_apl_log_state_info *info;
 	u32 size, num_cores = adev->hw_cfg.dsp_cores;
@@ -47,8 +65,9 @@ avs_apl_enable_logs(struct avs_dev *adev, enum avs_log_enable enable, u32 aging_
 
 	return 0;
 }
+#endif
 
-static int avs_apl_log_buffer_status(struct avs_dev *adev, union avs_notify_msg *msg)
+int avs_apl_log_buffer_status(struct avs_dev *adev, union avs_notify_msg *msg)
 {
 	struct avs_apl_log_buffer_layout layout;
 	void __iomem *addr, *buf;
@@ -102,7 +121,7 @@ static int avs_apl_wait_log_entry(struct avs_dev *adev, u32 core,
 /* reads log header and tests its type */
 #define avs_apl_is_entry_stackdump(addr) ((readl(addr) >> 30) & 0x1)
 
-static int avs_apl_coredump(struct avs_dev *adev, union avs_notify_msg *msg)
+int avs_apl_coredump(struct avs_dev *adev, union avs_notify_msg *msg)
 {
 	struct avs_apl_log_buffer_layout layout;
 	void __iomem *addr, *buf;
@@ -202,7 +221,7 @@ static bool avs_apl_lp_streaming(struct avs_dev *adev)
 	return true;
 }
 
-static bool avs_apl_d0ix_toggle(struct avs_dev *adev, struct avs_ipc_msg *tx, bool wake)
+bool avs_apl_d0ix_toggle(struct avs_dev *adev, struct avs_ipc_msg *tx, bool wake)
 {
 	/* wake in all cases */
 	if (wake)
@@ -219,7 +238,7 @@ static bool avs_apl_d0ix_toggle(struct avs_dev *adev, struct avs_ipc_msg *tx, bo
 	return avs_apl_lp_streaming(adev);
 }
 
-static int avs_apl_set_d0ix(struct avs_dev *adev, bool enable)
+int avs_apl_set_d0ix(struct avs_dev *adev, bool enable)
 {
 	bool streaming = false;
 	int ret;
@@ -236,8 +255,7 @@ const struct avs_dsp_ops avs_apl_dsp_ops = {
 	.power = avs_dsp_core_power,
 	.reset = avs_dsp_core_reset,
 	.stall = avs_dsp_core_stall,
-	.irq_handler = avs_dsp_irq_handler,
-	.irq_thread = avs_dsp_irq_thread,
+	.dsp_interrupt = avs_apl_dsp_interrupt,
 	.int_control = avs_dsp_interrupt_control,
 	.load_basefw = avs_hda_load_basefw,
 	.load_lib = avs_hda_load_library,

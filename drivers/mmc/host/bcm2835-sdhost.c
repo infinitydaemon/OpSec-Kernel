@@ -948,7 +948,7 @@ static void bcm2835_sdhost_prepare_data(struct bcm2835_host *host, struct mmc_co
 	BUG_ON(!host->data);
 }
 
-bool bcm2835_sdhost_send_command(struct bcm2835_host *host,
+static bool bcm2835_sdhost_send_command(struct bcm2835_host *host,
 				 struct mmc_command *cmd)
 {
 	u32 sdcmd, sdhsts;
@@ -1532,7 +1532,7 @@ static irqreturn_t bcm2835_sdhost_irq(int irq, void *dev_id)
 	return result;
 }
 
-void bcm2835_sdhost_set_clock(struct bcm2835_host *host, unsigned int clock)
+static void bcm2835_sdhost_set_clock(struct bcm2835_host *host, unsigned int clock)
 {
 	int div = 0; /* Initialized for compiler warning */
 	unsigned int input_clock = clock;
@@ -1897,7 +1897,7 @@ static void bcm2835_sdhost_tasklet_finish(unsigned long param)
 	log_event("TSK>", mrq, 0);
 }
 
-int bcm2835_sdhost_add_host(struct platform_device *pdev)
+static int bcm2835_sdhost_add_host(struct platform_device *pdev)
 {
 	struct bcm2835_host *host = platform_get_drvdata(pdev);
 	struct mmc_host *mmc;
@@ -2172,7 +2172,7 @@ err:
 	return ret;
 }
 
-static int bcm2835_sdhost_remove(struct platform_device *pdev)
+static void bcm2835_sdhost_remove(struct platform_device *pdev)
 {
 	struct bcm2835_host *host = platform_get_drvdata(pdev);
 
@@ -2194,7 +2194,6 @@ static int bcm2835_sdhost_remove(struct platform_device *pdev)
 	platform_set_drvdata(pdev, NULL);
 
 	pr_debug("bcm2835_sdhost_remove - OK\n");
-	return 0;
 }
 
 static const struct of_device_id bcm2835_sdhost_match[] = {

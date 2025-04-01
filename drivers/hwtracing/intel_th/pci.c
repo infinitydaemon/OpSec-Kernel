@@ -290,13 +290,13 @@ static const struct pci_device_id intel_th_pci_id_table[] = {
 		.driver_data = (kernel_ulong_t)&intel_th_2x,
 	},
 	{
-		/* Meteor Lake-S CPU */
-		PCI_DEVICE(PCI_VENDOR_ID_INTEL, 0xae24),
+		/* Meteor Lake-S */
+		PCI_DEVICE(PCI_VENDOR_ID_INTEL, 0x7f26),
 		.driver_data = (kernel_ulong_t)&intel_th_2x,
 	},
 	{
-		/* Meteor Lake-S */
-		PCI_DEVICE(PCI_VENDOR_ID_INTEL, 0x7f26),
+		/* Meteor Lake-S CPU */
+		PCI_DEVICE(PCI_VENDOR_ID_INTEL, 0xae24),
 		.driver_data = (kernel_ulong_t)&intel_th_2x,
 	},
 	{
@@ -327,6 +327,21 @@ static const struct pci_device_id intel_th_pci_id_table[] = {
 	{
 		/* Lunar Lake */
 		PCI_DEVICE(PCI_VENDOR_ID_INTEL, 0xa824),
+		.driver_data = (kernel_ulong_t)&intel_th_2x,
+	},
+	{
+		/* Arrow Lake */
+		PCI_DEVICE(PCI_VENDOR_ID_INTEL, 0x7724),
+		.driver_data = (kernel_ulong_t)&intel_th_2x,
+	},
+	{
+		/* Panther Lake-H */
+		PCI_DEVICE(PCI_VENDOR_ID_INTEL, 0xe324),
+		.driver_data = (kernel_ulong_t)&intel_th_2x,
+	},
+	{
+		/* Panther Lake-P/U */
+		PCI_DEVICE(PCI_VENDOR_ID_INTEL, 0xe424),
 		.driver_data = (kernel_ulong_t)&intel_th_2x,
 	},
 	{

@@ -14,8 +14,9 @@
 #include <linux/slab.h>
 
 enum fuse_type {
-	FUSE_FSB = 1,
-	FUSE_ELE = 2,
+	FUSE_FSB = BIT(0),
+	FUSE_ELE = BIT(1),
+	FUSE_ECC = BIT(2),
 	FUSE_INVALID = -1
 };
 
@@ -95,7 +96,10 @@ static int imx_ocotp_reg_read(void *context, unsigned int offset, void *val, siz
 			continue;
 		}
 
-		*buf++ = readl_relaxed(reg + (i << 2));
+		if (type & FUSE_ECC)
+			*buf++ = readl_relaxed(reg + (i << 2)) & GENMASK(15, 0);
+		else
+			*buf++ = readl_relaxed(reg + (i << 2));
 	}
 
 	memcpy(val, ((u8 *)p) + skipbytes, bytes);
@@ -106,6 +110,26 @@ static int imx_ocotp_reg_read(void *context, unsigned int offset, void *val, siz
 
 	return 0;
 };
+
+static int imx_ocotp_cell_pp(void *context, const char *id, int index,
+			     unsigned int offset, void *data, size_t bytes)
+{
+	u8 *buf = data;
+	int i;
+
+	/* Deal with some post processing of nvmem cell data */
+	if (id && !strcmp(id, "mac-address"))
+		for (i = 0; i < bytes / 2; i++)
+			swap(buf[i], buf[bytes - i - 1]);
+
+	return 0;
+}
+
+static void imx_ocotp_fixup_dt_cell_info(struct nvmem_device *nvmem,
+					 struct nvmem_cell_info *cell)
+{
+	cell->read_post_process = imx_ocotp_cell_pp;
+}
 
 static int imx_ele_ocotp_probe(struct platform_device *pdev)
 {
@@ -133,6 +157,8 @@ static int imx_ele_ocotp_probe(struct platform_device *pdev)
 	priv->config.stride = 1;
 	priv->config.priv = priv;
 	priv->config.read_only = true;
+	priv->config.add_legacy_fixed_of_cells = true;
+	priv->config.fixup_dt_cell_info = imx_ocotp_fixup_dt_cell_info;
 	mutex_init(&priv->lock);
 
 	nvmem = devm_nvmem_register(dev, &priv->config);
@@ -157,8 +183,30 @@ static const struct ocotp_devtype_data imx93_ocotp_data = {
 	},
 };
 
+static const struct ocotp_devtype_data imx95_ocotp_data = {
+	.reg_off = 0x8000,
+	.reg_read = imx_ocotp_reg_read,
+	.size = 2048,
+	.num_entry = 12,
+	.entry = {
+		{ 0, 1, FUSE_FSB | FUSE_ECC },
+		{ 7, 1, FUSE_FSB | FUSE_ECC },
+		{ 9, 3, FUSE_FSB | FUSE_ECC },
+		{ 12, 24, FUSE_FSB },
+		{ 36, 2, FUSE_FSB  | FUSE_ECC },
+		{ 38, 14, FUSE_FSB },
+		{ 63, 1, FUSE_ELE },
+		{ 128, 16, FUSE_ELE },
+		{ 188, 1, FUSE_ELE },
+		{ 317, 2, FUSE_FSB | FUSE_ECC },
+		{ 320, 7, FUSE_FSB },
+		{ 328, 184, FUSE_FSB }
+	},
+};
+
 static const struct of_device_id imx_ele_ocotp_dt_ids[] = {
 	{ .compatible = "fsl,imx93-ocotp", .data = &imx93_ocotp_data, },
+	{ .compatible = "fsl,imx95-ocotp", .data = &imx95_ocotp_data, },
 	{},
 };
 MODULE_DEVICE_TABLE(of, imx_ele_ocotp_dt_ids);

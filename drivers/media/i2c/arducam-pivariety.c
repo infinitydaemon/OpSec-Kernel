@@ -394,7 +394,7 @@ static int pivariety_open(struct v4l2_subdev *sd, struct v4l2_subdev_fh *fh)
 {
 	struct pivariety *pivariety = to_pivariety(sd);
 	struct v4l2_mbus_framefmt *try_fmt =
-		v4l2_subdev_get_try_format(sd, fh->state, 0);
+		v4l2_subdev_state_get_format(fh->state, 0);
 	struct arducam_format *def_fmt = &pivariety->supported_formats[0];
 
 	/* Initialize try_fmt */
@@ -771,7 +771,7 @@ __pivariety_get_pad_crop(struct pivariety *pivariety,
 
 	switch (which) {
 	case V4L2_SUBDEV_FORMAT_TRY:
-		return v4l2_subdev_get_try_crop(&pivariety->sd, sd_state, pad);
+		return v4l2_subdev_state_get_crop(sd_state, pad);
 	case V4L2_SUBDEV_FORMAT_ACTIVE:
 		ret = pivariety_read_sel(pivariety, &pivariety->crop);
 		if (ret)
@@ -1151,7 +1151,7 @@ static const char *pivariety_ctrl_get_name(u32 id)
 	}
 }
 
-enum v4l2_ctrl_type pivariety_get_v4l2_ctrl_type(u32 id)
+static enum v4l2_ctrl_type pivariety_get_v4l2_ctrl_type(u32 id)
 {
 	switch (id) {
 	case V4L2_CID_ARDUCAM_EXT_TRI:

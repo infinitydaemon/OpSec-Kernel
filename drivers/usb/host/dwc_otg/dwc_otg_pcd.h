@@ -260,6 +260,10 @@ static inline struct device *dwc_otg_pcd_to_dev(struct dwc_otg_pcd *pcd)
 	return &pcd->otg_dev->os_dep.platformdev->dev;
 }
 
+extern void dwc_otg_pcd_stop(dwc_otg_pcd_t * pcd);
+extern dwc_otg_pcd_ep_t *get_ep_by_addr(dwc_otg_pcd_t * pcd, u16 wIndex);
+extern void start_next_request(dwc_otg_pcd_ep_t * ep);
+
 //FIXME this functions should be static, and this prototypes should be removed
 extern void dwc_otg_request_nuke(dwc_otg_pcd_ep_t * ep);
 extern void dwc_otg_request_done(dwc_otg_pcd_ep_t * ep,

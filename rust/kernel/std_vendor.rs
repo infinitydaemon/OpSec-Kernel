@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 
+//! Rust standard library vendored code.
+//!
 //! The contents of this file come from the Rust standard library, hosted in
 //! the <https://github.com/rust-lang/rust> repository, licensed under
 //! "Apache-2.0 OR MIT" and adapted for kernel use. For copyright details,
@@ -14,7 +16,7 @@
 ///
 /// ```rust
 /// let a = 2;
-/// # #[allow(clippy::dbg_macro)]
+/// # #[expect(clippy::disallowed_macros)]
 /// let b = dbg!(a * 2) + 1;
 /// //      ^-- prints: [src/main.rs:2] a * 2 = 4
 /// assert_eq!(b, 5);
@@ -52,7 +54,7 @@
 /// With a method call:
 ///
 /// ```rust
-/// # #[allow(clippy::dbg_macro)]
+/// # #[expect(clippy::disallowed_macros)]
 /// fn foo(n: usize) {
 ///     if dbg!(n.checked_sub(4)).is_some() {
 ///         // ...
@@ -71,7 +73,7 @@
 /// Naive factorial implementation:
 ///
 /// ```rust
-/// # #[allow(clippy::dbg_macro)]
+/// # #[expect(clippy::disallowed_macros)]
 /// # {
 /// fn factorial(n: u32) -> u32 {
 ///     if dbg!(n <= 1) {
@@ -118,7 +120,7 @@
 /// a tuple (and return it, too):
 ///
 /// ```
-/// # #[allow(clippy::dbg_macro)]
+/// # #![expect(clippy::disallowed_macros)]
 /// assert_eq!(dbg!(1usize, 2u32), (1, 2));
 /// ```
 ///
@@ -127,7 +129,7 @@
 /// invocations. You can use a 1-tuple directly if you need one:
 ///
 /// ```
-/// # #[allow(clippy::dbg_macro)]
+/// # #[expect(clippy::disallowed_macros)]
 /// # {
 /// assert_eq!(1, dbg!(1u32,)); // trailing comma ignored
 /// assert_eq!((1,), dbg!((1u32,))); // 1-tuple
@@ -136,7 +138,7 @@
 ///
 /// [`std::dbg`]: https://doc.rust-lang.org/std/macro.dbg.html
 /// [`eprintln`]: https://doc.rust-lang.org/std/macro.eprintln.html
-/// [`printk`]: https://www.kernel.org/doc/html/latest/core-api/printk-basics.html
+/// [`printk`]: https://docs.kernel.org/core-api/printk-basics.html
 /// [`pr_info`]: crate::pr_info!
 /// [`pr_debug`]: crate::pr_debug!
 #[macro_export]
@@ -146,15 +148,16 @@ macro_rules! dbg {
     // `$val` expression could be a block (`{ .. }`), in which case the `pr_info!`
     // will be malformed.
     () => {
-        $crate::pr_info!("[{}:{}]\n", ::core::file!(), ::core::line!())
+        $crate::pr_info!("[{}:{}:{}]\n", ::core::file!(), ::core::line!(), ::core::column!())
     };
     ($val:expr $(,)?) => {
         // Use of `match` here is intentional because it affects the lifetimes
         // of temporaries - https://stackoverflow.com/a/48732525/1063961
         match $val {
             tmp => {
-                $crate::pr_info!("[{}:{}] {} = {:#?}\n",
-                    ::core::file!(), ::core::line!(), ::core::stringify!($val), &tmp);
+                $crate::pr_info!("[{}:{}:{}] {} = {:#?}\n",
+                    ::core::file!(), ::core::line!(), ::core::column!(),
+                    ::core::stringify!($val), &tmp);
                 tmp
             }
         }

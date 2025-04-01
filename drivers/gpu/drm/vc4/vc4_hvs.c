@@ -104,6 +104,7 @@ static const struct debugfs_reg32 vc6_hvs_regs[] = {
 	VC4_REG32(SCALER6_DISP2_RUN),
 	VC4_REG32(SCALER6_EOLN),
 	VC4_REG32(SCALER6_DL_STATUS),
+	VC4_REG32(SCALER6_BFG_MISC),
 	VC4_REG32(SCALER6_QOS0),
 	VC4_REG32(SCALER6_PROF0),
 	VC4_REG32(SCALER6_QOS1),
@@ -140,64 +141,64 @@ static const struct debugfs_reg32 vc6_hvs_regs[] = {
 	VC4_REG32(SCALER6_BAD_AXI),
 };
 
-static const struct debugfs_reg32 vc6_hvs_regs_d0[] = {
-	VC4_REG32(SCALER6D0_VERSION),
-	VC4_REG32(SCALER6D0_CXM_SIZE),
-	VC4_REG32(SCALER6D0_LBM_SIZE),
-	VC4_REG32(SCALER6D0_UBM_SIZE),
-	VC4_REG32(SCALER6D0_COBA_SIZE),
-	VC4_REG32(SCALER6D0_COB_SIZE),
-	VC4_REG32(SCALER6D0_CONTROL),
-	VC4_REG32(SCALER6D0_FETCHER_STATUS),
-	VC4_REG32(SCALER6D0_FETCH_STATUS),
-	VC4_REG32(SCALER6D0_HANDLE_ERROR),
-	VC4_REG32(SCALER6D0_DISP0_CTRL0),
-	VC4_REG32(SCALER6D0_DISP0_CTRL1),
-	VC4_REG32(SCALER6D0_DISP0_BGND0),
-	VC4_REG32(SCALER6D0_DISP0_BGND1),
-	VC4_REG32(SCALER6D0_DISP0_LPTRS),
-	VC4_REG32(SCALER6D0_DISP0_COB),
-	VC4_REG32(SCALER6D0_DISP0_STATUS),
-	VC4_REG32(SCALER6D0_DISP0_DL),
-	VC4_REG32(SCALER6D0_DISP0_RUN),
-	VC4_REG32(SCALER6D0_DISP1_CTRL0),
-	VC4_REG32(SCALER6D0_DISP1_CTRL1),
-	VC4_REG32(SCALER6D0_DISP1_BGND0),
-	VC4_REG32(SCALER6D0_DISP1_BGND1),
-	VC4_REG32(SCALER6D0_DISP1_LPTRS),
-	VC4_REG32(SCALER6D0_DISP1_COB),
-	VC4_REG32(SCALER6D0_DISP1_STATUS),
-	VC4_REG32(SCALER6D0_DISP1_DL),
-	VC4_REG32(SCALER6D0_DISP1_RUN),
-	VC4_REG32(SCALER6D0_DISP2_CTRL0),
-	VC4_REG32(SCALER6D0_DISP2_CTRL1),
-	VC4_REG32(SCALER6D0_DISP2_BGND0),
-	VC4_REG32(SCALER6D0_DISP2_BGND1),
-	VC4_REG32(SCALER6D0_DISP2_LPTRS),
-	VC4_REG32(SCALER6D0_DISP2_COB),
-	VC4_REG32(SCALER6D0_DISP2_STATUS),
-	VC4_REG32(SCALER6D0_DISP2_DL),
-	VC4_REG32(SCALER6D0_DISP2_RUN),
-	VC4_REG32(SCALER6D0_EOLN),
-	VC4_REG32(SCALER6D0_DL_STATUS),
-	VC4_REG32(SCALER6D0_QOS0),
-	VC4_REG32(SCALER6D0_PROF0),
-	VC4_REG32(SCALER6D0_QOS1),
-	VC4_REG32(SCALER6D0_PROF1),
-	VC4_REG32(SCALER6D0_QOS2),
-	VC4_REG32(SCALER6D0_PROF2),
-	VC4_REG32(SCALER6D0_PRI_MAP0),
-	VC4_REG32(SCALER6D0_PRI_MAP1),
-	VC4_REG32(SCALER6D0_HISTCTRL),
-	VC4_REG32(SCALER6D0_HISTBIN0),
-	VC4_REG32(SCALER6D0_HISTBIN1),
-	VC4_REG32(SCALER6D0_HISTBIN2),
-	VC4_REG32(SCALER6D0_HISTBIN3),
-	VC4_REG32(SCALER6D0_HISTBIN4),
-	VC4_REG32(SCALER6D0_HISTBIN5),
-	VC4_REG32(SCALER6D0_HISTBIN6),
-	VC4_REG32(SCALER6D0_HISTBIN7),
-	VC4_REG32(SCALER6D0_HVS_ID),
+static const struct debugfs_reg32 vc6_d_hvs_regs[] = {
+	VC4_REG32(SCALER6D_VERSION),
+	VC4_REG32(SCALER6D_CXM_SIZE),
+	VC4_REG32(SCALER6D_LBM_SIZE),
+	VC4_REG32(SCALER6D_UBM_SIZE),
+	VC4_REG32(SCALER6D_COBA_SIZE),
+	VC4_REG32(SCALER6D_COB_SIZE),
+	VC4_REG32(SCALER6D_CONTROL),
+	VC4_REG32(SCALER6D_FETCHER_STATUS),
+	VC4_REG32(SCALER6D_FETCH_STATUS),
+	VC4_REG32(SCALER6D_HANDLE_ERROR),
+	VC4_REG32(SCALER6D_DISP0_CTRL0),
+	VC4_REG32(SCALER6D_DISP0_CTRL1),
+	VC4_REG32(SCALER6D_DISP0_BGND0),
+	VC4_REG32(SCALER6D_DISP0_BGND1),
+	VC4_REG32(SCALER6D_DISP0_LPTRS),
+	VC4_REG32(SCALER6D_DISP0_COB),
+	VC4_REG32(SCALER6D_DISP0_STATUS),
+	VC4_REG32(SCALER6D_DISP0_DL),
+	VC4_REG32(SCALER6D_DISP0_RUN),
+	VC4_REG32(SCALER6D_DISP1_CTRL0),
+	VC4_REG32(SCALER6D_DISP1_CTRL1),
+	VC4_REG32(SCALER6D_DISP1_BGND0),
+	VC4_REG32(SCALER6D_DISP1_BGND1),
+	VC4_REG32(SCALER6D_DISP1_LPTRS),
+	VC4_REG32(SCALER6D_DISP1_COB),
+	VC4_REG32(SCALER6D_DISP1_STATUS),
+	VC4_REG32(SCALER6D_DISP1_DL),
+	VC4_REG32(SCALER6D_DISP1_RUN),
+	VC4_REG32(SCALER6D_DISP2_CTRL0),
+	VC4_REG32(SCALER6D_DISP2_CTRL1),
+	VC4_REG32(SCALER6D_DISP2_BGND0),
+	VC4_REG32(SCALER6D_DISP2_BGND1),
+	VC4_REG32(SCALER6D_DISP2_LPTRS),
+	VC4_REG32(SCALER6D_DISP2_COB),
+	VC4_REG32(SCALER6D_DISP2_STATUS),
+	VC4_REG32(SCALER6D_DISP2_DL),
+	VC4_REG32(SCALER6D_DISP2_RUN),
+	VC4_REG32(SCALER6D_EOLN),
+	VC4_REG32(SCALER6D_DL_STATUS),
+	VC4_REG32(SCALER6D_QOS0),
+	VC4_REG32(SCALER6D_PROF0),
+	VC4_REG32(SCALER6D_QOS1),
+	VC4_REG32(SCALER6D_PROF1),
+	VC4_REG32(SCALER6D_QOS2),
+	VC4_REG32(SCALER6D_PROF2),
+	VC4_REG32(SCALER6D_PRI_MAP0),
+	VC4_REG32(SCALER6D_PRI_MAP1),
+	VC4_REG32(SCALER6D_HISTCTRL),
+	VC4_REG32(SCALER6D_HISTBIN0),
+	VC4_REG32(SCALER6D_HISTBIN1),
+	VC4_REG32(SCALER6D_HISTBIN2),
+	VC4_REG32(SCALER6D_HISTBIN3),
+	VC4_REG32(SCALER6D_HISTBIN4),
+	VC4_REG32(SCALER6D_HISTBIN5),
+	VC4_REG32(SCALER6D_HISTBIN6),
+	VC4_REG32(SCALER6D_HISTBIN7),
+	VC4_REG32(SCALER6D_HVS_ID),
 };
 
 void vc4_hvs_dump_state(struct vc4_hvs *hvs)
@@ -293,18 +294,18 @@ static int vc6_hvs_debugfs_dlist(struct seq_file *m, void *data)
 		unsigned int active_dlist, dispstat;
 		unsigned int j;
 
-		dispstat = VC4_GET_FIELD6(HVS_READ(SCALER6_DISPX_STATUS(i)),
-					 DISPX_STATUS_MODE);
-		if (dispstat == SCALER6(DISPX_STATUS_MODE_DISABLED) ||
-		    dispstat == SCALER6(DISPX_STATUS_MODE_EOF)) {
+		dispstat = VC4_GET_FIELD(HVS_READ(SCALER6_DISPX_STATUS(i)),
+					 SCALER6_DISPX_STATUS_MODE);
+		if (dispstat == SCALER6_DISPX_STATUS_MODE_DISABLED ||
+		    dispstat == SCALER6_DISPX_STATUS_MODE_EOF) {
 			drm_printf(&p, "HVS chan %u disabled\n", i);
 			continue;
 		}
 
 		drm_printf(&p, "HVS chan %u:\n", i);
 
-		active_dlist = VC4_GET_FIELD6(HVS_READ(SCALER6_DISPX_DL(i)),
-					     DISPX_DL_LACT);
+		active_dlist = VC4_GET_FIELD(HVS_READ(SCALER6_DISPX_DL(i)),
+					     SCALER6_DISPX_DL_LACT);
 		next_entry_start = 0;
 
 		for (j = active_dlist; j < dlist_mem_size; j++) {
@@ -327,82 +328,24 @@ static int vc6_hvs_debugfs_dlist(struct seq_file *m, void *data)
 	return 0;
 }
 
-static int vc5_hvs_debugfs_gamma(struct seq_file *m, void *data)
+static int vc6_hvs_debugfs_upm_allocs(struct seq_file *m, void *data)
 {
 	struct drm_debugfs_entry *entry = m->private;
 	struct drm_device *dev = entry->dev;
 	struct vc4_dev *vc4 = to_vc4_dev(dev);
 	struct vc4_hvs *hvs = vc4->hvs;
 	struct drm_printer p = drm_seq_file_printer(m);
-	unsigned int i, chan;
-	u32 dispstat, dispbkgndx;
+	struct vc4_upm_refcounts *refcount;
+	unsigned int i;
 
-	for (chan = 0; chan < SCALER_CHANNELS_COUNT; chan++) {
-		u32 x_c, grad;
-		u32 offset = SCALER5_DSPGAMMA_START +
-			chan * SCALER5_DSPGAMMA_CHAN_OFFSET;
-
-		dispstat = VC4_GET_FIELD(HVS_READ(SCALER_DISPSTATX(chan)),
-					 SCALER_DISPSTATX_MODE);
-		if (dispstat == SCALER_DISPSTATX_MODE_DISABLED ||
-		    dispstat == SCALER_DISPSTATX_MODE_EOF) {
-			drm_printf(&p, "HVS channel %u: Channel disabled\n", chan);
-			continue;
-		}
-
-		dispbkgndx = HVS_READ(SCALER_DISPBKGNDX(chan));
-		if (!(dispbkgndx & SCALER_DISPBKGND_GAMMA)) {
-			drm_printf(&p, "HVS channel %u: Gamma disabled\n", chan);
-			continue;
-		}
-
-		drm_printf(&p, "HVS channel %u:\n", chan);
-		drm_printf(&p, "  red:\n");
-		for (i = 0; i < SCALER5_DSPGAMMA_NUM_POINTS; i++, offset += 8) {
-			x_c = HVS_READ(offset);
-			grad = HVS_READ(offset + 4);
-			drm_printf(&p, "  %08x %08x - x %u, c %u, grad %u\n",
-				   x_c, grad,
-				   VC4_GET_FIELD(x_c, SCALER5_DSPGAMMA_OFF_X),
-				   VC4_GET_FIELD(x_c, SCALER5_DSPGAMMA_OFF_C),
-				   grad);
-		}
-		drm_printf(&p, "  green:\n");
-		for (i = 0; i < SCALER5_DSPGAMMA_NUM_POINTS; i++, offset += 8) {
-			x_c = HVS_READ(offset);
-			grad = HVS_READ(offset + 4);
-			drm_printf(&p, "  %08x %08x - x %u, c %u, grad %u\n",
-				   x_c, grad,
-				   VC4_GET_FIELD(x_c, SCALER5_DSPGAMMA_OFF_X),
-				   VC4_GET_FIELD(x_c, SCALER5_DSPGAMMA_OFF_C),
-				   grad);
-		}
-		drm_printf(&p, "  blue:\n");
-		for (i = 0; i < SCALER5_DSPGAMMA_NUM_POINTS; i++, offset += 8) {
-			x_c = HVS_READ(offset);
-			grad = HVS_READ(offset + 4);
-			drm_printf(&p, "  %08x %08x - x %u, c %u, grad %u\n",
-				   x_c, grad,
-				   VC4_GET_FIELD(x_c, SCALER5_DSPGAMMA_OFF_X),
-				   VC4_GET_FIELD(x_c, SCALER5_DSPGAMMA_OFF_C),
-				   grad);
-		}
-
-		/* Alpha only valid on channel 2 */
-		if (chan != 2)
-			continue;
-
-		drm_printf(&p, "  alpha:\n");
-		for (i = 0; i < SCALER5_DSPGAMMA_NUM_POINTS; i++, offset += 8) {
-			x_c = HVS_READ(offset);
-			grad = HVS_READ(offset + 4);
-			drm_printf(&p, "  %08x %08x - x %u, c %u, grad %u\n",
-				   x_c, grad,
-				   VC4_GET_FIELD(x_c, SCALER5_DSPGAMMA_OFF_X),
-				   VC4_GET_FIELD(x_c, SCALER5_DSPGAMMA_OFF_C),
-				   grad);
-		}
+	drm_printf(&p, "UPM Handles:\n");
+	for (i = 1; i <= VC4_NUM_UPM_HANDLES; i++) {
+		refcount = &hvs->upm_refcounts[i];
+		drm_printf(&p, "handle %u: refcount %u, size %zu [%08llx + %08llx]\n",
+			   i, refcount_read(&refcount->refcount), refcount->size,
+			   refcount->upm.start, refcount->upm.size);
 	}
+
 	return 0;
 }
 
@@ -432,27 +375,6 @@ static int vc4_hvs_debugfs_dlist_allocs(struct seq_file *m, void *data)
 	}
 
 	spin_unlock_irqrestore(&hvs->mm_lock, flags);
-
-	return 0;
-}
-
-static int vc6_hvs_debugfs_upm_allocs(struct seq_file *m, void *data)
-{
-	struct drm_debugfs_entry *entry = m->private;
-	struct drm_device *dev = entry->dev;
-	struct vc4_dev *vc4 = to_vc4_dev(dev);
-	struct vc4_hvs *hvs = vc4->hvs;
-	struct drm_printer p = drm_seq_file_printer(m);
-	struct vc4_upm_refcounts *refcount;
-	unsigned int i;
-
-	drm_printf(&p, "UPM Handles:\n");
-	for (i = 0; i < VC4_NUM_UPM_HANDLES; i++) {
-		refcount = &hvs->upm_refcounts[i];
-		drm_printf(&p, "handle %u: refcount %u, size %zu [%08llx + %08llx]\n",
-			   i, refcount_read(&refcount->refcount), refcount->size,
-			   refcount->upm.start, refcount->upm.size);
-	}
 
 	return 0;
 }
@@ -529,8 +451,8 @@ static int vc4_hvs_upload_linear_kernel(struct vc4_hvs *hvs,
 
 	ret = drm_mm_insert_node(&hvs->dlist_mm, space, VC4_KERNEL_DWORDS);
 	if (ret) {
-		DRM_ERROR("Failed to allocate space for filter kernel: %d\n",
-			  ret);
+		drm_err(&hvs->vc4->base, "Failed to allocate space for filter kernel: %d\n",
+			ret);
 		return ret;
 	}
 
@@ -563,6 +485,9 @@ static void vc4_hvs_lut_load(struct vc4_hvs *hvs,
 	if (!drm_dev_enter(drm, &idx))
 		return;
 
+	if (hvs->vc4->gen != VC4_GEN_4)
+		goto exit;
+
 	/* The LUT memory is laid out with each HVS channel in order,
 	 * each of which takes 256 writes for R, 256 for G, then 256
 	 * for B.
@@ -578,14 +503,14 @@ static void vc4_hvs_lut_load(struct vc4_hvs *hvs,
 	for (i = 0; i < crtc->gamma_size; i++)
 		HVS_WRITE(SCALER_GAMDATA, vc4_crtc->lut_b[i]);
 
+exit:
 	drm_dev_exit(idx);
 }
 
 static void vc4_hvs_update_gamma_lut(struct vc4_hvs *hvs,
 				     struct vc4_crtc *vc4_crtc)
 {
-	struct drm_crtc *crtc = &vc4_crtc->base;
-	struct drm_crtc_state *crtc_state = crtc->state;
+	struct drm_crtc_state *crtc_state = vc4_crtc->base.state;
 	struct drm_color_lut *lut = crtc_state->gamma_lut->data;
 	u32 length = drm_color_lut_size(crtc_state->gamma_lut);
 	u32 i;
@@ -597,81 +522,6 @@ static void vc4_hvs_update_gamma_lut(struct vc4_hvs *hvs,
 	}
 
 	vc4_hvs_lut_load(hvs, vc4_crtc);
-}
-
-static void vc5_hvs_write_gamma_entry(struct vc4_hvs *hvs,
-				      u32 offset,
-				      struct vc5_gamma_entry *gamma)
-{
-	HVS_WRITE(offset, gamma->x_c_terms);
-	HVS_WRITE(offset + 4, gamma->grad_term);
-}
-
-static void vc5_hvs_lut_load(struct vc4_hvs *hvs,
-			     struct vc4_crtc *vc4_crtc)
-{
-	struct drm_crtc *crtc = &vc4_crtc->base;
-	struct drm_crtc_state *crtc_state = crtc->state;
-	struct vc4_crtc_state *vc4_state = to_vc4_crtc_state(crtc_state);
-	u32 i;
-	u32 offset = SCALER5_DSPGAMMA_START +
-		vc4_state->assigned_channel * SCALER5_DSPGAMMA_CHAN_OFFSET;
-
-	for (i = 0; i < SCALER5_DSPGAMMA_NUM_POINTS; i++, offset += 8)
-		vc5_hvs_write_gamma_entry(hvs, offset, &vc4_crtc->pwl_r[i]);
-	for (i = 0; i < SCALER5_DSPGAMMA_NUM_POINTS; i++, offset += 8)
-		vc5_hvs_write_gamma_entry(hvs, offset, &vc4_crtc->pwl_g[i]);
-	for (i = 0; i < SCALER5_DSPGAMMA_NUM_POINTS; i++, offset += 8)
-		vc5_hvs_write_gamma_entry(hvs, offset, &vc4_crtc->pwl_b[i]);
-
-	if (vc4_state->assigned_channel == 2) {
-		/* Alpha only valid on channel 2 */
-		for (i = 0; i < SCALER5_DSPGAMMA_NUM_POINTS; i++, offset += 8)
-			vc5_hvs_write_gamma_entry(hvs, offset, &vc4_crtc->pwl_a[i]);
-	}
-}
-
-static void vc5_hvs_update_gamma_lut(struct vc4_hvs *hvs,
-				     struct vc4_crtc *vc4_crtc)
-{
-	struct drm_crtc *crtc = &vc4_crtc->base;
-	struct drm_color_lut *lut = crtc->state->gamma_lut->data;
-	unsigned int step, i;
-	u32 start, end;
-
-#define VC5_HVS_UPDATE_GAMMA_ENTRY_FROM_LUT(pwl, chan)			\
-	start = drm_color_lut_extract(lut[i * step].chan, 12);		\
-	end = drm_color_lut_extract(lut[(i + 1) * step - 1].chan, 12);	\
-									\
-	/* Negative gradients not permitted by the hardware, so		\
-	 * flatten such points out.					\
-	 */								\
-	if (end < start)						\
-		end = start;						\
-									\
-	/* Assume 12bit pipeline.					\
-	 * X evenly spread over full range (12 bit).			\
-	 * C as U12.4 format.						\
-	 * Gradient as U4.8 format.					\
-	*/								\
-	vc4_crtc->pwl[i] =						\
-		VC5_HVS_SET_GAMMA_ENTRY(i << 8, start << 4,		\
-				((end - start) << 4) / (step - 1))
-
-	/* HVS5 has a 16 point piecewise linear function for each colour
-	 * channel (including alpha on channel 2) on each display channel.
-	 *
-	 * Currently take a crude subsample of the gamma LUT, but this could
-	 * be improved to implement curve fitting.
-	 */
-	step = crtc->gamma_size / SCALER5_DSPGAMMA_NUM_POINTS;
-	for (i = 0; i < SCALER5_DSPGAMMA_NUM_POINTS; i++) {
-		VC5_HVS_UPDATE_GAMMA_ENTRY_FROM_LUT(pwl_r, red);
-		VC5_HVS_UPDATE_GAMMA_ENTRY_FROM_LUT(pwl_g, green);
-		VC5_HVS_UPDATE_GAMMA_ENTRY_FROM_LUT(pwl_b, blue);
-	}
-
-	vc5_hvs_lut_load(hvs, vc4_crtc);
 }
 
 static void vc4_hvs_irq_enable_eof(struct vc4_hvs *hvs,
@@ -695,7 +545,8 @@ static void vc4_hvs_irq_enable_eof(struct vc4_hvs *hvs,
 			  SCALER5_DISPCTRL_DSPEIEOF(channel));
 		break;
 
-	case VC4_GEN_6:
+	case VC4_GEN_6_C:
+	case VC4_GEN_6_D:
 		enable_irq(hvs->eof_irq[channel].desc);
 		break;
 
@@ -727,7 +578,8 @@ static void vc4_hvs_irq_clear_eof(struct vc4_hvs *hvs,
 			  ~SCALER5_DISPCTRL_DSPEIEOF(channel));
 		break;
 
-	case VC4_GEN_6:
+	case VC4_GEN_6_C:
+	case VC4_GEN_6_D:
 		disable_irq_nosync(hvs->eof_irq[channel].desc);
 		break;
 
@@ -766,6 +618,7 @@ vc4_hvs_alloc_dlist_entry(struct vc4_hvs *hvs,
 	ret = drm_mm_insert_node(&hvs->dlist_mm, &alloc->mm_node,
 				 dlist_count);
 	spin_unlock_irqrestore(&hvs->mm_lock, flags);
+
 	if (ret) {
 		drm_err(dev, "Failed to allocate DLIST entry. Requested size=%zu. ret=%d. DISPCTRL is %08x\n",
 			dlist_count, ret, HVS_READ(SCALER_DISPCTRL));
@@ -872,20 +725,18 @@ static bool vc4_hvs_frcnt_lte(u8 cnt1, u8 cnt2)
 	return (s8)((cnt1 << 2) - (cnt2 << 2)) <= 0;
 }
 
-bool vc4_hvs_check_channel_active(struct vc4_hvs *hvs, unsigned int fifo)
+static bool vc4_hvs_check_channel_active(struct vc4_hvs *hvs, unsigned int fifo)
 {
 	struct vc4_dev *vc4 = hvs->vc4;
 	struct drm_device *drm = &vc4->base;
 	bool enabled = false;
 	int idx;
 
-	WARN_ON_ONCE(vc4->gen > VC4_GEN_6);
-
 	if (!drm_dev_enter(drm, &idx))
 		return 0;
 
-	if (vc4->gen >= VC4_GEN_6)
-		enabled = HVS_READ(SCALER6_DISPX_CTRL0(fifo)) & SCALER6(DISPX_CTRL0_ENB);
+	if (vc4->gen >= VC4_GEN_6_C)
+		enabled = HVS_READ(SCALER6_DISPX_CTRL0(fifo)) & SCALER6_DISPX_CTRL0_ENB;
 	else
 		enabled = HVS_READ(SCALER_DISPCTRLX(fifo)) & SCALER_DISPCTRLX_ENABLE;
 
@@ -925,7 +776,6 @@ static void vc4_hvs_dlist_free_work(struct work_struct *work)
 	u8 frcnt[3];
 	int i;
 
-
 	spin_lock_irqsave(&hvs->mm_lock, flags);
 	for (i = 0; i < 3; i++) {
 		frcnt[i] = vc4_hvs_get_fifo_frame_count(hvs, i);
@@ -948,15 +798,16 @@ u8 vc4_hvs_get_fifo_frame_count(struct vc4_hvs *hvs, unsigned int fifo)
 	u8 field = 0;
 	int idx;
 
-	WARN_ON_ONCE(vc4->gen > VC4_GEN_6);
+	WARN_ON_ONCE(vc4->gen > VC4_GEN_6_D);
 
 	if (!drm_dev_enter(drm, &idx))
 		return 0;
 
 	switch (vc4->gen) {
-	case VC4_GEN_6:
-		field = VC4_GET_FIELD6(HVS_READ(SCALER6_DISPX_STATUS(fifo)),
-				      DISPX_STATUS_FRCNT);
+	case VC4_GEN_6_C:
+	case VC4_GEN_6_D:
+		field = VC4_GET_FIELD(HVS_READ(SCALER6_DISPX_STATUS(fifo)),
+				      SCALER6_DISPX_STATUS_FRCNT);
 		break;
 	case VC4_GEN_5:
 		switch (fifo) {
@@ -990,6 +841,9 @@ u8 vc4_hvs_get_fifo_frame_count(struct vc4_hvs *hvs, unsigned int fifo)
 			break;
 		}
 		break;
+	default:
+		drm_err(drm, "Unknown VC4 generation: %d", vc4->gen);
+		return 0;
 	}
 
 	drm_dev_exit(idx);
@@ -1002,7 +856,7 @@ int vc4_hvs_get_fifo_from_output(struct vc4_hvs *hvs, unsigned int output)
 	u32 reg;
 	int ret;
 
-	WARN_ON_ONCE(vc4->gen > VC4_GEN_6);
+	WARN_ON_ONCE(vc4->gen > VC4_GEN_6_D);
 
 	switch (vc4->gen) {
 	case VC4_GEN_4:
@@ -1059,7 +913,8 @@ int vc4_hvs_get_fifo_from_output(struct vc4_hvs *hvs, unsigned int output)
 			return -EPIPE;
 		}
 
-	case VC4_GEN_6:
+	case VC4_GEN_6_C:
+	case VC4_GEN_6_D:
 		switch (output) {
 		case 0:
 			return 0;
@@ -1075,9 +930,10 @@ int vc4_hvs_get_fifo_from_output(struct vc4_hvs *hvs, unsigned int output)
 		default:
 			return -EPIPE;
 		}
-	}
 
-	return -EPIPE;
+	default:
+		return -EPIPE;
+	}
 }
 
 static int vc4_hvs_init_channel(struct vc4_hvs *hvs, struct drm_crtc *crtc,
@@ -1131,20 +987,14 @@ static int vc4_hvs_init_channel(struct vc4_hvs *hvs, struct drm_crtc *crtc,
 	dispbkgndx &= ~SCALER_DISPBKGND_GAMMA;
 	dispbkgndx &= ~SCALER_DISPBKGND_INTERLACE;
 
-	if (crtc->state->gamma_lut)
-		/* Enable gamma on if required */
-		dispbkgndx |= SCALER_DISPBKGND_GAMMA;
-
 	HVS_WRITE(SCALER_DISPBKGNDX(chan), dispbkgndx |
+		  ((vc4->gen == VC4_GEN_4) ? SCALER_DISPBKGND_GAMMA : 0) |
 		  (interlace ? SCALER_DISPBKGND_INTERLACE : 0));
 
 	/* Reload the LUT, since the SRAMs would have been disabled if
 	 * all CRTCs had SCALER_DISPBKGND_GAMMA unset at once.
 	 */
-	if (vc4->gen == VC4_GEN_4)
-		vc4_hvs_lut_load(hvs, vc4_crtc);
-	else
-		vc5_hvs_lut_load(hvs, vc4_crtc);
+	vc4_hvs_lut_load(hvs, vc4_crtc);
 
 	drm_dev_exit(idx);
 
@@ -1162,25 +1012,25 @@ static int vc6_hvs_init_channel(struct vc4_hvs *hvs, struct drm_crtc *crtc,
 	u32 disp_ctrl1;
 	int idx;
 
-	WARN_ON_ONCE(vc4->gen != VC4_GEN_6);
+	WARN_ON_ONCE(vc4->gen < VC4_GEN_6_C);
 
 	if (!drm_dev_enter(drm, &idx))
 		return -ENODEV;
 
-	HVS_WRITE(SCALER6_DISPX_CTRL0(chan), SCALER6(DISPX_CTRL0_RESET));
+	HVS_WRITE(SCALER6_DISPX_CTRL0(chan), SCALER6_DISPX_CTRL0_RESET);
 
 	disp_ctrl1 = HVS_READ(SCALER6_DISPX_CTRL1(chan));
-	disp_ctrl1 &= ~SCALER6(DISPX_CTRL1_INTLACE);
+	disp_ctrl1 &= ~SCALER6_DISPX_CTRL1_INTLACE;
 	HVS_WRITE(SCALER6_DISPX_CTRL1(chan),
-		  disp_ctrl1 | (interlace ? SCALER6(DISPX_CTRL1_INTLACE) : 0));
+		  disp_ctrl1 | (interlace ? SCALER6_DISPX_CTRL1_INTLACE : 0));
 
 	HVS_WRITE(SCALER6_DISPX_CTRL0(chan),
-		  SCALER6(DISPX_CTRL0_ENB) |
-		  VC4_SET_FIELD6(mode->hdisplay - 1,
-				DISPX_CTRL0_FWIDTH) |
-		  (oneshot ? SCALER6(DISPX_CTRL0_ONESHOT) : 0) |
-		  VC4_SET_FIELD6(mode->vdisplay - 1,
-				DISPX_CTRL0_LINES));
+		  SCALER6_DISPX_CTRL0_ENB |
+		  VC4_SET_FIELD(mode->hdisplay - 1,
+				SCALER6_DISPX_CTRL0_FWIDTH) |
+		  (oneshot ? SCALER6_DISPX_CTRL0_ONESHOT : 0) |
+		  VC4_SET_FIELD(mode->vdisplay - 1,
+				SCALER6_DISPX_CTRL0_LINES));
 
 	drm_dev_exit(idx);
 
@@ -1211,6 +1061,10 @@ static void __vc4_hvs_stop_channel(struct vc4_hvs *hvs, unsigned int chan)
 				   SCALER_DISPSTATX_MODE) !=
 		     SCALER_DISPSTATX_MODE_DISABLED);
 
+	WARN_ON_ONCE((HVS_READ(SCALER_DISPSTATX(chan)) &
+		      (SCALER_DISPSTATX_FULL | SCALER_DISPSTATX_EMPTY)) !=
+		     SCALER_DISPSTATX_EMPTY);
+
 out:
 	drm_dev_exit(idx);
 }
@@ -1221,23 +1075,23 @@ static void __vc6_hvs_stop_channel(struct vc4_hvs *hvs, unsigned int chan)
 	struct drm_device *drm = &vc4->base;
 	int idx;
 
-	WARN_ON_ONCE(vc4->gen != VC4_GEN_6);
+	WARN_ON_ONCE(vc4->gen < VC4_GEN_6_C);
 
 	if (!drm_dev_enter(drm, &idx))
 		return;
 
-	if (!(HVS_READ(SCALER6_DISPX_CTRL0(chan)) & SCALER6(DISPX_CTRL0_ENB)))
+	if (!(HVS_READ(SCALER6_DISPX_CTRL0(chan)) & SCALER6_DISPX_CTRL0_ENB))
 		goto out;
 
 	HVS_WRITE(SCALER6_DISPX_CTRL0(chan),
-		  HVS_READ(SCALER6_DISPX_CTRL0(chan)) | SCALER6(DISPX_CTRL0_RESET));
+		  HVS_READ(SCALER6_DISPX_CTRL0(chan)) | SCALER6_DISPX_CTRL0_RESET);
 
 	HVS_WRITE(SCALER6_DISPX_CTRL0(chan),
-		  HVS_READ(SCALER6_DISPX_CTRL0(chan)) & ~SCALER6(DISPX_CTRL0_ENB));
+		  HVS_READ(SCALER6_DISPX_CTRL0(chan)) & ~SCALER6_DISPX_CTRL0_ENB);
 
-	WARN_ON_ONCE(VC4_GET_FIELD6(HVS_READ(SCALER6_DISPX_STATUS(chan)),
-				   DISPX_STATUS_MODE) !=
-		     SCALER6(DISPX_STATUS_MODE_DISABLED));
+	WARN_ON_ONCE(VC4_GET_FIELD(HVS_READ(SCALER6_DISPX_STATUS(chan)),
+				   SCALER6_DISPX_STATUS_MODE) !=
+		     SCALER6_DISPX_STATUS_MODE_DISABLED);
 
 out:
 	drm_dev_exit(idx);
@@ -1247,50 +1101,10 @@ void vc4_hvs_stop_channel(struct vc4_hvs *hvs, unsigned int chan)
 {
 	struct vc4_dev *vc4 = hvs->vc4;
 
-	if (vc4->gen >= VC4_GEN_6)
+	if (vc4->gen >= VC4_GEN_6_C)
 		__vc6_hvs_stop_channel(hvs, chan);
 	else
 		__vc4_hvs_stop_channel(hvs, chan);
-}
-
-static int vc4_hvs_gamma_check(struct drm_crtc *crtc,
-			       struct drm_atomic_state *state)
-{
-	struct drm_crtc_state *crtc_state = drm_atomic_get_new_crtc_state(state, crtc);
-	struct drm_connector_state *conn_state;
-	struct drm_connector *connector;
-	struct drm_device *dev = crtc->dev;
-	struct vc4_dev *vc4 = to_vc4_dev(dev);
-
-	if (vc4->gen == VC4_GEN_4)
-		return 0;
-
-	if (!crtc_state->color_mgmt_changed)
-		return 0;
-
-	if (crtc_state->gamma_lut) {
-		unsigned int len = drm_color_lut_size(crtc_state->gamma_lut);
-
-		if (len != crtc->gamma_size) {
-			DRM_DEBUG_KMS("Invalid LUT size; got %u, expected %u\n",
-				      len, crtc->gamma_size);
-			return -EINVAL;
-		}
-	}
-
-	connector = vc4_get_crtc_connector(crtc, crtc_state);
-	if (!connector)
-		return -EINVAL;
-
-	if (!(connector->connector_type == DRM_MODE_CONNECTOR_HDMIA))
-		return 0;
-
-	conn_state = drm_atomic_get_connector_state(state, connector);
-	if (!conn_state)
-		return -EINVAL;
-
-	crtc_state->mode_changed = true;
-	return 0;
 }
 
 int vc4_hvs_atomic_check(struct drm_crtc *crtc, struct drm_atomic_state *state)
@@ -1325,14 +1139,13 @@ int vc4_hvs_atomic_check(struct drm_crtc *crtc, struct drm_atomic_state *state)
 
 	drm_dbg_driver(dev, "[CRTC:%d:%s] Allocating DLIST block with size: %u\n",
 		       crtc->base.id, crtc->name, dlist_count);
-
 	alloc = vc4_hvs_alloc_dlist_entry(vc4->hvs, vc4_state->assigned_channel, dlist_count);
 	if (IS_ERR(alloc))
 		return PTR_ERR(alloc);
 
 	vc4_state->mm = alloc;
 
-	return vc4_hvs_gamma_check(crtc, state);
+	return 0;
 }
 
 static void vc4_hvs_install_dlist(struct drm_crtc *crtc)
@@ -1347,12 +1160,13 @@ static void vc4_hvs_install_dlist(struct drm_crtc *crtc)
 		return;
 
 	WARN_ON(!vc4_state->mm);
+
 	vc4_state->mm->dlist_programmed = true;
 
-	if (vc4->gen >= VC4_GEN_6)
+	if (vc4->gen >= VC4_GEN_6_C)
 		HVS_WRITE(SCALER6_DISPX_LPTRS(vc4_state->assigned_channel),
-			  VC4_SET_FIELD6(vc4_state->mm->mm_node.start,
-					DISPX_LPTRS_HEADE));
+			  VC4_SET_FIELD(vc4_state->mm->mm_node.start,
+					SCALER6_DISPX_LPTRS_HEADE));
 	else
 		HVS_WRITE(SCALER_DISPLISTX(vc4_state->assigned_channel),
 			  vc4_state->mm->mm_node.start);
@@ -1413,7 +1227,7 @@ void vc4_hvs_atomic_enable(struct drm_crtc *crtc,
 	vc4_hvs_install_dlist(crtc);
 	vc4_hvs_update_dlist(crtc);
 
-	if (vc4->gen >= VC4_GEN_6)
+	if (vc4->gen >= VC4_GEN_6_C)
 		vc6_hvs_init_channel(vc4->hvs, crtc, mode, oneshot);
 	else
 		vc4_hvs_init_channel(vc4->hvs, crtc, mode, oneshot);
@@ -1451,7 +1265,7 @@ void vc4_hvs_atomic_flush(struct drm_crtc *crtc,
 	bool found = false;
 	int idx;
 
-	WARN_ON_ONCE(vc4->gen > VC4_GEN_6);
+	WARN_ON_ONCE(vc4->gen > VC4_GEN_6_D);
 
 	if (!drm_dev_enter(dev, &idx)) {
 		vc4_crtc_send_vblank(crtc);
@@ -1505,7 +1319,7 @@ void vc4_hvs_atomic_flush(struct drm_crtc *crtc,
 	WARN_ON(!vc4_state->mm);
 	WARN_ON_ONCE(dlist_next - dlist_start != vc4_state->mm->mm_node.size);
 
-	if (vc4->gen >= VC4_GEN_6) {
+	if (vc4->gen >= VC4_GEN_6_C) {
 		/* This sets a black background color fill, as is the case
 		 * with other DRM drivers.
 		 */
@@ -1537,25 +1351,14 @@ void vc4_hvs_atomic_flush(struct drm_crtc *crtc,
 		WARN_ON_ONCE(vc4->gen > VC4_GEN_5);
 
 		if (crtc->state->gamma_lut) {
-			if (vc4->gen == VC4_GEN_4) {
-				vc4_hvs_update_gamma_lut(hvs, vc4_crtc);
-				dispbkgndx |= SCALER_DISPBKGND_GAMMA;
-			} else {
-				vc5_hvs_update_gamma_lut(hvs, vc4_crtc);
-			}
+			vc4_hvs_update_gamma_lut(hvs, vc4_crtc);
+			dispbkgndx |= SCALER_DISPBKGND_GAMMA;
 		} else {
 			/* Unsetting DISPBKGND_GAMMA skips the gamma lut step
 			 * in hardware, which is the same as a linear lut that
 			 * DRM expects us to use in absence of a user lut.
-			 *
-			 * Do NOT change state dynamically for hvs5 as it
-			 * inserts a delay in the pipeline that will cause
-			 * stalls if enabled/disabled whilst running. The other
-			 * should already be disabling/enabling the pipeline
-			 * when gamma changes.
 			 */
-			if (vc4->gen == VC4_GEN_4)
-				dispbkgndx &= ~SCALER_DISPBKGND_GAMMA;
+			dispbkgndx &= ~SCALER_DISPBKGND_GAMMA;
 		}
 		HVS_WRITE(SCALER_DISPBKGNDX(channel), dispbkgndx);
 	}
@@ -1685,8 +1488,6 @@ static irqreturn_t vc6_hvs_eof_irq_handler(int irq, void *data)
 	struct vc4_hvs *hvs = vc4->hvs;
 	unsigned int i;
 
-	WARN_ON(vc4->gen < VC4_GEN_6);
-
 	for (i = 0; i < HVS_NUM_CHANNELS; i++) {
 		if (!hvs->eof_irq[i].enabled)
 			continue;
@@ -1697,11 +1498,11 @@ static irqreturn_t vc6_hvs_eof_irq_handler(int irq, void *data)
 		if (hvs->bg_fill[i])
 			HVS_WRITE(SCALER6_DISPX_CTRL1(i),
 				  HVS_READ(SCALER6_DISPX_CTRL1(i)) |
-				  SCALER6(DISPX_CTRL1_BGENB));
+				  SCALER6_DISPX_CTRL1_BGENB);
 		else
 			HVS_WRITE(SCALER6_DISPX_CTRL1(i),
 				  HVS_READ(SCALER6_DISPX_CTRL1(i)) &
-				  ~SCALER6(DISPX_CTRL1_BGENB));
+				  ~SCALER6_DISPX_CTRL1_BGENB);
 
 		vc4_hvs_schedule_dlist_sweep(hvs, i);
 		return IRQ_HANDLED;
@@ -1716,22 +1517,15 @@ int vc4_hvs_debugfs_init(struct drm_minor *minor)
 	struct vc4_dev *vc4 = to_vc4_dev(drm);
 	struct vc4_hvs *hvs = vc4->hvs;
 
-	if (vc4->firmware_kms)
-		return 0;
-
 	if (!vc4->hvs)
 		return -ENODEV;
 
-	if (vc4->gen == VC4_GEN_4) {
+	if (vc4->gen == VC4_GEN_4)
 		debugfs_create_bool("hvs_load_tracker", S_IRUGO | S_IWUSR,
 				    minor->debugfs_root,
 				    &vc4->load_tracker_enabled);
 
-		drm_debugfs_add_file(drm, "hvs_gamma", vc5_hvs_debugfs_gamma,
-				     NULL);
-	}
-
-	if (vc4->gen >= VC4_GEN_6) {
+	if (vc4->gen >= VC4_GEN_6_C) {
 		drm_debugfs_add_file(drm, "hvs_dlists", vc6_hvs_debugfs_dlist, NULL);
 		drm_debugfs_add_file(drm, "hvs_upm", vc6_hvs_debugfs_upm_allocs, NULL);
 	} else {
@@ -1770,9 +1564,6 @@ struct vc4_hvs *__vc4_hvs_alloc(struct vc4_dev *vc4,
 
 	spin_lock_init(&hvs->mm_lock);
 
-	INIT_LIST_HEAD(&hvs->stale_dlist_entries);
-	INIT_WORK(&hvs->free_dlist_work, vc4_hvs_dlist_free_work);
-
 	switch (vc4->gen) {
 	case VC4_GEN_4:
 	case VC4_GEN_5:
@@ -1786,7 +1577,8 @@ struct vc4_hvs *__vc4_hvs_alloc(struct vc4_dev *vc4,
 		dlist_size = (SCALER_DLIST_SIZE >> 2) - HVS_BOOTLOADER_DLIST_END;
 		break;
 
-	case VC4_GEN_6:
+	case VC4_GEN_6_C:
+	case VC4_GEN_6_D:
 		dlist_start = HVS_BOOTLOADER_DLIST_END;
 
 		/*
@@ -1794,7 +1586,7 @@ struct vc4_hvs *__vc4_hvs_alloc(struct vc4_dev *vc4,
 		 * access a register. Use a plausible size then.
 		 */
 		if (!kunit_get_current_test())
-			dlist_size = HVS_READ(SCALER6(CXM_SIZE));
+			dlist_size = HVS_READ(SCALER6_CXM_SIZE);
 		else
 			dlist_size = 4096;
 
@@ -1814,6 +1606,18 @@ struct vc4_hvs *__vc4_hvs_alloc(struct vc4_dev *vc4,
 
 	hvs->dlist_mem_size = dlist_size;
 
+	INIT_LIST_HEAD(&hvs->stale_dlist_entries);
+	INIT_WORK(&hvs->free_dlist_work, vc4_hvs_dlist_free_work);
+
+	/* Set up the HVS display list memory manager.  We never
+	 * overwrite the setup from the bootloader (just 128b out of
+	 * our 16K), since we don't want to scramble the screen when
+	 * transitioning from the firmware's boot setup to runtime.
+	 */
+	drm_mm_init(&hvs->dlist_mm,
+		    HVS_BOOTLOADER_DLIST_END,
+		    (SCALER_DLIST_SIZE >> 2) - HVS_BOOTLOADER_DLIST_END);
+
 	/* Set up the HVS LBM memory manager.  We could have some more
 	 * complicated data structure that allowed reuse of LBM areas
 	 * between planes when they don't overlap on the screen, but
@@ -1831,7 +1635,8 @@ struct vc4_hvs *__vc4_hvs_alloc(struct vc4_dev *vc4,
 		lbm_size = 60 * SZ_1K;
 		break;
 
-	case VC4_GEN_6:
+	case VC4_GEN_6_C:
+	case VC4_GEN_6_D:
 		/*
 		 * If we are running a test, it means that we can't
 		 * access a register. Use a plausible size then.
@@ -1847,7 +1652,7 @@ struct vc4_hvs *__vc4_hvs_alloc(struct vc4_dev *vc4,
 	drm_mm_init(&hvs->lbm_mm, 0, lbm_size);
 	ida_init(&hvs->lbm_handles);
 
-	if (vc4->gen >= VC4_GEN_6) {
+	if (vc4->gen >= VC4_GEN_6_C) {
 		ida_init(&hvs->upm_handles);
 
 		/*
@@ -2045,29 +1850,16 @@ static int vc6_hvs_hw_init(struct vc4_hvs *hvs)
 	const struct vc6_csc_coeff_entry *coeffs;
 	unsigned int i;
 
-	HVS_WRITE6(CONTROL,
+	HVS_WRITE(SCALER6_CONTROL,
 		  SCALER6_CONTROL_HVS_EN |
-		  VC4_SET_FIELD(8, SCALER6_CONTROL_PF_LINES)|
+		  VC4_SET_FIELD(8, SCALER6_CONTROL_PF_LINES) |
 		  VC4_SET_FIELD(15, SCALER6_CONTROL_MAX_REQS));
 
 	/* Set HVS arbiter priority to max */
 	HVS_WRITE(SCALER6(PRI_MAP0), 0xffffffff);
 	HVS_WRITE(SCALER6(PRI_MAP1), 0xffffffff);
 
-	if (hvs->vc4->step_d0) {
-		for (i = 0; i < 8; i++) {
-			HVS_WRITE(SCALER_PI_CMP_CSC_RED0(i), 0x1f002566);
-			HVS_WRITE(SCALER_PI_CMP_CSC_RED1(i), 0x3994);
-			HVS_WRITE(SCALER_PI_CMP_CSC_RED_CLAMP(i), 0xfff00000);
-			HVS_WRITE(SCALER_PI_CMP_CSC_CFG(i), 0x1);
-			HVS_WRITE(SCALER_PI_CMP_CSC_GREEN0(i), 0x18002566);
-			HVS_WRITE(SCALER_PI_CMP_CSC_GREEN1(i), 0xf927eee2);
-			HVS_WRITE(SCALER_PI_CMP_CSC_GREEN_CLAMP(i), 0xfff00000);
-			HVS_WRITE(SCALER_PI_CMP_CSC_BLUE0(i), 0x18002566);
-			HVS_WRITE(SCALER_PI_CMP_CSC_BLUE1(i), 0x43d80000);
-			HVS_WRITE(SCALER_PI_CMP_CSC_BLUE_CLAMP(i), 0xfff00000);
-		}
-	} else {
+	if (hvs->vc4->gen == VC4_GEN_6_C) {
 		for (i = 0; i < 6; i++) {
 			coeffs = &csc_coeffs[i / 3][i % 3];
 
@@ -2090,6 +1882,19 @@ static int vc6_hvs_hw_init(struct vc4_hvs *hvs)
 			HVS_WRITE(CFC1_N_MA_CSC_COEFF_C24(i), coeffs->csc[2][4]);
 
 			HVS_WRITE(CFC1_N_NL_CSC_CTRL(i), BIT(15));
+		}
+	} else {
+		for (i = 0; i < 8; i++) {
+			HVS_WRITE(SCALER_PI_CMP_CSC_RED0(i), 0x1f002566);
+			HVS_WRITE(SCALER_PI_CMP_CSC_RED1(i), 0x3994);
+			HVS_WRITE(SCALER_PI_CMP_CSC_RED_CLAMP(i), 0xfff00000);
+			HVS_WRITE(SCALER_PI_CMP_CSC_CFG(i), 0x1);
+			HVS_WRITE(SCALER_PI_CMP_CSC_GREEN0(i), 0x18002566);
+			HVS_WRITE(SCALER_PI_CMP_CSC_GREEN1(i), 0xf927eee2);
+			HVS_WRITE(SCALER_PI_CMP_CSC_GREEN_CLAMP(i), 0xfff00000);
+			HVS_WRITE(SCALER_PI_CMP_CSC_BLUE0(i), 0x18002566);
+			HVS_WRITE(SCALER_PI_CMP_CSC_BLUE1(i), 0x43d80000);
+			HVS_WRITE(SCALER_PI_CMP_CSC_BLUE_CLAMP(i), 0xfff00000);
 		}
 	}
 
@@ -2160,27 +1965,28 @@ static int vc4_hvs_cob_init(struct vc4_hvs *hvs)
 		HVS_WRITE(SCALER_DISPBASE0, reg);
 		break;
 
-	case VC4_GEN_6:
+	case VC4_GEN_6_C:
+	case VC4_GEN_6_D:
 		#define VC6_COB_LINE_WIDTH	3840
 		#define VC6_COB_NUM_LINES	4
-		reg = 0;
+		base = 0;
 		top = 3840;
 
-		HVS_WRITE(SCALER6(DISP2_COB),
+		HVS_WRITE(SCALER6_DISPX_COB(2),
 			  VC4_SET_FIELD(top, SCALER6_DISPX_COB_TOP) |
 			  VC4_SET_FIELD(base, SCALER6_DISPX_COB_BASE));
 
 		base = top + 16;
 		top += VC6_COB_LINE_WIDTH * VC6_COB_NUM_LINES;
 
-		HVS_WRITE(SCALER6(DISP1_COB),
+		HVS_WRITE(SCALER6_DISPX_COB(1),
 			  VC4_SET_FIELD(top, SCALER6_DISPX_COB_TOP) |
 			  VC4_SET_FIELD(base, SCALER6_DISPX_COB_BASE));
 
 		base = top + 16;
 		top += VC6_COB_LINE_WIDTH * VC6_COB_NUM_LINES;
 
-		HVS_WRITE(SCALER6(DISP0_COB),
+		HVS_WRITE(SCALER6_DISPX_COB(0),
 			  VC4_SET_FIELD(top, SCALER6_DISPX_COB_TOP) |
 			  VC4_SET_FIELD(base, SCALER6_DISPX_COB_BASE));
 		break;
@@ -2211,12 +2017,16 @@ static int vc4_hvs_bind(struct device *dev, struct device *master, void *data)
 
 	hvs->regset.base = hvs->regs;
 
-	if (vc4->gen >= VC4_GEN_6 && vc4->step_d0) {
-		hvs->regset.regs = vc6_hvs_regs_d0;
-		hvs->regset.nregs = ARRAY_SIZE(vc6_hvs_regs_d0);
-	} else if (vc4->gen >= VC4_GEN_6) {
+	if (vc4->gen == VC4_GEN_6_C) {
 		hvs->regset.regs = vc6_hvs_regs;
 		hvs->regset.nregs = ARRAY_SIZE(vc6_hvs_regs);
+
+		if (VC4_GET_FIELD(HVS_READ(SCALER6_VERSION), SCALER6_VERSION) ==
+						SCALER6_VERSION_D0) {
+			vc4->gen = VC4_GEN_6_D;
+			hvs->regset.regs = vc6_d_hvs_regs;
+			hvs->regset.nregs = ARRAY_SIZE(vc6_d_hvs_regs);
+		}
 	} else {
 		hvs->regset.regs = vc4_hvs_regs;
 		hvs->regset.nregs = ARRAY_SIZE(vc4_hvs_regs);
@@ -2237,14 +2047,14 @@ static int vc4_hvs_bind(struct device *dev, struct device *master, void *data)
 			return -EPROBE_DEFER;
 
 		hvs->core_clk = devm_clk_get(&pdev->dev,
-					     (vc4->gen >= VC4_GEN_6) ? "core" : NULL);
+					     (vc4->gen >= VC4_GEN_6_C) ? "core" : NULL);
 		if (IS_ERR(hvs->core_clk)) {
 			dev_err(&pdev->dev, "Couldn't get core clock\n");
 			return PTR_ERR(hvs->core_clk);
 		}
 
 		hvs->disp_clk = devm_clk_get(&pdev->dev,
-					     (vc4->gen >= VC4_GEN_6) ? "disp" : NULL);
+					     (vc4->gen >= VC4_GEN_6_C) ? "disp" : NULL);
 		if (IS_ERR(hvs->disp_clk)) {
 			dev_err(&pdev->dev, "Couldn't get disp clock\n");
 			return PTR_ERR(hvs->disp_clk);
@@ -2274,40 +2084,12 @@ static int vc4_hvs_bind(struct device *dev, struct device *master, void *data)
 		}
 	}
 
-	if (vc4->gen >= VC4_GEN_6) {
-		unsigned int i;
-
-		for (i = 0; i < HVS_NUM_CHANNELS; i++) {
-			char irq_name[16];
-			int irq;
-
-			snprintf(irq_name, sizeof(irq_name), "ch%u-eof", i);
-
-			irq = platform_get_irq_byname(pdev, irq_name);
-			if (irq < 0) {
-				dev_err(&pdev->dev,
-					"Couldn't get %s interrupt: %d\n",
-					irq_name, irq);
-				return irq;
-			}
-
-			ret = devm_request_irq(&pdev->dev,
-					       irq,
-					       vc6_hvs_eof_irq_handler,
-					       IRQF_NO_AUTOEN,
-					       dev_name(&pdev->dev),
-					       drm);
-
-			hvs->eof_irq[i].desc = irq;
-		}
-	}
-
 	if (vc4->gen >= VC4_GEN_5)
 		hvs->dlist = hvs->regs + SCALER5_DLIST_START;
 	else
 		hvs->dlist = hvs->regs + SCALER_DLIST_START;
 
-	if (vc4->gen >= VC4_GEN_6)
+	if (vc4->gen >= VC4_GEN_6_C)
 		ret = vc6_hvs_hw_init(hvs);
 	else
 		ret = vc4_hvs_hw_init(hvs);
@@ -2332,11 +2114,38 @@ static int vc4_hvs_bind(struct device *dev, struct device *master, void *data)
 	if (ret)
 		return ret;
 
-	if (vc4->gen < VC4_GEN_6) {
+	if (vc4->gen < VC4_GEN_6_C) {
 		ret = devm_request_irq(dev, platform_get_irq(pdev, 0),
 				       vc4_hvs_irq_handler, 0, "vc4 hvs", drm);
 		if (ret)
 			return ret;
+	} else {
+		unsigned int i;
+
+		for (i = 0; i < HVS_NUM_CHANNELS; i++) {
+			char irq_name[16];
+			int irq;
+
+			snprintf(irq_name, sizeof(irq_name), "ch%u-eof", i);
+
+			irq = platform_get_irq_byname(pdev, irq_name);
+			if (irq < 0) {
+				dev_err(&pdev->dev,
+					"Couldn't get %s interrupt: %d\n",
+					irq_name, irq);
+
+				return irq;
+			}
+
+			ret = devm_request_irq(&pdev->dev,
+					       irq,
+					       vc6_hvs_eof_irq_handler,
+					       IRQF_NO_AUTOEN,
+					       dev_name(&pdev->dev),
+					       drm);
+
+			hvs->eof_irq[i].desc = irq;
+		}
 	}
 
 	return 0;
@@ -2391,7 +2200,6 @@ static void vc4_hvs_dev_remove(struct platform_device *pdev)
 static const struct of_device_id vc4_hvs_dt_match[] = {
 	{ .compatible = "brcm,bcm2711-hvs" },
 	{ .compatible = "brcm,bcm2712-hvs" },
-	{ .compatible = "brcm,bcm2712d0-hvs" },
 	{ .compatible = "brcm,bcm2835-hvs" },
 	{}
 };

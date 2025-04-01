@@ -366,7 +366,7 @@ failed_cdev_add:
 *
 ***************************************************************************/
 
-static int bcm2835_smi_dev_remove(struct platform_device *pdev)
+static void bcm2835_smi_dev_remove(struct platform_device *pdev)
 {
 	device_destroy(bcm2835_smi_class, bcm2835_smi_devid);
 	class_destroy(bcm2835_smi_class);
@@ -374,7 +374,6 @@ static int bcm2835_smi_dev_remove(struct platform_device *pdev)
 	unregister_chrdev_region(bcm2835_smi_devid, 1);
 
 	dev_info(inst->dev, "SMI character dev removed - OK");
-	return 0;
 }
 
 /****************************************************************************

@@ -16,6 +16,7 @@
 #include <linux/module.h>
 
 MODULE_AUTHOR("Ard Biesheuvel <ard.biesheuvel@linaro.org>");
+MODULE_DESCRIPTION("Bit sliced AES using NEON instructions");
 MODULE_LICENSE("GPL v2");
 
 asmlinkage void aesbs_convert_key(u8 out[], u32 const rk[], int rounds);

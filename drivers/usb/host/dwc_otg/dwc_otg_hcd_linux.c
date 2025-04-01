@@ -420,7 +420,7 @@ void local_fiq_disable(void)
 		disable_irq(simfiq_irq);
 }
 
-irqreturn_t fiq_irq_handler(int irq, void *dev_id)
+static irqreturn_t fiq_irq_handler(int irq, void *dev_id)
 {
 	dwc_otg_hcd_t *dwc_otg_hcd = (dwc_otg_hcd_t *)dev_id;
 

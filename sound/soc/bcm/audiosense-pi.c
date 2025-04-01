@@ -92,7 +92,7 @@ static const struct snd_soc_dapm_route audiosense_pi_audio_map[] = {
 static int audiosense_pi_card_init(struct snd_soc_pcm_runtime *rtd)
 {
 	/* TODO: init of the codec specific dapm data, ignore suspend/resume */
-	struct snd_soc_component *component = asoc_rtd_to_codec(rtd, 0)->component;
+	struct snd_soc_component *component = snd_soc_rtd_to_codec(rtd, 0)->component;
 
 	snd_soc_component_update_bits(component, AIC32X4_MICBIAS, 0x78,
 				      AIC32X4_MICBIAS_LDOIN |
@@ -111,7 +111,7 @@ static int audiosense_pi_card_hw_params(
 {
 	int ret = 0;
 	struct snd_soc_pcm_runtime *rtd = substream->private_data;
-	struct snd_soc_dai *codec_dai = asoc_rtd_to_codec(rtd, 0);
+	struct snd_soc_dai *codec_dai = snd_soc_rtd_to_codec(rtd, 0);
 
 	/* Set the codec system clock, there is a 12 MHz XTAL on the board */
 	ret = snd_soc_dai_set_sysclk(codec_dai, AIC32X4_SYSCLK_XTAL,
@@ -215,12 +215,11 @@ static int audiosense_pi_card_probe(struct platform_device *pdev)
 	return ret;
 }
 
-static int audiosense_pi_card_remove(struct platform_device *pdev)
+static void audiosense_pi_card_remove(struct platform_device *pdev)
 {
 	struct snd_soc_card *card = platform_get_drvdata(pdev);
 
 	snd_soc_unregister_card(card);
-	return 0;
 }
 
 static const struct of_device_id audiosense_pi_card_of_match[] = {

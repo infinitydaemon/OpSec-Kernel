@@ -132,7 +132,7 @@ static int w8741_add_controls(struct snd_soc_component *component)
 
 static int digidac1_soundcard_init(struct snd_soc_pcm_runtime *rtd)
 {
-	struct snd_soc_component *component = asoc_rtd_to_codec(rtd, 0)->component;
+	struct snd_soc_component *component = snd_soc_rtd_to_codec(rtd, 0)->component;
 	struct snd_soc_card *card = rtd->card;
 	struct snd_soc_pcm_runtime *wm8741_rtd;
 	struct snd_soc_component *wm8741_component;
@@ -145,7 +145,7 @@ static int digidac1_soundcard_init(struct snd_soc_pcm_runtime *rtd)
 		dev_warn(card->dev, "digidac1_soundcard_init: couldn't get wm8741 rtd\n");
 		return -EFAULT;
 	}
-	wm8741_component = asoc_rtd_to_codec(wm8741_rtd, 0)->component;
+	wm8741_component = snd_soc_rtd_to_codec(wm8741_rtd, 0)->component;
 	ret = w8741_add_controls(wm8741_component);
 	if (ret < 0)
 		dev_warn(card->dev, "Failed to add new wm8741 controls: %d\n",
@@ -173,7 +173,7 @@ static int digidac1_soundcard_startup(struct snd_pcm_substream *substream)
 {
 	/* turn on wm8804 digital output */
 	struct snd_soc_pcm_runtime *rtd = substream->private_data;
-	struct snd_soc_component *component = asoc_rtd_to_codec(rtd, 0)->component;
+	struct snd_soc_component *component = snd_soc_rtd_to_codec(rtd, 0)->component;
 	struct snd_soc_card *card = rtd->card;
 	struct snd_soc_pcm_runtime *wm8741_rtd;
 	struct snd_soc_component *wm8741_component;
@@ -184,7 +184,7 @@ static int digidac1_soundcard_startup(struct snd_pcm_substream *substream)
 		dev_warn(card->dev, "digidac1_soundcard_startup: couldn't get WM8741 rtd\n");
 		return -EFAULT;
 	}
-	wm8741_component = asoc_rtd_to_codec(wm8741_rtd, 0)->component;
+	wm8741_component = snd_soc_rtd_to_codec(wm8741_rtd, 0)->component;
 
 	/* latch wm8741 level */
 	snd_soc_component_update_bits(wm8741_component, WM8741_DACLLSB_ATTENUATION,
@@ -203,7 +203,7 @@ static void digidac1_soundcard_shutdown(struct snd_pcm_substream *substream)
 {
 	/* turn off wm8804 digital output */
 	struct snd_soc_pcm_runtime *rtd = substream->private_data;
-	struct snd_soc_component *component = asoc_rtd_to_codec(rtd, 0)->component;
+	struct snd_soc_component *component = snd_soc_rtd_to_codec(rtd, 0)->component;
 
 	snd_soc_component_update_bits(component, WM8804_PWRDN, 0x3c, 0x3c);
 }
@@ -212,9 +212,9 @@ static int digidac1_soundcard_hw_params(struct snd_pcm_substream *substream,
 				       struct snd_pcm_hw_params *params)
 {
 	struct snd_soc_pcm_runtime *rtd = substream->private_data;
-	struct snd_soc_dai *codec_dai = asoc_rtd_to_codec(rtd, 0);
-	struct snd_soc_component *component = asoc_rtd_to_codec(rtd, 0)->component;
-	struct snd_soc_dai *cpu_dai = asoc_rtd_to_cpu(rtd, 0);
+	struct snd_soc_dai *codec_dai = snd_soc_rtd_to_codec(rtd, 0);
+	struct snd_soc_component *component = snd_soc_rtd_to_codec(rtd, 0)->component;
+	struct snd_soc_dai *cpu_dai = snd_soc_rtd_to_cpu(rtd, 0);
 	struct snd_soc_card *card = rtd->card;
 	struct snd_soc_pcm_runtime *wm8741_rtd;
 	struct snd_soc_component *wm8741_component;
@@ -230,7 +230,7 @@ static int digidac1_soundcard_hw_params(struct snd_pcm_substream *substream,
 		dev_warn(card->dev, "digidac1_soundcard_hw_params: couldn't get WM8741 rtd\n");
 		return -EFAULT;
 	}
-	wm8741_component = asoc_rtd_to_codec(wm8741_rtd, 0)->component;
+	wm8741_component = snd_soc_rtd_to_codec(wm8741_rtd, 0)->component;
 	samplerate = params_rate(params);
 
 	if (samplerate <= 96000) {

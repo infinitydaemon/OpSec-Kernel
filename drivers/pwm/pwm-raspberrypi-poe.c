@@ -32,7 +32,6 @@ struct raspberrypi_pwm {
 	struct regmap *regmap;
 	u32 offset;
 
-	struct pwm_chip chip;
 	unsigned int duty_cycle;
 };
 
@@ -45,7 +44,7 @@ struct raspberrypi_pwm_prop {
 static inline
 struct raspberrypi_pwm *raspberrypi_pwm_from_chip(struct pwm_chip *chip)
 {
-	return container_of(chip, struct raspberrypi_pwm, chip);
+	return pwmchip_get_drvdata(chip);
 }
 
 static int raspberrypi_pwm_set_property(struct raspberrypi_pwm *pwm,
@@ -130,7 +129,7 @@ static int raspberrypi_pwm_apply(struct pwm_chip *chip, struct pwm_device *pwm,
 	ret = raspberrypi_pwm_set_property(rpipwm, RPI_PWM_CUR_DUTY_REG,
 					   duty_cycle);
 	if (ret) {
-		dev_err(chip->dev, "Failed to set duty cycle: %pe\n",
+		dev_err(pwmchip_parent(chip), "Failed to set duty cycle: %pe\n",
 			ERR_PTR(ret));
 		return ret;
 	}
@@ -143,7 +142,6 @@ static int raspberrypi_pwm_apply(struct pwm_chip *chip, struct pwm_device *pwm,
 static const struct pwm_ops raspberrypi_pwm_ops = {
 	.get_state = raspberrypi_pwm_get_state,
 	.apply = raspberrypi_pwm_apply,
-	.owner = THIS_MODULE,
 };
 
 static int raspberrypi_pwm_probe(struct platform_device *pdev)
@@ -151,10 +149,16 @@ static int raspberrypi_pwm_probe(struct platform_device *pdev)
 	struct device_node *firmware_node;
 	struct device *dev = &pdev->dev;
 	struct rpi_firmware *firmware;
+	struct pwm_chip *chip;
 	struct raspberrypi_pwm *rpipwm;
 	int ret;
 
-	rpipwm = devm_kzalloc(&pdev->dev, sizeof(*rpipwm), GFP_KERNEL);
+	chip = devm_pwmchip_alloc(&pdev->dev, RASPBERRYPI_FIRMWARE_PWM_NUM,
+				  sizeof(*rpipwm));
+	if (IS_ERR(chip))
+		return PTR_ERR(chip);
+	rpipwm = raspberrypi_pwm_from_chip(chip);
+
 	if (!rpipwm)
 		return -ENOMEM;
 
@@ -167,6 +171,10 @@ static int raspberrypi_pwm_probe(struct platform_device *pdev)
 			return -EINVAL;
 	} else {
 		firmware_node = of_get_parent(dev->of_node);
+		if (!firmware_node) {
+			dev_err(dev, "Missing firmware node\n");
+			return -ENOENT;
+		}
 
 		firmware = devm_rpi_firmware_get(&pdev->dev, firmware_node);
 		of_node_put(firmware_node);
@@ -177,9 +185,7 @@ static int raspberrypi_pwm_probe(struct platform_device *pdev)
 		rpipwm->firmware = firmware;
 	}
 
-	rpipwm->chip.dev = dev;
-	rpipwm->chip.ops = &raspberrypi_pwm_ops;
-	rpipwm->chip.npwm = RASPBERRYPI_FIRMWARE_PWM_NUM;
+	chip->ops = &raspberrypi_pwm_ops;
 
 	ret = raspberrypi_pwm_get_property(rpipwm, RPI_PWM_CUR_DUTY_REG,
 					   &rpipwm->duty_cycle);
@@ -188,7 +194,7 @@ static int raspberrypi_pwm_probe(struct platform_device *pdev)
 		return ret;
 	}
 
-	return devm_pwmchip_add(dev, &rpipwm->chip);
+	return devm_pwmchip_add(dev, chip);
 }
 
 static const struct of_device_id raspberrypi_pwm_of_match[] = {

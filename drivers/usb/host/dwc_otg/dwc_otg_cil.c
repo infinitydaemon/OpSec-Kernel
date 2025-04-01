@@ -60,6 +60,8 @@
 #include "dwc_os.h"
 #include "dwc_otg_regs.h"
 #include "dwc_otg_cil.h"
+#include "dwc_otg_os_dep.h"
+#include "dwc_otg_hcd_if.h"
 
 extern bool cil_force_host;
 
@@ -789,28 +791,6 @@ int dwc_otg_save_global_regs(dwc_otg_core_if_t * core_if)
 	DWC_DEBUGPL(DBG_ANY, "Backed up gi2cctl   = %08x\n", gr->gi2cctl_local);
 	DWC_DEBUGPL(DBG_ANY, "Backed up pcgcctl   = %08x\n", gr->pcgcctl_local);
 	DWC_DEBUGPL(DBG_ANY,"Backed up gdfifocfg   = %08x\n",gr->gdfifocfg_local);
-
-	return 0;
-}
-
-/** Saves GINTMSK register before setting the msk bits. */
-int dwc_otg_save_gintmsk_reg(dwc_otg_core_if_t * core_if)
-{
-	struct dwc_otg_global_regs_backup *gr;
-
-	gr = core_if->gr_backup;
-	if (!gr) {
-		gr = DWC_ALLOC(sizeof(*gr));
-		if (!gr) {
-			return -DWC_E_NO_MEMORY;
-		}
-		core_if->gr_backup = gr;
-	}
-
-	gr->gintmsk_local = DWC_READ_REG32(&core_if->core_global_regs->gintmsk);
-
-	DWC_DEBUGPL(DBG_ANY,"=============Backing GINTMSK registers============\n");
-	DWC_DEBUGPL(DBG_ANY, "Backed up gintmsk   = %08x\n", gr->gintmsk_local);
 
 	return 0;
 }
@@ -2677,7 +2657,7 @@ void ep_xfer_timeout(void *ptr)
 
 }
 
-void set_pid_isoc(dwc_hc_t * hc)
+static void set_pid_isoc(dwc_hc_t * hc)
 {
 	/* Set up the initial PID for the transfer. */
 	if (hc->speed == DWC_OTG_EP_SPEED_HIGH) {
@@ -6271,7 +6251,7 @@ int dwc_otg_set_param_thr_ctl(dwc_otg_core_if_t * core_if, int32_t val)
 	return retval;
 }
 
-int32_t dwc_otg_get_param_thr_ctl(dwc_otg_core_if_t * core_if)
+static int32_t dwc_otg_get_param_thr_ctl(dwc_otg_core_if_t * core_if)
 {
 	return core_if->core_params->thr_ctl;
 }
@@ -6317,7 +6297,7 @@ int dwc_otg_set_param_tx_thr_length(dwc_otg_core_if_t * core_if, int32_t val)
 	return 0;
 }
 
-int32_t dwc_otg_get_param_tx_thr_length(dwc_otg_core_if_t * core_if)
+static int32_t dwc_otg_get_param_tx_thr_length(dwc_otg_core_if_t * core_if)
 {
 	return core_if->core_params->tx_thr_length;
 }
@@ -6332,11 +6312,6 @@ int dwc_otg_set_param_rx_thr_length(dwc_otg_core_if_t * core_if, int32_t val)
 
 	core_if->core_params->rx_thr_length = val;
 	return 0;
-}
-
-int32_t dwc_otg_get_param_rx_thr_length(dwc_otg_core_if_t * core_if)
-{
-	return core_if->core_params->rx_thr_length;
 }
 
 int dwc_otg_set_param_dma_burst_size(dwc_otg_core_if_t * core_if, int32_t val)
@@ -7117,7 +7092,7 @@ uint16_t dwc_otg_get_otg_version(dwc_otg_core_if_t * core_if)
  *
  * @param core_if the pointer to core_if strucure.
  */
-void dwc_otg_pcd_start_srp_timer(dwc_otg_core_if_t * core_if)
+static void dwc_otg_pcd_start_srp_timer(dwc_otg_core_if_t * core_if)
 {
 	core_if->srp_timer_started = 1;
 	DWC_TIMER_SCHEDULE(core_if->srp_timer, 6000 /* 6 secs */ );

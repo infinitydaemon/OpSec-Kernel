@@ -210,7 +210,7 @@ static void per_sched_disable(dwc_otg_hcd_t * hcd)
  * Activates/Deactivates FrameList entries for the channel
  * based on endpoint servicing period.
  */
-void update_frame_list(dwc_otg_hcd_t * hcd, dwc_otg_qh_t * qh, uint8_t enable)
+static void update_frame_list(dwc_otg_hcd_t * hcd, dwc_otg_qh_t * qh, uint8_t enable)
 {
 	uint16_t i, j, inc;
 	dwc_hc_t *hc = NULL;
@@ -262,8 +262,8 @@ void update_frame_list(dwc_otg_hcd_t * hcd, dwc_otg_qh_t * qh, uint8_t enable)
 	}
 }
 
-#if 1
-void dump_frame_list(dwc_otg_hcd_t * hcd)
+#if 0
+static void dump_frame_list(dwc_otg_hcd_t * hcd)
 {
 	int i = 0;
 	DWC_PRINTF("--FRAME LIST (hex) --\n");
@@ -878,7 +878,7 @@ stop_scan:
 	qh->td_first = idx;
 }
 
-uint8_t update_non_isoc_urb_state_ddma(dwc_otg_hcd_t * hcd,
+static uint8_t update_non_isoc_urb_state_ddma(dwc_otg_hcd_t * hcd,
 				       dwc_hc_t * hc,
 				       dwc_otg_qtd_t * qtd,
 				       dwc_otg_host_dma_desc_t * dma_desc,

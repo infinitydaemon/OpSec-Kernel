@@ -56,7 +56,7 @@
 #endif
 
 #ifdef LM_INTERFACE
-# include <asm/unaligned.h>
+# include <linux/unaligned.h>
 # include <asm/sizes.h>
 # include <asm/param.h>
 # include <asm/io.h>

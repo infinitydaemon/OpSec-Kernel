@@ -83,6 +83,8 @@
 	x(ENOMEM,			ENOMEM_fs_other_alloc)			\
 	x(ENOMEM,			ENOMEM_dev_alloc)			\
 	x(ENOMEM,			ENOMEM_disk_accounting)			\
+	x(ENOMEM,			ENOMEM_stripe_head_alloc)		\
+	x(ENOMEM,                       ENOMEM_journal_read_bucket)             \
 	x(ENOSPC,			ENOSPC_disk_reservation)		\
 	x(ENOSPC,			ENOSPC_bucket_alloc)			\
 	x(ENOSPC,			ENOSPC_disk_label_add)			\
@@ -116,8 +118,11 @@
 	x(ENOENT,			ENOENT_dev_idx_not_found)		\
 	x(ENOTEMPTY,			ENOTEMPTY_dir_not_empty)		\
 	x(ENOTEMPTY,			ENOTEMPTY_subvol_not_empty)		\
-	x(0,				open_buckets_empty)			\
-	x(0,				freelist_empty)				\
+	x(EEXIST,			EEXIST_str_hash_set)			\
+	x(EEXIST,			EEXIST_discard_in_flight_add)		\
+	x(EEXIST,			EEXIST_subvolume_create)		\
+	x(ENOSPC,			open_buckets_empty)			\
+	x(ENOSPC,			freelist_empty)				\
 	x(BCH_ERR_freelist_empty,	no_buckets_found)			\
 	x(0,				transaction_restart)			\
 	x(BCH_ERR_transaction_restart,	transaction_restart_fault_inject)	\
@@ -163,6 +168,7 @@
 	x(0,				journal_reclaim_would_deadlock)		\
 	x(EINVAL,			fsck)					\
 	x(BCH_ERR_fsck,			fsck_fix)				\
+	x(BCH_ERR_fsck,			fsck_delete_bkey)			\
 	x(BCH_ERR_fsck,			fsck_ignore)				\
 	x(BCH_ERR_fsck,			fsck_errors_not_fixed)			\
 	x(BCH_ERR_fsck,			fsck_repair_unimplemented)		\
@@ -218,6 +224,7 @@
 	x(BCH_ERR_invalid_sb_layout,	invalid_sb_layout_type)			\
 	x(BCH_ERR_invalid_sb_layout,	invalid_sb_layout_nr_superblocks)	\
 	x(BCH_ERR_invalid_sb_layout,	invalid_sb_layout_superblocks_overlap)	\
+	x(BCH_ERR_invalid_sb_layout,    invalid_sb_layout_sb_max_size_bits)     \
 	x(BCH_ERR_invalid_sb,		invalid_sb_members_missing)		\
 	x(BCH_ERR_invalid_sb,		invalid_sb_members)			\
 	x(BCH_ERR_invalid_sb,		invalid_sb_disk_groups)			\
@@ -240,6 +247,16 @@
 	x(EIO,				btree_node_read_error)			\
 	x(EIO,				btree_node_read_validate_error)		\
 	x(EIO,				btree_need_topology_repair)		\
+	x(EIO,				bucket_ref_update)			\
+	x(EIO,				trigger_pointer)			\
+	x(EIO,				trigger_stripe_pointer)			\
+	x(EIO,				metadata_bucket_inconsistency)		\
+	x(EIO,				mark_stripe)				\
+	x(EIO,				stripe_reconstruct)			\
+	x(EIO,				key_type_error)				\
+	x(EIO,				no_device_to_read_from)			\
+	x(EIO,				missing_indirect_extent)		\
+	x(EIO,				invalidate_stripe_to_dev)		\
 	x(BCH_ERR_btree_node_read_err,	btree_node_read_err_fixable)		\
 	x(BCH_ERR_btree_node_read_err,	btree_node_read_err_want_retry)		\
 	x(BCH_ERR_btree_node_read_err,	btree_node_read_err_must_retry)		\
@@ -253,8 +270,9 @@
 	x(BCH_ERR_nopromote,		nopromote_in_flight)			\
 	x(BCH_ERR_nopromote,		nopromote_no_writes)			\
 	x(BCH_ERR_nopromote,		nopromote_enomem)			\
-	x(0,				need_inode_lock)			\
-	x(0,				invalid_snapshot_node)
+	x(0,				invalid_snapshot_node)			\
+	x(0,				option_needs_open_fs)			\
+	x(0,				remove_disk_accounting_entry)
 
 enum bch_errcode {
 	BCH_ERR_START		= 2048,

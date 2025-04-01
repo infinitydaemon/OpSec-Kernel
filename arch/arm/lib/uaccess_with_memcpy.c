@@ -64,10 +64,10 @@ pin_page_for_write(const void __user *_addr, pte_t **ptep, spinlock_t **ptlp)
 	 * to see that it's still huge and whether or not we will
 	 * need to fault on write.
 	 */
-	if (unlikely(pmd_thp_or_huge(*pmd))) {
+	if (unlikely(pmd_leaf(*pmd))) {
 		ptl = &current->mm->page_table_lock;
 		spin_lock(ptl);
-		if (unlikely(!pmd_thp_or_huge(*pmd)
+		if (unlikely(!pmd_leaf(*pmd)
 			|| pmd_hugewillfault(*pmd))) {
 			spin_unlock(ptl);
 			return 0;
@@ -97,6 +97,7 @@ pin_page_for_write(const void __user *_addr, pte_t **ptep, spinlock_t **ptlp)
 	return 1;
 }
 
+#ifdef CONFIG_BCM2835_FAST_MEMCPY
 static int
 pin_page_for_read(const void __user *_addr, pte_t **ptep, spinlock_t **ptlp)
 {
@@ -135,8 +136,9 @@ pin_page_for_read(const void __user *_addr, pte_t **ptep, spinlock_t **ptlp)
 
 	return 1;
 }
+#endif
 
-unsigned long noinline
+static unsigned long noinline
 __copy_to_user_memcpy(void __user *to, const void *from, unsigned long n)
 {
 	unsigned long ua_flags;
@@ -184,7 +186,8 @@ out:
 	return n;
 }
 
-unsigned long noinline
+#ifdef CONFIG_BCM2835_FAST_MEMCPY
+static unsigned long noinline
 __copy_from_user_memcpy(void *to, const void __user *from, unsigned long n)
 {
 	unsigned long ua_flags;
@@ -229,6 +232,7 @@ __copy_from_user_memcpy(void *to, const void __user *from, unsigned long n)
 out:
 	return n;
 }
+#endif
 
 unsigned long
 arm_copy_to_user(void __user *to, const void *from, unsigned long n)

@@ -22,11 +22,10 @@
 
 #include <linux/debugfs.h>
 #include <linux/scatterlist.h>
-#include <linux/crypto.h>
 #include <crypto/aes.h>
-#include <crypto/algapi.h>
 #include <crypto/hash.h>
 #include <crypto/kpp.h>
+#include <crypto/utils.h>
 
 #include <net/bluetooth/bluetooth.h>
 #include <net/bluetooth/hci_core.h>
@@ -885,9 +884,16 @@ static int tk_request(struct l2cap_conn *conn, u8 remote_oob, u8 auth,
 	    hcon->io_capability == HCI_IO_NO_INPUT_OUTPUT)
 		smp->method = JUST_WORKS;
 
-	/* If Just Works, Continue with Zero TK */
+	/* If Just Works, Continue with Zero TK and ask user-space for
+	 * confirmation */
 	if (smp->method == JUST_WORKS) {
-		set_bit(SMP_FLAG_TK_VALID, &smp->flags);
+		ret = mgmt_user_confirm_request(hcon->hdev, &hcon->dst,
+						hcon->type,
+						hcon->dst_type,
+						passkey, 1);
+		if (ret)
+			return ret;
+		set_bit(SMP_FLAG_WAIT_USER, &smp->flags);
 		return 0;
 	}
 
@@ -2208,7 +2214,7 @@ mackey_and_ltk:
 	if (err)
 		return SMP_UNSPECIFIED;
 
-	if (smp->method == JUST_WORKS || smp->method == REQ_OOB) {
+	if (smp->method == REQ_OOB) {
 		if (test_bit(SMP_FLAG_INITIATOR, &smp->flags)) {
 			sc_dhkey_check(smp);
 			SMP_ALLOW_CMD(smp, SMP_CMD_DHKEY_CHECK);
@@ -2223,6 +2229,9 @@ mackey_and_ltk:
 	confirm_hint = 0;
 
 confirm:
+	if (smp->method == JUST_WORKS)
+		confirm_hint = 1;
+
 	err = mgmt_user_confirm_request(hcon->hdev, &hcon->dst, hcon->type,
 					hcon->dst_type, passkey, confirm_hint);
 	if (err)

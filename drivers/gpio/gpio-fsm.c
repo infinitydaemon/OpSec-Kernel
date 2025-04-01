@@ -423,8 +423,8 @@ static void gpio_fsm_timer(struct timer_list *timer)
 	gpio_fsm_go_to_state_deferred(gf, target);
 }
 
-int gpio_fsm_parse_signals(struct gpio_fsm *gf, struct fsm_state *state,
-			     struct property *prop)
+static int gpio_fsm_parse_signals(struct gpio_fsm *gf, struct fsm_state *state,
+				  struct property *prop)
 {
 	const __be32 *cells = prop->value;
 	struct output_signal *signal;
@@ -489,7 +489,7 @@ int gpio_fsm_parse_signals(struct gpio_fsm *gf, struct fsm_state *state,
 	return ret;
 }
 
-struct gpio_event *new_event(struct gpio_event **events, int *num_events)
+static struct gpio_event *new_event(struct gpio_event **events, int *num_events)
 {
 	int num = ++(*num_events);
 	*events = krealloc(*events, num * sizeof(struct gpio_event),
@@ -497,7 +497,7 @@ struct gpio_event *new_event(struct gpio_event **events, int *num_events)
 	return *events ? *events + (num - 1) : NULL;
 }
 
-int gpio_fsm_parse_events(struct gpio_fsm *gf, struct fsm_state *state,
+static int gpio_fsm_parse_events(struct gpio_fsm *gf, struct fsm_state *state,
 			    struct property *prop)
 {
 	const __be32 *cells = prop->value;
@@ -615,7 +615,7 @@ int gpio_fsm_parse_events(struct gpio_fsm *gf, struct fsm_state *state,
 	return ret;
 }
 
-int gpio_fsm_parse_state(struct gpio_fsm *gf,
+static int gpio_fsm_parse_state(struct gpio_fsm *gf,
 			   struct fsm_state *state,
 			   struct device_node *np)
 {
@@ -696,7 +696,7 @@ static void dump_all(struct gpio_fsm *gf)
 	dev_info(gf->dev, "Soft GPIOs:\n");
 	for (i = 0; i < gf->num_soft_gpios; i++)
 		dev_info(gf->dev, "  %d: %s %d\n", i,
-			 (gf->soft_gpios[i].dir == GPIOF_DIR_IN) ? "IN" : "OUT",
+			 (gf->soft_gpios[i].dir == GPIOF_IN) ? "IN" : "OUT",
 			 gf->soft_gpios[i].value);
 
 	dev_info(gf->dev, "Start state: %s\n",
@@ -836,7 +836,7 @@ static int gpio_fsm_direction_input(struct gpio_chip *gc, unsigned int off)
 	if (off >= gf->num_soft_gpios)
 		return -EINVAL;
 	sg = &gf->soft_gpios[off];
-	sg->dir = GPIOF_DIR_IN;
+	sg->dir = GPIOF_IN;
 
 	return 0;
 }
@@ -850,7 +850,7 @@ static int gpio_fsm_direction_output(struct gpio_chip *gc, unsigned int off,
 	if (off >= gf->num_soft_gpios)
 		return -EINVAL;
 	sg = &gf->soft_gpios[off];
-	sg->dir = GPIOF_DIR_OUT;
+	sg->dir = GPIOF_OUT_INIT_LOW;
 	gpio_fsm_set_soft(gf, off, value);
 
 	return 0;
@@ -971,7 +971,7 @@ static int gpio_fsm_probe(struct platform_device *pdev)
 	for (i = 0; i < num_soft_gpios; i++) {
 		struct soft_gpio *sg = &gf->soft_gpios[i];
 
-		sg->dir = GPIOF_DIR_IN;
+		sg->dir = GPIOF_IN;
 		sg->value = 0;
 	}
 
@@ -1121,7 +1121,7 @@ static int gpio_fsm_probe(struct platform_device *pdev)
 	return devm_gpiochip_add_data(dev, &gf->gc, gf);
 }
 
-static int gpio_fsm_remove(struct platform_device *pdev)
+static void gpio_fsm_remove(struct platform_device *pdev)
 {
 	struct gpio_fsm *gf = platform_get_drvdata(pdev);
 	int i;
@@ -1158,8 +1158,6 @@ static int gpio_fsm_remove(struct platform_device *pdev)
 	}
 	if (gf->debug)
 		dev_info(gf->dev, "Exiting\n");
-
-	return 0;
 }
 
 static void gpio_fsm_shutdown(struct platform_device *pdev)

@@ -70,8 +70,7 @@
 #define INT_RX_CHANNEL_OVERFLOW		BIT(2)
 #define INT_TX_CHANNEL_UNDERRUN		BIT(3)
 
-#define INT_ENABLE_MASK (CONTROL_RX_DATA_INT | CONTROL_TX_DATA_INT | \
-			 CONTROL_RX_OVER_INT | CONTROL_TX_UNDER_INT)
+#define INT_ENABLE_MASK (CONTROL_RX_OVER_INT | CONTROL_TX_UNDER_INT)
 
 #define REG_CONTROL		(0x00)
 #define REG_FRAME_SIZE		(0x04)
@@ -111,7 +110,7 @@ struct mchp_corespi {
 	int irq;
 	int tx_len;
 	int rx_len;
-	int pending;
+	int n_bytes;
 };
 
 static inline u32 mchp_corespi_read(struct mchp_corespi *spi, unsigned int reg)
@@ -133,22 +132,30 @@ static inline void mchp_corespi_disable(struct mchp_corespi *spi)
 	mchp_corespi_write(spi, REG_CONTROL, control);
 }
 
-static inline void mchp_corespi_read_fifo(struct mchp_corespi *spi)
+static inline void mchp_corespi_read_fifo(struct mchp_corespi *spi, int fifo_max)
 {
-	u8 data;
-	int fifo_max, i = 0;
+	for (int i = 0; i < fifo_max; i++) {
+		u32 data;
 
-	fifo_max = min(spi->rx_len, FIFO_DEPTH);
+		while (mchp_corespi_read(spi, REG_STATUS) & STATUS_RXFIFO_EMPTY)
+			;
 
-	while ((i < fifo_max) && !(mchp_corespi_read(spi, REG_STATUS) & STATUS_RXFIFO_EMPTY)) {
 		data = mchp_corespi_read(spi, REG_RX_DATA);
 
-		if (spi->rx_buf)
-			*spi->rx_buf++ = data;
-		i++;
+		spi->rx_len -= spi->n_bytes;
+
+		if (!spi->rx_buf)
+			continue;
+
+		if (spi->n_bytes == 4)
+			*((u32 *)spi->rx_buf) = data;
+		else if (spi->n_bytes == 2)
+			*((u16 *)spi->rx_buf) = data;
+		else
+			*spi->rx_buf = data;
+
+		spi->rx_buf += spi->n_bytes;
 	}
-	spi->rx_len -= i;
-	spi->pending -= i;
 }
 
 static void mchp_corespi_enable_ints(struct mchp_corespi *spi)
@@ -208,22 +215,29 @@ static inline void mchp_corespi_set_xfer_size(struct mchp_corespi *spi, int len)
 	mchp_corespi_write(spi, REG_FRAMESUP, len);
 }
 
-static inline void mchp_corespi_write_fifo(struct mchp_corespi *spi)
+static inline void mchp_corespi_write_fifo(struct mchp_corespi *spi, int fifo_max)
 {
-	u8 byte;
-	int fifo_max, i = 0;
+	int i = 0;
 
-	fifo_max = min(spi->tx_len, FIFO_DEPTH);
 	mchp_corespi_set_xfer_size(spi, fifo_max);
 
 	while ((i < fifo_max) && !(mchp_corespi_read(spi, REG_STATUS) & STATUS_TXFIFO_FULL)) {
-		byte = spi->tx_buf ? *spi->tx_buf++ : 0xaa;
-		mchp_corespi_write(spi, REG_TX_DATA, byte);
+		u32 word;
+
+		if (spi->n_bytes == 4)
+			word = spi->tx_buf ? *((u32 *)spi->tx_buf) : 0xaa;
+		else if (spi->n_bytes == 2)
+			word = spi->tx_buf ? *((u16 *)spi->tx_buf) : 0xaa;
+		else
+			word = spi->tx_buf ? *spi->tx_buf : 0xaa;
+
+		mchp_corespi_write(spi, REG_TX_DATA, word);
+		if (spi->tx_buf)
+			spi->tx_buf += spi->n_bytes;
 		i++;
 	}
 
-	spi->tx_len -= i;
-	spi->pending += i;
+	spi->tx_len -= i * spi->n_bytes;
 }
 
 static inline void mchp_corespi_set_framesize(struct mchp_corespi *spi, int bt)
@@ -274,6 +288,9 @@ static int mchp_corespi_setup(struct spi_device *spi)
 {
 	struct mchp_corespi *corespi = spi_controller_get_devdata(spi->controller);
 	u32 reg;
+
+	if (spi_is_csgpiod(spi))
+		return 0;
 
 	/*
 	 * Active high targets need to be specifically set to their inactive
@@ -399,19 +416,6 @@ static irqreturn_t mchp_corespi_interrupt(int irq, void *dev_id)
 	if (intfield == 0)
 		return IRQ_NONE;
 
-	if (intfield & INT_TXDONE)
-		mchp_corespi_write(spi, REG_INT_CLEAR, INT_TXDONE);
-
-	if (intfield & INT_RXRDY) {
-		mchp_corespi_write(spi, REG_INT_CLEAR, INT_RXRDY);
-
-		if (spi->rx_len)
-			mchp_corespi_read_fifo(spi);
-	}
-
-	if (!spi->rx_len && !spi->tx_len)
-		finalise = true;
-
 	if (intfield & INT_RX_CHANNEL_OVERFLOW) {
 		mchp_corespi_write(spi, REG_INT_CLEAR, INT_RX_CHANNEL_OVERFLOW);
 		finalise = true;
@@ -490,18 +494,22 @@ static int mchp_corespi_transfer_one(struct spi_controller *host,
 	spi->rx_buf = xfer->rx_buf;
 	spi->tx_len = xfer->len;
 	spi->rx_len = xfer->len;
-	spi->pending = 0;
+	spi->n_bytes = roundup_pow_of_two(DIV_ROUND_UP(xfer->bits_per_word, BITS_PER_BYTE));
 
-	mchp_corespi_set_xfer_size(spi, (spi->tx_len > FIFO_DEPTH)
-				   ? FIFO_DEPTH : spi->tx_len);
+	mchp_corespi_set_framesize(spi, xfer->bits_per_word);
 
 	mchp_corespi_write(spi, REG_COMMAND, COMMAND_RXFIFORST | COMMAND_TXFIFORST);
 
 	mchp_corespi_write(spi, REG_SLAVE_SELECT, spi->pending_slave_select);
 
-	while (spi->tx_len)
-		mchp_corespi_write_fifo(spi);
+	while (spi->tx_len) {
+		int fifo_max = DIV_ROUND_UP(min(spi->tx_len, FIFO_DEPTH), spi->n_bytes);
 
+		mchp_corespi_write_fifo(spi, fifo_max);
+		mchp_corespi_read_fifo(spi, fifo_max);
+	}
+
+	spi_finalize_current_transfer(host);
 	return 1;
 }
 
@@ -511,7 +519,6 @@ static int mchp_corespi_prepare_message(struct spi_controller *host,
 	struct spi_device *spi_dev = msg->spi;
 	struct mchp_corespi *spi = spi_controller_get_devdata(host);
 
-	mchp_corespi_set_framesize(spi, DEFAULT_FRAMESIZE);
 	mchp_corespi_set_mode(spi, spi_dev->mode);
 
 	return 0;
@@ -537,8 +544,9 @@ static int mchp_corespi_probe(struct platform_device *pdev)
 
 	host->num_chipselect = num_cs;
 	host->mode_bits = SPI_CPOL | SPI_CPHA | SPI_CS_HIGH;
+	host->use_gpio_descriptors = true;
 	host->setup = mchp_corespi_setup;
-	host->bits_per_word_mask = SPI_BPW_MASK(8);
+	host->bits_per_word_mask = SPI_BPW_RANGE_MASK(1, 32);
 	host->transfer_one = mchp_corespi_transfer_one;
 	host->prepare_message = mchp_corespi_prepare_message;
 	host->set_cs = mchp_corespi_set_cs;
@@ -560,22 +568,16 @@ static int mchp_corespi_probe(struct platform_device *pdev)
 		return dev_err_probe(&pdev->dev, ret,
 				     "could not request irq\n");
 
-	spi->clk = devm_clk_get(&pdev->dev, NULL);
+	spi->clk = devm_clk_get_enabled(&pdev->dev, NULL);
 	if (IS_ERR(spi->clk))
 		return dev_err_probe(&pdev->dev, PTR_ERR(spi->clk),
 				     "could not get clk\n");
-
-	ret = clk_prepare_enable(spi->clk);
-	if (ret)
-		return dev_err_probe(&pdev->dev, ret,
-				     "failed to enable clock\n");
 
 	mchp_corespi_init(host, spi);
 
 	ret = devm_spi_register_controller(&pdev->dev, host);
 	if (ret) {
 		mchp_corespi_disable(spi);
-		clk_disable_unprepare(spi->clk);
 		return dev_err_probe(&pdev->dev, ret,
 				     "unable to register host for SPI controller\n");
 	}
@@ -591,7 +593,6 @@ static void mchp_corespi_remove(struct platform_device *pdev)
 	struct mchp_corespi *spi = spi_controller_get_devdata(host);
 
 	mchp_corespi_disable_ints(spi);
-	clk_disable_unprepare(spi->clk);
 	mchp_corespi_disable(spi);
 }
 

@@ -1121,11 +1121,10 @@ static void dphy_transaction(struct rp1_dsi *dsi, uint8_t test_code, uint8_t tes
 	 * Each APB write takes at least 10ns and we ignore TESTDOUT
 	 * so there is no need for extra delays between the transitions.
 	 */
-	u32 tmp;
 
 	DSI_WRITE(DSI_PHY_TST_CTRL1, test_code | DPHY_CTRL1_PHY_TESTEN_BITS);
 	DSI_WRITE(DSI_PHY_TST_CTRL0, 0);
-	tmp = (DSI_READ(DSI_PHY_TST_CTRL1) >> DPHY_CTRL1_PHY_TESTDOUT_LSB) & 0xFF;
+	DSI_READ(DSI_PHY_TST_CTRL1); /* XXX possibly not needed */
 	DSI_WRITE(DSI_PHY_TST_CTRL1, test_data);
 	DSI_WRITE(DSI_PHY_TST_CTRL0, DPHY_CTRL0_PHY_TESTCLK_BITS);
 }

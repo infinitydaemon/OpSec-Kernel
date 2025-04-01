@@ -312,10 +312,11 @@ static int af8133j_set_scale(struct af8133j_data *data,
 	 * When suspended, just store the new range to data->range to be
 	 * applied later during power up.
 	 */
-	if (!pm_runtime_status_suspended(dev))
+	if (!pm_runtime_status_suspended(dev)) {
 		scoped_guard(mutex, &data->mutex)
 			ret = regmap_write(data->regmap,
 					   AF8133J_REG_RANGE, range);
+	}
 
 	pm_runtime_enable(dev);
 
@@ -505,7 +506,7 @@ static const struct of_device_id af8133j_of_match[] = {
 MODULE_DEVICE_TABLE(of, af8133j_of_match);
 
 static const struct i2c_device_id af8133j_id[] = {
-	{ "af8133j", 0 },
+	{ "af8133j" },
 	{ }
 };
 MODULE_DEVICE_TABLE(i2c, af8133j_id);

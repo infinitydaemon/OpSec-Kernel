@@ -156,9 +156,9 @@ static void snd_rpi_hifiberry_dacplusadcpro_set_sclk(struct snd_soc_component *c
 
 static int snd_rpi_hifiberry_dacplusadcpro_init(struct snd_soc_pcm_runtime *rtd)
 {
-	struct snd_soc_component *dac = asoc_rtd_to_codec(rtd, 0)->component;
-	struct snd_soc_component *adc = asoc_rtd_to_codec(rtd, 1)->component;
-	struct snd_soc_dai_driver *adc_driver = asoc_rtd_to_codec(rtd, 1)->driver;
+	struct snd_soc_component *dac = snd_soc_rtd_to_codec(rtd, 0)->component;
+	struct snd_soc_component *adc = snd_soc_rtd_to_codec(rtd, 1)->component;
+	struct snd_soc_dai_driver *adc_driver = snd_soc_rtd_to_codec(rtd, 1)->driver;
 	struct pcm512x_priv *priv;
 	int ret;
 
@@ -177,21 +177,21 @@ static int snd_rpi_hifiberry_dacplusadcpro_init(struct snd_soc_pcm_runtime *rtd)
 			| SND_SOC_DAIFMT_CBM_CFM;
 
 		// set DAC DAI configuration
-		ret = snd_soc_dai_set_fmt(asoc_rtd_to_codec(rtd, 0),
+		ret = snd_soc_dai_set_fmt(snd_soc_rtd_to_codec(rtd, 0),
 				SND_SOC_DAIFMT_I2S | SND_SOC_DAIFMT_NB_NF
 			| SND_SOC_DAIFMT_CBM_CFM);
 		if (ret < 0)
 			return ret;
 
 		// set ADC DAI configuration
-		ret = snd_soc_dai_set_fmt(asoc_rtd_to_codec(rtd, 1),
+		ret = snd_soc_dai_set_fmt(snd_soc_rtd_to_codec(rtd, 1),
 				SND_SOC_DAIFMT_I2S | SND_SOC_DAIFMT_NB_NF
 			| SND_SOC_DAIFMT_CBS_CFS);
 		if (ret < 0)
 			return ret;
 
 		// set CPU DAI configuration
-		ret = snd_soc_dai_set_fmt(asoc_rtd_to_cpu(rtd, 0),
+		ret = snd_soc_dai_set_fmt(snd_soc_rtd_to_cpu(rtd, 0),
 			SND_SOC_DAIFMT_I2S | SND_SOC_DAIFMT_NB_NF | SND_SOC_DAIFMT_CBS_CFS);
 		if (ret < 0)
 			return ret;
@@ -243,7 +243,7 @@ static int snd_rpi_hifiberry_dacplusadcpro_update_rate_den(
 	struct snd_pcm_substream *substream, struct snd_pcm_hw_params *params)
 {
 	struct snd_soc_pcm_runtime *rtd = substream->private_data;
-	struct snd_soc_component *component = asoc_rtd_to_codec(rtd, 0)->component; /* only use DAC */
+	struct snd_soc_component *component = snd_soc_rtd_to_codec(rtd, 0)->component; /* only use DAC */
 	struct pcm512x_priv *pcm512x = snd_soc_component_get_drvdata(component);
 	struct snd_ratnum *rats_no_pll;
 	unsigned int num = 0, den = 0;
@@ -275,9 +275,9 @@ static int snd_rpi_hifiberry_dacplusadcpro_hw_params(
 	int ret = 0;
 	struct snd_soc_pcm_runtime *rtd = substream->private_data;
 	int channels = params_channels(params);
-	int width =  snd_pcm_format_width(params_format(params));
-	struct snd_soc_component *dac = asoc_rtd_to_codec(rtd, 0)->component;
-	struct snd_soc_dai *dai = asoc_rtd_to_codec(rtd, 0);
+	int width = snd_pcm_format_width(params_format(params));
+	struct snd_soc_component *dac = snd_soc_rtd_to_codec(rtd, 0)->component;
+	struct snd_soc_dai *dai = snd_soc_rtd_to_codec(rtd, 0);
 	struct snd_soc_dai_driver *drv = dai->driver;
 	const struct snd_soc_dai_ops *ops = drv->ops;
 
@@ -294,10 +294,10 @@ static int snd_rpi_hifiberry_dacplusadcpro_hw_params(
 			return ret;
 	}
 
-	ret = snd_soc_dai_set_bclk_ratio(asoc_rtd_to_cpu(rtd, 0), channels * width);
+	ret = snd_soc_dai_set_bclk_ratio(snd_soc_rtd_to_cpu(rtd, 0), channels * width);
 	if (ret)
 		return ret;
-	ret = snd_soc_dai_set_bclk_ratio(asoc_rtd_to_codec(rtd, 0), channels * width);
+	ret = snd_soc_dai_set_bclk_ratio(snd_soc_rtd_to_codec(rtd, 0), channels * width);
 	if (ret)
 		return ret;
 	if (snd_rpi_hifiberry_is_dacpro && ops->hw_params)
@@ -309,8 +309,8 @@ static int snd_rpi_hifiberry_dacplusadcpro_startup(
 	struct snd_pcm_substream *substream)
 {
 	struct snd_soc_pcm_runtime *rtd = substream->private_data;
-	struct snd_soc_component *dac = asoc_rtd_to_codec(rtd, 0)->component;
-	struct snd_soc_component *adc = asoc_rtd_to_codec(rtd, 1)->component;
+	struct snd_soc_component *dac = snd_soc_rtd_to_codec(rtd, 0)->component;
+	struct snd_soc_component *adc = snd_soc_rtd_to_codec(rtd, 1)->component;
 
 	if (leds_off)
 		return 0;
@@ -326,8 +326,8 @@ static void snd_rpi_hifiberry_dacplusadcpro_shutdown(
 	struct snd_pcm_substream *substream)
 {
 	struct snd_soc_pcm_runtime *rtd = substream->private_data;
-	struct snd_soc_component *dac = asoc_rtd_to_codec(rtd, 0)->component;
-	struct snd_soc_component *adc = asoc_rtd_to_codec(rtd, 1)->component;
+	struct snd_soc_component *dac = snd_soc_rtd_to_codec(rtd, 0)->component;
+	struct snd_soc_component *adc = snd_soc_rtd_to_codec(rtd, 1)->component;
 
 	/* switch off respective LED */
 	if (!substream->stream)

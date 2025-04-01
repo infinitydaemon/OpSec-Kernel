@@ -231,7 +231,7 @@ failed_inst_alloc:
 	return err;
 }
 
-static int rpi_gpiomem_remove(struct platform_device *pdev)
+static void rpi_gpiomem_remove(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
 	struct rpi_gpiomem_priv *priv = platform_get_drvdata(pdev);
@@ -243,7 +243,6 @@ static int rpi_gpiomem_remove(struct platform_device *pdev)
 	kfree(priv);
 
 	dev_info(dev, "%s driver removed - OK", priv->name);
-	return 0;
 }
 
 static const struct of_device_id rpi_gpiomem_of_match[] = {

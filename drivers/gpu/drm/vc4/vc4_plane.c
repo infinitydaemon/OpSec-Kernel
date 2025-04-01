@@ -319,7 +319,7 @@ struct drm_plane_state *vc4_plane_duplicate_state(struct drm_plane *plane)
 	return &vc4_state->base;
 }
 
-void vc4_plane_release_lbm_ida(struct vc4_hvs *hvs, unsigned int lbm_handle)
+static void vc4_plane_release_lbm_ida(struct vc4_hvs *hvs, unsigned int lbm_handle)
 {
 	struct vc4_lbm_refcounts *refcount = &hvs->lbm_refcounts[lbm_handle];
 	unsigned long irqflags;
@@ -334,7 +334,7 @@ void vc4_plane_release_lbm_ida(struct vc4_hvs *hvs, unsigned int lbm_handle)
 	ida_free(&hvs->lbm_handles, lbm_handle);
 }
 
-void vc4_plane_release_upm_ida(struct vc4_hvs *hvs, unsigned int upm_handle)
+static void vc4_plane_release_upm_ida(struct vc4_hvs *hvs, unsigned int upm_handle)
 {
 	struct vc4_upm_refcounts *refcount = &hvs->upm_refcounts[upm_handle];
 	unsigned long irqflags;
@@ -536,11 +536,6 @@ static int vc4_plane_setup_clipping_and_scaling(struct drm_plane_state *state)
 	vc4_state->crtc_w = state->dst.x2 - state->dst.x1;
 	vc4_state->crtc_h = state->dst.y2 - state->dst.y1;
 
-	if (!vc4_state->crtc_w)
-		vc4_state->crtc_w = state->crtc->mode.hdisplay;
-	if (!vc4_state->crtc_h)
-		vc4_state->crtc_h = state->crtc->mode.vdisplay;
-
 	ret = vc4_plane_margins_adj(state);
 	if (ret)
 		return ret;
@@ -594,7 +589,7 @@ static void vc4_write_tpz(struct vc4_plane_state *vc4_state, u32 src, u32 dst)
 	struct vc4_dev *vc4 = to_vc4_dev(vc4_state->base.plane->dev);
 	u32 scale, recip;
 
-	WARN_ON_ONCE(vc4->gen > VC4_GEN_6);
+	WARN_ON_ONCE(vc4->gen > VC4_GEN_6_D);
 
 	if ((dst << 16) < src) {
 		scale = src / dst;
@@ -632,27 +627,40 @@ static void vc4_write_ppf(struct vc4_plane_state *vc4_state, u32 src, u32 dst,
 	s32 offset, offset2;
 	s32 phase;
 
-	WARN_ON_ONCE(vc4->gen > VC4_GEN_6);
+	WARN_ON_ONCE(vc4->gen > VC4_GEN_6_D);
 
-	/* Start the phase at 1/2 pixel from the 1st pixel at src_x.
-	   1/4 pixel for YUV, plus the offset for chroma siting */
+	/*
+	 * Start the phase at 1/2 pixel from the 1st pixel at src_x.
+	 * 1/4 pixel for YUV, plus the offset for chroma siting.
+	 */
 	if (channel) {
-		/* the phase is relative to scale_src->x, so shift it for display list's x value */
+		/*
+		 * The phase is relative to scale_src->x, so shift it for
+		 * display list's x value
+		 */
 		offset = (xy & 0x1ffff) >> (16 - PHASE_BITS) >> 1;
 		offset -= chroma_offset >> (17 - PHASE_BITS);
 		offset += -(1 << PHASE_BITS >> 2);
 	} else {
-		/* the phase is relative to scale_src->x, so shift it for display list's x value */
+		/*
+		 * The phase is relative to scale_src->x, so shift it for
+		 * display list's x value
+		 */
 		offset = (xy & 0xffff) >> (16 - PHASE_BITS);
 		offset += -(1 << PHASE_BITS >> 1);
 
-		/* This is a kludge to make sure the scaling factors are consitent with YUV's luma scaling.
-		   we lose 1bit precision because of this. */
+		/*
+		 * This is a kludge to make sure the scaling factors are
+		 * consistent with YUV's luma scaling. We lose 1-bit precision
+		 * because of this.
+		 */
 		scale &= ~1;
 	}
 
-	/* There may be a also small error introduced by precision of scale.
-	   Add half of that as a compromise */
+	/*
+	 * There may be a also small error introduced by precision of scale.
+	 * Add half of that as a compromise
+	 */
 	offset2 = src - dst * scale;
 	offset2 >>= 16 - PHASE_BITS;
 	phase = offset + (offset2 >> 1);
@@ -814,7 +822,7 @@ static unsigned int __vc6_lbm_size(const struct drm_plane_state *state)
 		return vc4_lbm_channel_size(state, 0);
 }
 
-u32 vc4_lbm_size(struct drm_plane_state *state)
+static u32 vc4_lbm_size(struct drm_plane_state *state)
 {
 	struct vc4_plane_state *vc4_state = to_vc4_plane_state(state);
 	struct vc4_dev *vc4 = to_vc4_dev(state->plane->dev);
@@ -824,7 +832,7 @@ u32 vc4_lbm_size(struct drm_plane_state *state)
 	    vc4_state->y_scaling[1] == VC4_SCALING_NONE)
 		return 0;
 
-	if (vc4->gen >= VC4_GEN_6)
+	if (vc4->gen >= VC4_GEN_6_C)
 		return __vc6_lbm_size(state);
 	else
 		return __vc4_lbm_size(state);
@@ -835,7 +843,14 @@ static size_t vc6_upm_size(const struct drm_plane_state *state,
 {
 	const struct vc4_plane_state *vc4_state = to_vc4_plane_state(state);
 	unsigned int stride = state->fb->pitches[plane];
+	u64 base_format_mod = fourcc_mod_broadcom_mod(state->fb->modifier);
 
+	if (base_format_mod == DRM_FORMAT_MOD_BROADCOM_SAND128) {
+		if (state->fb->format->format == DRM_FORMAT_P030)
+			stride = (ALIGN(state->fb->width, 96) * 4) / 3;
+		else
+			stride = ALIGN(state->fb->width, 128);
+	}
 	/*
 	 * TODO: This only works for raster formats, and is sub-optimal
 	 * for buffers with a stride aligned on 32 bytes.
@@ -854,35 +869,35 @@ static void vc4_write_scaling_parameters(struct drm_plane_state *state,
 	struct vc4_dev *vc4 = to_vc4_dev(state->plane->dev);
 	struct vc4_plane_state *vc4_state = to_vc4_plane_state(state);
 
-	WARN_ON_ONCE(vc4->gen > VC4_GEN_6);
+	WARN_ON_ONCE(vc4->gen > VC4_GEN_6_D);
 
 	/* Ch0 H-PPF Word 0: Scaling Parameters */
 	if (vc4_state->x_scaling[channel] == VC4_SCALING_PPF) {
-		vc4_write_ppf(vc4_state,
-			      vc4_state->src_w[channel], vc4_state->crtc_w, vc4_state->src_x,
-			      channel, state->chroma_siting_h,
+		vc4_write_ppf(vc4_state, vc4_state->src_w[channel],
+			      vc4_state->crtc_w, vc4_state->src_x, channel,
+			      state->chroma_siting_h,
 			      state->scaling_filter == DRM_SCALING_FILTER_NEAREST_NEIGHBOR);
 	}
 
 	/* Ch0 V-PPF Words 0-1: Scaling Parameters, Context */
 	if (vc4_state->y_scaling[channel] == VC4_SCALING_PPF) {
-		vc4_write_ppf(vc4_state,
-			      vc4_state->src_h[channel], vc4_state->crtc_h, vc4_state->src_y,
-			      channel, state->chroma_siting_v,
+		vc4_write_ppf(vc4_state, vc4_state->src_h[channel],
+			      vc4_state->crtc_h, vc4_state->src_y, channel,
+			      state->chroma_siting_v,
 			      state->scaling_filter == DRM_SCALING_FILTER_NEAREST_NEIGHBOR);
 		vc4_dlist_write(vc4_state, 0xc0c0c0c0);
 	}
 
 	/* Ch0 H-TPZ Words 0-1: Scaling Parameters, Recip */
 	if (vc4_state->x_scaling[channel] == VC4_SCALING_TPZ) {
-		vc4_write_tpz(vc4_state,
-			      vc4_state->src_w[channel], vc4_state->crtc_w);
+		vc4_write_tpz(vc4_state, vc4_state->src_w[channel],
+			      vc4_state->crtc_w);
 	}
 
 	/* Ch0 V-TPZ Words 0-2: Scaling Parameters, Recip, Context */
 	if (vc4_state->y_scaling[channel] == VC4_SCALING_TPZ) {
-		vc4_write_tpz(vc4_state,
-			      vc4_state->src_h[channel], vc4_state->crtc_h);
+		vc4_write_tpz(vc4_state, vc4_state->src_h[channel],
+			      vc4_state->crtc_h);
 		vc4_dlist_write(vc4_state, 0xc0c0c0c0);
 	}
 }
@@ -996,7 +1011,7 @@ static int vc4_plane_allocate_lbm(struct drm_plane_state *state)
 					     VC4_NUM_LBM_HANDLES,
 					     GFP_KERNEL);
 		if (lbm_handle < 0) {
-			drm_dbg_driver(drm, "Out of lbm_handles\n");
+			drm_err(drm, "Out of lbm_handles\n");
 			return lbm_handle;
 		}
 		vc4_state->lbm_handle = lbm_handle;
@@ -1013,8 +1028,7 @@ static int vc4_plane_allocate_lbm(struct drm_plane_state *state)
 		spin_unlock_irqrestore(&hvs->mm_lock, irqflags);
 
 		if (ret) {
-			drm_dbg_driver(drm, "Failed to allocate LBM entry: %d\n",
-				       ret);
+			drm_err(drm, "Failed to allocate LBM entry: %d\n", ret);
 			refcount_set(&refcount->refcount, 0);
 			ida_free(&hvs->lbm_handles, lbm_handle);
 			vc4_state->lbm_handle = 0;
@@ -1054,7 +1068,7 @@ static int vc6_plane_allocate_upm(struct drm_plane_state *state)
 	unsigned int i;
 	int ret;
 
-	WARN_ON_ONCE(vc4->gen < VC4_GEN_6);
+	WARN_ON_ONCE(vc4->gen < VC4_GEN_6_C);
 
 	vc4_state->upm_buffer_lines = SCALER6_PTR0_UPM_BUFF_SIZE_2_LINES;
 
@@ -1086,7 +1100,7 @@ static int vc6_plane_allocate_upm(struct drm_plane_state *state)
 						     VC4_NUM_UPM_HANDLES,
 						     GFP_KERNEL);
 			if (upm_handle < 0) {
-				drm_dbg_driver(drm, "Out of upm_handles\n");
+				drm_dbg(drm, "Out of upm_handles\n");
 				return upm_handle;
 			}
 			vc4_state->upm_handle[i] = upm_handle;
@@ -1102,8 +1116,7 @@ static int vc6_plane_allocate_upm(struct drm_plane_state *state)
 							 0, 0);
 			spin_unlock_irqrestore(&hvs->mm_lock, irqflags);
 			if (ret) {
-				drm_dbg_driver(drm, "Failed to allocate UPM entry: %d\n",
-					       ret);
+				drm_err(drm, "Failed to allocate UPM entry: %d\n", ret);
 				refcount_set(&refcount->refcount, 0);
 				ida_free(&hvs->upm_handles, upm_handle);
 				vc4_state->upm_handle[i] = 0;
@@ -1132,7 +1145,7 @@ static void vc6_plane_free_upm(struct drm_plane_state *state)
 	struct vc4_hvs *hvs = vc4->hvs;
 	unsigned int i;
 
-	WARN_ON_ONCE(vc4->gen < VC4_GEN_6);
+	WARN_ON_ONCE(vc4->gen < VC4_GEN_6_C);
 
 	for (i = 0; i < DRM_FORMAT_MAX_PLANES; i++) {
 		unsigned int upm_handle;
@@ -1223,30 +1236,34 @@ static u32 vc4_hvs5_get_alpha_blend_mode(struct drm_plane_state *state)
 	struct drm_device *dev = state->state->dev;
 	struct vc4_dev *vc4 = to_vc4_dev(dev);
 
-	WARN_ON_ONCE(vc4->gen != VC4_GEN_5 && vc4->gen != VC4_GEN_6);
+	WARN_ON_ONCE(vc4->gen != VC4_GEN_5 && vc4->gen != VC4_GEN_6_C &&
+		     vc4->gen != VC4_GEN_6_D);
 
-	if (vc4->gen == VC4_GEN_6 && vc4->step_d0) {
+	switch (vc4->gen) {
+	default:
+	case VC4_GEN_5:
+	case VC4_GEN_6_C:
+		if (!state->fb->format->has_alpha)
+			return VC4_SET_FIELD(SCALER5_CTL2_ALPHA_MODE_FIXED,
+					     SCALER5_CTL2_ALPHA_MODE);
+
+		switch (state->pixel_blend_mode) {
+		case DRM_MODE_BLEND_PIXEL_NONE:
+			return VC4_SET_FIELD(SCALER5_CTL2_ALPHA_MODE_FIXED,
+					     SCALER5_CTL2_ALPHA_MODE);
+		default:
+		case DRM_MODE_BLEND_PREMULTI:
+			return VC4_SET_FIELD(SCALER5_CTL2_ALPHA_MODE_PIPELINE,
+					     SCALER5_CTL2_ALPHA_MODE) |
+				SCALER5_CTL2_ALPHA_PREMULT;
+		case DRM_MODE_BLEND_COVERAGE:
+			return VC4_SET_FIELD(SCALER5_CTL2_ALPHA_MODE_PIPELINE,
+					     SCALER5_CTL2_ALPHA_MODE);
+		}
+	case VC4_GEN_6_D:
+		/* 2712-D configures fixed alpha mode in CTL0 */
 		return state->pixel_blend_mode == DRM_MODE_BLEND_PREMULTI ?
 			SCALER5_CTL2_ALPHA_PREMULT : 0;
-	}
-
-
-	if (!state->fb->format->has_alpha)
-		return VC4_SET_FIELD(SCALER5_CTL2_ALPHA_MODE_FIXED,
-				     SCALER5_CTL2_ALPHA_MODE);
-
-	switch (state->pixel_blend_mode) {
-	case DRM_MODE_BLEND_PIXEL_NONE:
-		return VC4_SET_FIELD(SCALER5_CTL2_ALPHA_MODE_FIXED,
-				     SCALER5_CTL2_ALPHA_MODE);
-	default:
-	case DRM_MODE_BLEND_PREMULTI:
-		return VC4_SET_FIELD(SCALER5_CTL2_ALPHA_MODE_PIPELINE,
-				     SCALER5_CTL2_ALPHA_MODE) |
-			SCALER5_CTL2_ALPHA_PREMULT;
-	case DRM_MODE_BLEND_COVERAGE:
-		return VC4_SET_FIELD(SCALER5_CTL2_ALPHA_MODE_PIPELINE,
-				     SCALER5_CTL2_ALPHA_MODE);
 	}
 }
 
@@ -1255,12 +1272,13 @@ static u32 vc4_hvs6_get_alpha_mask_mode(struct drm_plane_state *state)
 	struct drm_device *dev = state->state->dev;
 	struct vc4_dev *vc4 = to_vc4_dev(dev);
 
-	WARN_ON_ONCE(vc4->gen != VC4_GEN_6);
+	WARN_ON_ONCE(vc4->gen != VC4_GEN_6_C && vc4->gen != VC4_GEN_6_D);
 
-	if (vc4->step_d0 && (!state->fb->format->has_alpha ||
-	    state->pixel_blend_mode == DRM_MODE_BLEND_PIXEL_NONE))
-		return VC4_SET_FIELD(SCALER6_CTL0_ALPHA_MASK_FIXED,
-		       SCALER6_CTL0_ALPHA_MASK);
+	if (vc4->gen == VC4_GEN_6_D &&
+	    (!state->fb->format->has_alpha ||
+	     state->pixel_blend_mode == DRM_MODE_BLEND_PIXEL_NONE))
+		return VC4_SET_FIELD(SCALER6D_CTL0_ALPHA_MASK_FIXED,
+				     SCALER6_CTL0_ALPHA_MASK);
 
 	return VC4_SET_FIELD(SCALER6_CTL0_ALPHA_MASK_NONE, SCALER6_CTL0_ALPHA_MASK);
 }
@@ -1282,7 +1300,7 @@ static int vc4_plane_mode_set(struct drm_plane *plane,
 	u32 v_subsample = fb->format->vsub;
 	bool mix_plane_alpha;
 	bool covers_screen;
-	u32 scl0, scl1, pitch0;
+	u32 scl0, scl1, pitch[2];
 	u32 tiling, src_x, src_y;
 	u32 width, height;
 	u32 hvs_format = format->hvs;
@@ -1297,15 +1315,15 @@ static int vc4_plane_mode_set(struct drm_plane *plane,
 	if (ret)
 		return ret;
 
-	width = vc4_state->src_w[0] >> 16;
-	height = vc4_state->src_h[0] >> 16;
-
 	if (!vc4_state->src_w[0] || !vc4_state->src_h[0] ||
 	    !vc4_state->crtc_w || !vc4_state->crtc_h) {
 		/* 0 source size probably means the plane is offscreen */
 		vc4_state->dlist_initialized = 1;
 		return 0;
 	}
+
+	width = vc4_state->src_w[0] >> 16;
+	height = vc4_state->src_h[0] >> 16;
 
 	/* SCL1 is used for Cb/Cr scaling of planar formats.  For RGB
 	 * and 4:4:4, scl1 should be set to scl0 so both channels of
@@ -1336,7 +1354,7 @@ static int vc4_plane_mode_set(struct drm_plane *plane,
 	switch (base_format_mod) {
 	case DRM_FORMAT_MOD_LINEAR:
 		tiling = SCALER_CTL0_TILING_LINEAR;
-		pitch0 = VC4_SET_FIELD(fb->pitches[0], SCALER_SRC_PITCH);
+		pitch[0] = VC4_SET_FIELD(fb->pitches[0], SCALER_SRC_PITCH);
 
 		/* Adjust the base pointer to the first pixel to be scanned
 		 * out.
@@ -1388,23 +1406,23 @@ static int vc4_plane_mode_set(struct drm_plane *plane,
 		 */
 		if (rotation & DRM_MODE_REFLECT_Y) {
 			y_off = tile_h_mask - y_off;
-			pitch0 = SCALER_PITCH0_TILE_LINE_DIR;
+			pitch[0] = SCALER_PITCH0_TILE_LINE_DIR;
 		} else {
-			pitch0 = 0;
+			pitch[0] = 0;
 		}
 
 		tiling = SCALER_CTL0_TILING_256B_OR_T;
-		pitch0 |= (VC4_SET_FIELD(x_off, SCALER_PITCH0_SINK_PIX) |
-			   VC4_SET_FIELD(y_off, SCALER_PITCH0_TILE_Y_OFFSET) |
-			   VC4_SET_FIELD(tiles_l, SCALER_PITCH0_TILE_WIDTH_L) |
-			   VC4_SET_FIELD(tiles_r, SCALER_PITCH0_TILE_WIDTH_R));
+		pitch[0] |= (VC4_SET_FIELD(x_off, SCALER_PITCH0_SINK_PIX) |
+			     VC4_SET_FIELD(y_off, SCALER_PITCH0_TILE_Y_OFFSET) |
+			     VC4_SET_FIELD(tiles_l, SCALER_PITCH0_TILE_WIDTH_L) |
+			     VC4_SET_FIELD(tiles_r, SCALER_PITCH0_TILE_WIDTH_R));
 		offsets[0] += tiles_t * (tiles_w << tile_size_shift);
 		offsets[0] += subtile_y << 8;
 		offsets[0] += utile_y << 4;
 
 		/* Rows of tiles alternate left-to-right and right-to-left. */
 		if (tiles_t & 1) {
-			pitch0 |= SCALER_PITCH0_TILE_INITIAL_LINE_DIR;
+			pitch[0] |= SCALER_PITCH0_TILE_INITIAL_LINE_DIR;
 			offsets[0] += (tiles_w - tiles_l) << tile_size_shift;
 			offsets[0] -= (1 + !tile_y) << 10;
 		} else {
@@ -1419,6 +1437,7 @@ static int vc4_plane_mode_set(struct drm_plane *plane,
 	case DRM_FORMAT_MOD_BROADCOM_SAND128:
 	case DRM_FORMAT_MOD_BROADCOM_SAND256: {
 		uint32_t param = fourcc_mod_broadcom_param(fb->modifier);
+		unsigned int tile_width = 0;
 
 		if (param > SCALER_TILE_HEIGHT_MASK) {
 			DRM_DEBUG_KMS("SAND height too large (%d)\n",
@@ -1429,18 +1448,22 @@ static int vc4_plane_mode_set(struct drm_plane *plane,
 		if (fb->format->format == DRM_FORMAT_P030) {
 			hvs_format = HVS_PIXEL_FORMAT_YCBCR_10BIT;
 			tiling = SCALER_CTL0_TILING_128B;
+			tile_width = 128;
 		} else {
 			hvs_format = HVS_PIXEL_FORMAT_H264;
 
 			switch (base_format_mod) {
 			case DRM_FORMAT_MOD_BROADCOM_SAND64:
 				tiling = SCALER_CTL0_TILING_64B;
+				tile_width = 64;
 				break;
 			case DRM_FORMAT_MOD_BROADCOM_SAND128:
 				tiling = SCALER_CTL0_TILING_128B;
+				tile_width = 128;
 				break;
 			case DRM_FORMAT_MOD_BROADCOM_SAND256:
 				tiling = SCALER_CTL0_TILING_256B_OR_T;
+				tile_width = 256;
 				break;
 			default:
 				return -EINVAL;
@@ -1458,7 +1481,16 @@ static int vc4_plane_mode_set(struct drm_plane *plane,
 		 * should be 6.
 		 */
 		for (i = 0; i < num_planes; i++) {
-			u32 tile_w, tile, x_off, pix_per_tile;
+			u32 tile, x_off, pix_per_tile;
+
+			switch (param) {
+			case 0:
+				pitch[i] = fb->pitches[i];
+				break;
+			default:
+				pitch[i] = VC4_SET_FIELD(param, SCALER_TILE_HEIGHT);
+				break;
+			}
 
 			if (fb->format->format == DRM_FORMAT_P030) {
 				/*
@@ -1474,23 +1506,9 @@ static int vc4_plane_mode_set(struct drm_plane *plane,
 				u32 last_bits = remaining_pixels % 12;
 
 				x_off = aligned * 16 + last_bits;
-				tile_w = 128;
 				pix_per_tile = 96;
 			} else {
-				switch (base_format_mod) {
-				case DRM_FORMAT_MOD_BROADCOM_SAND64:
-					tile_w = 64;
-					break;
-				case DRM_FORMAT_MOD_BROADCOM_SAND128:
-					tile_w = 128;
-					break;
-				case DRM_FORMAT_MOD_BROADCOM_SAND256:
-					tile_w = 256;
-					break;
-				default:
-					return -EINVAL;
-				}
-				pix_per_tile = tile_w / fb->format->cpp[0];
+				pix_per_tile = tile_width / fb->format->cpp[0];
 				x_off = (src_x % pix_per_tile) /
 					(i ? h_subsample : 1) *
 					fb->format->cpp[i];
@@ -1498,12 +1516,10 @@ static int vc4_plane_mode_set(struct drm_plane *plane,
 
 			tile = src_x / pix_per_tile;
 
-			offsets[i] += param * tile_w * tile;
-			offsets[i] += src_y / (i ? v_subsample : 1) * tile_w;
+			offsets[i] += pitch[i] * tile * tile_width;
+			offsets[i] += src_y / (i ? v_subsample : 1) * tile_width;
 			offsets[i] += x_off & ~(i ? 1 : 0);
 		}
-
-		pitch0 = VC4_SET_FIELD(param, SCALER_TILE_HEIGHT);
 		break;
 	}
 
@@ -1519,7 +1535,7 @@ static int vc4_plane_mode_set(struct drm_plane *plane,
 
 	/* same for the right side */
 	if (((vc4_state->src_x + vc4_state->src_w[0]) & 0xffff) &&
-	       vc4_state->src_x + vc4_state->src_w[0] < (state->fb->width << 16))
+	    vc4_state->src_x + vc4_state->src_w[0] < (state->fb->width << 16))
 		width++;
 
 	/* now for the top */
@@ -1528,10 +1544,12 @@ static int vc4_plane_mode_set(struct drm_plane *plane,
 
 	/* and the bottom */
 	if (((vc4_state->src_y + vc4_state->src_h[0]) & 0xffff) &&
-	       vc4_state->src_y + vc4_state->src_h[0] < (state->fb->height << 16))
+	    vc4_state->src_y + vc4_state->src_h[0] < (state->fb->height << 16))
 		height++;
 
-	/* for YUV444 hardware wants double the width, otherwise it doesn't fetch full width of chroma */
+	/* For YUV444 the hardware wants double the width, otherwise it doesn't
+	 * fetch full width of chroma
+	 */
 	if (format->drm == DRM_FORMAT_YUV444 || format->drm == DRM_FORMAT_YVU444)
 		width <<= 1;
 
@@ -1656,7 +1674,7 @@ static int vc4_plane_mode_set(struct drm_plane *plane,
 		vc4_dlist_write(vc4_state, 0xc0c0c0c0);
 
 	/* Pitch word 0 */
-	vc4_dlist_write(vc4_state, pitch0);
+	vc4_dlist_write(vc4_state, pitch[0]);
 
 	/* Pitch word 1/2 */
 	for (i = 1; i < num_planes; i++) {
@@ -1666,7 +1684,7 @@ static int vc4_plane_mode_set(struct drm_plane *plane,
 					VC4_SET_FIELD(fb->pitches[i],
 						      SCALER_SRC_PITCH));
 		} else {
-			vc4_dlist_write(vc4_state, pitch0);
+			vc4_dlist_write(vc4_state, pitch[1]);
 		}
 	}
 
@@ -1793,14 +1811,14 @@ static u32 vc6_plane_get_csc_mode(struct vc4_plane_state *vc4_state)
 		if (color_range > DRM_COLOR_YCBCR_FULL_RANGE)
 			color_range = DRM_COLOR_YCBCR_LIMITED_RANGE;
 
-		if (vc4->step_d0) {
-			ret |= SCALER6D0_CTL2_CSC_ENABLE;
+		if (vc4->gen == VC4_GEN_6_C) {
+			ret |= SCALER6C_CTL2_CSC_ENABLE;
 			ret |= VC4_SET_FIELD(color_encoding + (color_range * 3),
-					SCALER6D0_CTL2_BRCM_CFC_CONTROL);
+					     SCALER6C_CTL2_BRCM_CFC_CONTROL);
 		} else {
-			ret |= SCALER6_CTL2_CSC_ENABLE;
+			ret |= SCALER6D_CTL2_CSC_ENABLE;
 			ret |= VC4_SET_FIELD(color_encoding + (color_range * 3),
-					SCALER6_CTL2_BRCM_CFC_CONTROL);
+					     SCALER6D_CTL2_BRCM_CFC_CONTROL);
 		}
 	}
 
@@ -1821,7 +1839,7 @@ static int vc6_plane_mode_set(struct drm_plane *plane,
 	u32 v_subsample = fb->format->vsub;
 	bool mix_plane_alpha;
 	bool covers_screen;
-	u32 scl0, scl1, pitch0;
+	u32 scl0, scl1, pitch[2];
 	u32 tiling, src_x, src_y;
 	u32 width, height;
 	u32 hvs_format = format->hvs;
@@ -1836,9 +1854,6 @@ static int vc6_plane_mode_set(struct drm_plane *plane,
 	if (ret)
 		return ret;
 
-	width = vc4_state->src_w[0] >> 16;
-	height = vc4_state->src_h[0] >> 16;
-
 	if (!vc4_state->src_w[0] || !vc4_state->src_h[0] ||
 	    !vc4_state->crtc_w || !vc4_state->crtc_h) {
 		/* 0 source size probably means the plane is offscreen.
@@ -1847,6 +1862,9 @@ static int vc6_plane_mode_set(struct drm_plane *plane,
 		vc4_state->dlist_initialized = 1;
 		return 0;
 	}
+
+	width = vc4_state->src_w[0] >> 16;
+	height = vc4_state->src_h[0] >> 16;
 
 	/* SCL1 is used for Cb/Cr scaling of planar formats.  For RGB
 	 * and 4:4:4, scl1 should be set to scl0 so both channels of
@@ -1891,6 +1909,7 @@ static int vc6_plane_mode_set(struct drm_plane *plane,
 	case DRM_FORMAT_MOD_BROADCOM_SAND128:
 	case DRM_FORMAT_MOD_BROADCOM_SAND256: {
 		uint32_t param = fourcc_mod_broadcom_param(fb->modifier);
+		unsigned int tile_width = 0;
 		u32 components_per_word;
 		u32 starting_offset;
 		u32 fetch_count;
@@ -1904,20 +1923,28 @@ static int vc6_plane_mode_set(struct drm_plane *plane,
 		if (fb->format->format == DRM_FORMAT_P030) {
 			hvs_format = HVS_PIXEL_FORMAT_YCBCR_10BIT;
 			tiling = SCALER6_CTL0_ADDR_MODE_128B;
+			tile_width = 128;
 		} else {
 			hvs_format = HVS_PIXEL_FORMAT_YCBCR_YUV420_2PLANE;
 
 			switch (base_format_mod) {
 			case DRM_FORMAT_MOD_BROADCOM_SAND128:
 				tiling = SCALER6_CTL0_ADDR_MODE_128B;
+				tile_width = 128;
 				break;
 			case DRM_FORMAT_MOD_BROADCOM_SAND256:
 				tiling = SCALER6_CTL0_ADDR_MODE_256B;
+				tile_width = 256;
 				break;
 			default:
 				return -EINVAL;
 			}
 		}
+
+		components_per_word = fb->format->format == DRM_FORMAT_P030 ? 24 : 32;
+		starting_offset = src_x % components_per_word;
+		fetch_count = (width + starting_offset + components_per_word - 1) /
+			components_per_word;
 
 		/* Adjust the base pointer to the first pixel to be scanned
 		 * out.
@@ -1930,7 +1957,16 @@ static int vc6_plane_mode_set(struct drm_plane *plane,
 		 * should be 6.
 		 */
 		for (i = 0; i < num_planes; i++) {
-			u32 tile_w, tile, x_off, pix_per_tile;
+			u32 tile, x_off, pix_per_tile;
+
+			switch (param) {
+			case 0:
+				pitch[i] = fb->pitches[i];
+				break;
+			default:
+				pitch[i] = VC4_SET_FIELD(param, SCALER_TILE_HEIGHT);
+				break;
+			}
 
 			if (fb->format->format == DRM_FORMAT_P030) {
 				/*
@@ -1946,20 +1982,9 @@ static int vc6_plane_mode_set(struct drm_plane *plane,
 				u32 last_bits = remaining_pixels % 12;
 
 				x_off = aligned * 16 + last_bits;
-				tile_w = 128;
 				pix_per_tile = 96;
 			} else {
-				switch (base_format_mod) {
-				case DRM_FORMAT_MOD_BROADCOM_SAND128:
-					tile_w = 128;
-					break;
-				case DRM_FORMAT_MOD_BROADCOM_SAND256:
-					tile_w = 256;
-					break;
-				default:
-					return -EINVAL;
-				}
-				pix_per_tile = tile_w / fb->format->cpp[0];
+				pix_per_tile = tile_width / fb->format->cpp[0];
 				x_off = (src_x % pix_per_tile) /
 					(i ? h_subsample : 1) *
 					fb->format->cpp[i];
@@ -1967,18 +1992,18 @@ static int vc6_plane_mode_set(struct drm_plane *plane,
 
 			tile = src_x / pix_per_tile;
 
-			offsets[i] += param * tile_w * tile;
-			offsets[i] += src_y / (i ? v_subsample : 1) * tile_w;
+			offsets[i] += pitch[i] * tile * tile_width;
+			offsets[i] += src_y / (i ? v_subsample : 1) * tile_width;
 			offsets[i] += x_off & ~(i ? 1 : 0);
+
+			/*
+			 * Finished using the pitch as a pitch, so pack it as the
+			 * register value.
+			 */
+			pitch[i] = VC4_SET_FIELD(pitch[i], SCALER6_PTR2_PITCH) |
+				   VC4_SET_FIELD(fetch_count - 1, SCALER6_PTR2_FETCH_COUNT);
 		}
 
-		components_per_word = fb->format->format == DRM_FORMAT_P030 ? 24 : 32;
-		starting_offset = src_x % components_per_word;
-		fetch_count = (width + starting_offset + components_per_word - 1) /
-			components_per_word;
-
-		pitch0 = VC4_SET_FIELD(param, SCALER6_PTR2_PITCH) |
-			 VC4_SET_FIELD(fetch_count - 1, SCALER6_PTR2_FETCH_COUNT);
 		break;
 	}
 
@@ -2091,7 +2116,7 @@ static int vc6_plane_mode_set(struct drm_plane *plane,
 					VC4_SET_FIELD(fb->pitches[i],
 						      SCALER6_PTR2_PITCH));
 		} else {
-			vc4_dlist_write(vc4_state, pitch0);
+			vc4_dlist_write(vc4_state, pitch[i]);
 		}
 	}
 
@@ -2224,14 +2249,14 @@ int vc4_plane_atomic_check(struct drm_plane *plane,
 				drm_atomic_get_old_plane_state(state, plane);
 
 		if (old_plane_state && plane_enabled(old_plane_state)) {
-			if (vc4->gen >= VC4_GEN_6)
+			if (vc4->gen >= VC4_GEN_6_C)
 				vc6_plane_free_upm(new_plane_state);
 			vc4_plane_free_lbm(new_plane_state);
 		}
 		return 0;
 	}
 
-	if (vc4->gen >= VC4_GEN_6)
+	if (vc4->gen >= VC4_GEN_6_C)
 		ret = vc6_plane_mode_set(plane, new_plane_state);
 	else
 		ret = vc4_plane_mode_set(plane, new_plane_state);
@@ -2246,7 +2271,7 @@ int vc4_plane_atomic_check(struct drm_plane *plane,
 	if (ret)
 		return ret;
 
-	if (vc4->gen >= VC4_GEN_6) {
+	if (vc4->gen >= VC4_GEN_6_C) {
 		ret = vc6_plane_allocate_upm(new_plane_state);
 		if (ret)
 			return ret;
@@ -2312,7 +2337,7 @@ void vc4_plane_async_set_fb(struct drm_plane *plane, struct drm_framebuffer *fb)
 	 */
 	WARN_ON_ONCE(plane->state->crtc_x < 0 || plane->state->crtc_y < 0);
 
-	if (vc4->gen == VC4_GEN_6) {
+	if (vc4->gen == VC4_GEN_6_C) {
 		u32 value;
 
 		value = vc4_state->dlist[vc4_state->ptr0_offset[0]] &
@@ -2424,17 +2449,17 @@ static void vc4_plane_atomic_async_update(struct drm_plane *plane,
 static int vc4_plane_atomic_async_check(struct drm_plane *plane,
 					struct drm_atomic_state *state)
 {
+	struct vc4_dev *vc4 = to_vc4_dev(plane->dev);
 	struct drm_plane_state *new_plane_state = drm_atomic_get_new_plane_state(state,
 										 plane);
-	struct vc4_dev *vc4 = to_vc4_dev(plane->dev);
 	struct vc4_plane_state *old_vc4_state, *new_vc4_state;
 	int ret;
 	u32 i;
 
-	if (vc4->gen >= VC4_GEN_6)
-		ret = vc6_plane_mode_set(plane, new_plane_state);
-	else
+	if (vc4->gen <= VC4_GEN_5)
 		ret = vc4_plane_mode_set(plane, new_plane_state);
+	else
+		ret = vc6_plane_mode_set(plane, new_plane_state);
 	if (ret)
 		return ret;
 
@@ -2473,13 +2498,16 @@ static int vc4_prepare_fb(struct drm_plane *plane,
 			  struct drm_plane_state *state)
 {
 	struct vc4_bo *bo;
+	int ret;
 
 	if (!state->fb)
 		return 0;
 
 	bo = to_vc4_bo(&drm_fb_dma_get_gem_obj(state->fb, 0)->base);
 
-	drm_gem_plane_helper_prepare_fb(plane, state);
+	ret = drm_gem_plane_helper_prepare_fb(plane, state);
+	if (ret)
+		return ret;
 
 	return vc4_bo_inc_usecnt(bo);
 }
@@ -2597,9 +2625,9 @@ struct drm_plane *vc4_plane_init(struct drm_device *dev,
 	unsigned i;
 	static const uint64_t modifiers[] = {
 		DRM_FORMAT_MOD_BROADCOM_VC4_T_TILED,
-		DRM_FORMAT_MOD_BROADCOM_SAND128,
-		DRM_FORMAT_MOD_BROADCOM_SAND64,
-		DRM_FORMAT_MOD_BROADCOM_SAND256,
+		DRM_FORMAT_MOD_BROADCOM_SAND128_COL_HEIGHT(0),
+		DRM_FORMAT_MOD_BROADCOM_SAND64_COL_HEIGHT(0),
+		DRM_FORMAT_MOD_BROADCOM_SAND256_COL_HEIGHT(0),
 		DRM_FORMAT_MOD_LINEAR,
 		DRM_FORMAT_MOD_INVALID
 	};

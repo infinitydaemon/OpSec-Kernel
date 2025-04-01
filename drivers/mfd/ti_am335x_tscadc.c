@@ -296,7 +296,7 @@ err_disable_clk:
 	return err;
 }
 
-static int ti_tscadc_remove(struct platform_device *pdev)
+static void ti_tscadc_remove(struct platform_device *pdev)
 {
 	struct ti_tscadc_dev *tscadc = platform_get_drvdata(pdev);
 
@@ -306,8 +306,6 @@ static int ti_tscadc_remove(struct platform_device *pdev)
 	pm_runtime_disable(&pdev->dev);
 
 	mfd_remove_devices(tscadc->dev);
-
-	return 0;
 }
 
 static int __maybe_unused ti_tscadc_can_wakeup(struct device *dev, void *data)
@@ -379,7 +377,7 @@ static struct platform_driver ti_tscadc_driver = {
 		.of_match_table = ti_tscadc_dt_ids,
 	},
 	.probe	= ti_tscadc_probe,
-	.remove	= ti_tscadc_remove,
+	.remove_new = ti_tscadc_remove,
 
 };
 

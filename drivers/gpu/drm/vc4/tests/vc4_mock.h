@@ -35,13 +35,9 @@ struct drm_plane *vc4_mock_find_plane_for_crtc(struct kunit *test,
 	return NULL;
 }
 
-struct vc4_dummy_plane {
-	struct vc4_plane plane;
-};
+struct drm_plane *vc4_dummy_plane(struct kunit *test, struct drm_device *drm,
+				  enum drm_plane_type type);
 
-struct vc4_dummy_plane *vc4_dummy_plane(struct kunit *test,
-					struct drm_device *drm,
-					enum drm_plane_type type);
 struct drm_plane *
 vc4_mock_atomic_add_plane(struct kunit *test,
 			  struct drm_atomic_state *state,

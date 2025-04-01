@@ -34,6 +34,7 @@
 #include <linux/seq_file.h>
 #include <linux/slab.h>
 #include <linux/spinlock.h>
+#include <linux/string_choices.h>
 #include <linux/types.h>
 #include <dt-bindings/pinctrl/bcm2835.h>
 
@@ -245,7 +246,7 @@ static const char * const irq_type_names[] = {
 };
 
 static bool persist_gpio_outputs = true;
-module_param(persist_gpio_outputs, bool, 0644);
+module_param(persist_gpio_outputs, bool, 0444);
 MODULE_PARM_DESC(persist_gpio_outputs, "Enable GPIO_OUT persistence when pin is freed");
 
 static inline u32 bcm2835_gpio_rd(struct bcm2835_pinctrl *pc, unsigned reg)
@@ -765,7 +766,7 @@ static void bcm2835_pctl_pin_dbg_show(struct pinctrl_dev *pctldev,
 	int irq = irq_find_mapping(chip->irq.domain, offset);
 
 	seq_printf(s, "function %s in %s; irq %d (%s)",
-		fname, value ? "hi" : "lo",
+		fname, str_hi_lo(value),
 		irq, irq_type_names[pc->irq_type[offset]]);
 }
 
@@ -1024,8 +1025,27 @@ static const struct pinmux_ops bcm2835_pmx_ops = {
 static int bcm2835_pinconf_get(struct pinctrl_dev *pctldev,
 			unsigned pin, unsigned long *config)
 {
-	/* No way to read back config in HW */
-	return -ENOTSUPP;
+	enum pin_config_param param = pinconf_to_config_param(*config);
+	struct bcm2835_pinctrl *pc = pinctrl_dev_get_drvdata(pctldev);
+	enum bcm2835_fsel fsel = bcm2835_pinctrl_fsel_get(pc, pin);
+	u32 val;
+
+	/* No way to read back bias config in HW */
+
+	switch (param) {
+	case PIN_CONFIG_OUTPUT:
+		if (fsel != BCM2835_FSEL_GPIO_OUT)
+			return -EINVAL;
+
+		val = bcm2835_gpio_get_bit(pc, GPLEV0, pin);
+		*config = pinconf_to_config_packed(param, val);
+		break;
+
+	default:
+		return -ENOTSUPP;
+	}
+
+	return 0;
 }
 
 static void bcm2835_pull_config_set(struct bcm2835_pinctrl *pc,
@@ -1100,6 +1120,45 @@ static const struct pinconf_ops bcm2835_pinconf_ops = {
 	.pin_config_set = bcm2835_pinconf_set,
 };
 
+static int bcm2711_pinconf_get(struct pinctrl_dev *pctldev, unsigned pin,
+			       unsigned long *config)
+{
+	struct bcm2835_pinctrl *pc = pinctrl_dev_get_drvdata(pctldev);
+	enum pin_config_param param = pinconf_to_config_param(*config);
+	u32 offset, shift, val;
+
+	offset = PUD_2711_REG_OFFSET(pin);
+	shift = PUD_2711_REG_SHIFT(pin);
+	val = bcm2835_gpio_rd(pc, GP_GPIO_PUP_PDN_CNTRL_REG0 + (offset * 4));
+
+	switch (param) {
+	case PIN_CONFIG_BIAS_DISABLE:
+		if (((val >> shift) & PUD_2711_MASK) != BCM2711_PULL_NONE)
+			return -EINVAL;
+
+		break;
+
+	case PIN_CONFIG_BIAS_PULL_UP:
+		if (((val >> shift) & PUD_2711_MASK) != BCM2711_PULL_UP)
+			return -EINVAL;
+
+		*config = pinconf_to_config_packed(param, 50000);
+		break;
+
+	case PIN_CONFIG_BIAS_PULL_DOWN:
+		if (((val >> shift) & PUD_2711_MASK) != BCM2711_PULL_DOWN)
+			return -EINVAL;
+
+		*config = pinconf_to_config_packed(param, 50000);
+		break;
+
+	default:
+		return bcm2835_pinconf_get(pctldev, pin, config);
+	}
+
+	return 0;
+}
+
 static void bcm2711_pull_config_set(struct bcm2835_pinctrl *pc,
 				    unsigned int pin, unsigned int arg)
 {
@@ -1167,7 +1226,7 @@ static int bcm2711_pinconf_set(struct pinctrl_dev *pctldev,
 
 static const struct pinconf_ops bcm2711_pinconf_ops = {
 	.is_generic = true,
-	.pin_config_get = bcm2835_pinconf_get,
+	.pin_config_get = bcm2711_pinconf_get,
 	.pin_config_set = bcm2711_pinconf_set,
 };
 
@@ -1234,6 +1293,7 @@ static const struct of_device_id bcm2835_pinctrl_match[] = {
 	},
 	{}
 };
+MODULE_DEVICE_TABLE(of, bcm2835_pinctrl_match);
 
 static int bcm2835_pinctrl_probe(struct platform_device *pdev)
 {
@@ -1383,7 +1443,7 @@ static int bcm2835_pinctrl_probe(struct platform_device *pdev)
 	}
 
 	dev_info(dev, "GPIO_OUT persistence: %s\n",
-		 persist_gpio_outputs ? "yes" : "no");
+		 str_yes_no(persist_gpio_outputs));
 
 	return 0;
 

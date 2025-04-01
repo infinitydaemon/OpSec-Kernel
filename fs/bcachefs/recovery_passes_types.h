@@ -13,8 +13,10 @@
  * must never change:
  */
 #define BCH_RECOVERY_PASSES()							\
+	x(recovery_pass_empty,			41, PASS_SILENT)		\
 	x(scan_for_btree_nodes,			37, 0)				\
 	x(check_topology,			 4, 0)				\
+	x(accounting_read,			39, PASS_ALWAYS)		\
 	x(alloc_read,				 0, PASS_ALWAYS)		\
 	x(stripes_read,				 1, PASS_ALWAYS)		\
 	x(initialize_subvolumes,		 2, 0)				\
@@ -45,11 +47,12 @@
 	x(check_dirents,			27, PASS_FSCK)			\
 	x(check_xattrs,				28, PASS_FSCK)			\
 	x(check_root,				29, PASS_ONLINE|PASS_FSCK)	\
+	x(check_unreachable_inodes,		40, PASS_ONLINE|PASS_FSCK)	\
 	x(check_subvolume_structure,		36, PASS_ONLINE|PASS_FSCK)	\
 	x(check_directory_structure,		30, PASS_ONLINE|PASS_FSCK)	\
 	x(check_nlinks,				31, PASS_FSCK)			\
 	x(resume_logged_ops,			23, PASS_ALWAYS)		\
-	x(delete_dead_inodes,			32, PASS_FSCK|PASS_UNCLEAN)	\
+	x(delete_dead_inodes,			32, PASS_ALWAYS)		\
 	x(fix_reflink_p,			33, 0)				\
 	x(set_fs_needs_rebalance,		34, 0)				\
 

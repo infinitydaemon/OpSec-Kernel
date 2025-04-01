@@ -149,10 +149,9 @@ static int clk_hifiberry_dacpro_probe(struct platform_device *pdev)
 	return ret;
 }
 
-static int clk_hifiberry_dacpro_remove(struct platform_device *pdev)
+static void clk_hifiberry_dacpro_remove(struct platform_device *pdev)
 {
 	of_clk_del_provider(pdev->dev.of_node);
-	return 0;
 }
 
 static struct platform_driver clk_hifiberry_dacpro_driver = {

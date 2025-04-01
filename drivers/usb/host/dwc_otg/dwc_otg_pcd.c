@@ -237,7 +237,7 @@ static dwc_otg_cil_callbacks_t pcd_callbacks = {
  * This function allocates a DMA Descriptor chain for the Endpoint
  * buffer to be used for a transfer to/from the specified endpoint.
  */
-dwc_otg_dev_dma_desc_t *dwc_otg_ep_alloc_desc_chain(struct device *dev,
+static dwc_otg_dev_dma_desc_t *dwc_otg_ep_alloc_desc_chain(struct device *dev,
 						    dwc_dma_t * dma_desc_addr,
 						    uint32_t count)
 {
@@ -248,7 +248,7 @@ dwc_otg_dev_dma_desc_t *dwc_otg_ep_alloc_desc_chain(struct device *dev,
 /**
  * This function frees a DMA Descriptor chain that was allocated by ep_alloc_desc.
  */
-void dwc_otg_ep_free_desc_chain(struct device *dev,
+static void dwc_otg_ep_free_desc_chain(struct device *dev,
 				dwc_otg_dev_dma_desc_t * desc_addr,
 				uint32_t dma_desc_addr, uint32_t count)
 {
@@ -1068,8 +1068,6 @@ static void srp_timeout(void *ptr)
  * Tasklet
  *
  */
-extern void start_next_request(dwc_otg_pcd_ep_t * ep);
-
 static void start_xfer_tasklet_func(void *data)
 {
 	dwc_otg_pcd_t *pcd = (dwc_otg_pcd_t *) data;
@@ -2498,7 +2496,7 @@ int dwc_otg_pcd_ep_halt(dwc_otg_pcd_t * pcd, void *ep_handle, int value)
 /**
  * This function initiates remote wakeup of the host from suspend state.
  */
-void dwc_otg_pcd_rem_wkup_from_suspend(dwc_otg_pcd_t * pcd, int set)
+static void dwc_otg_pcd_rem_wkup_from_suspend(dwc_otg_pcd_t * pcd, int set)
 {
 	dctl_data_t dctl = { 0 };
 	dwc_otg_core_if_t *core_if = GET_CORE_IF(pcd);

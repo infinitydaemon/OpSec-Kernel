@@ -48,7 +48,7 @@ static int pcm1863_add_controls(struct snd_soc_component *component)
 
 static int snd_rpi_hifiberry_adc_init(struct snd_soc_pcm_runtime *rtd)
 {
-	struct snd_soc_dai *codec_dai = asoc_rtd_to_codec(rtd, 0);
+	struct snd_soc_dai *codec_dai = snd_soc_rtd_to_codec(rtd, 0);
 	struct snd_soc_component *adc = codec_dai->component;
 	int ret;
 
@@ -84,7 +84,7 @@ static int snd_rpi_hifiberry_adc_hw_params(
 	/* Using powers of 2 allows for an integer clock divisor */
 	width = width <= 16 ? 16 : 32;
 
-	ret = snd_soc_dai_set_bclk_ratio(asoc_rtd_to_cpu(rtd, 0), channels * width);
+	ret = snd_soc_dai_set_bclk_ratio(snd_soc_rtd_to_cpu(rtd, 0), channels * width);
 	return ret;
 }
 

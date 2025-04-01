@@ -91,7 +91,7 @@ brcmstb_gpio_get_active_irqs(struct brcmstb_gpio_bank *bank)
 static int brcmstb_gpio_hwirq_to_offset(irq_hw_number_t hwirq,
 					struct brcmstb_gpio_bank *bank)
 {
-	return hwirq - bank->id * 32;
+	return hwirq - bank->gc.offset;
 }
 
 static void brcmstb_gpio_set_imask(struct brcmstb_gpio_bank *bank,
@@ -116,9 +116,8 @@ static void brcmstb_gpio_set_imask(struct brcmstb_gpio_bank *bank,
 static int brcmstb_gpio_to_irq(struct gpio_chip *gc, unsigned offset)
 {
 	struct brcmstb_gpio_priv *priv = brcmstb_gpio_gc_to_priv(gc);
-	struct brcmstb_gpio_bank *bank = gpiochip_get_data(gc);
 	/* gc_offset is relative to this gpio_chip; want real offset */
-	int hwirq = offset + bank->id * 32;
+	int hwirq = offset + gc->offset;
 
 	if (hwirq >= priv->num_gpios)
 		return -ENXIO;
@@ -263,7 +262,7 @@ static void brcmstb_gpio_irq_bank_handler(struct brcmstb_gpio_bank *bank)
 {
 	struct brcmstb_gpio_priv *priv = bank->parent_priv;
 	struct irq_domain *domain = priv->irq_domain;
-	int hwbase = bank->id * 32;
+	int hwbase = bank->gc.offset;
 	unsigned long status;
 
 	while ((status = brcmstb_gpio_get_active_irqs(bank))) {
@@ -371,7 +370,7 @@ static int brcmstb_gpio_sanity_check_banks(struct device *dev,
 	}
 }
 
-static int brcmstb_gpio_remove(struct platform_device *pdev)
+static void brcmstb_gpio_remove(struct platform_device *pdev)
 {
 	struct brcmstb_gpio_priv *priv = platform_get_drvdata(pdev);
 	struct brcmstb_gpio_bank *bank;
@@ -395,8 +394,6 @@ static int brcmstb_gpio_remove(struct platform_device *pdev)
 	 */
 	list_for_each_entry(bank, &priv->bank_list, node)
 		gpiochip_remove(&bank->gc);
-
-	return 0;
 }
 
 static int brcmstb_gpio_of_xlate(struct gpio_chip *gc,
@@ -414,7 +411,7 @@ static int brcmstb_gpio_of_xlate(struct gpio_chip *gc,
 	if (WARN_ON(gpiospec->args_count < gc->of_gpio_n_cells))
 		return -EINVAL;
 
-	offset = gpiospec->args[0] - bank->id * 32;
+	offset = gpiospec->args[0] - bank->gc.offset;
 	if (offset >= gc->ngpio || offset < 0)
 		return -EINVAL;
 
@@ -693,12 +690,13 @@ static int brcmstb_gpio_probe(struct platform_device *pdev)
 			err = -ENOMEM;
 			goto fail;
 		}
-		gc->base = -1;
 		gc->of_gpio_n_cells = 2;
 		gc->of_xlate = brcmstb_gpio_of_xlate;
 		/* not all ngpio lines are valid, will use bank width later */
 		gc->ngpio = bank_width;
 		gc->offset = bank->id * MAX_GPIO_PER_BANK;
+		gc->request = gpiochip_generic_request;
+		gc->free = gpiochip_generic_free;
 		if (priv->parent_irq > 0)
 			gc->to_irq = brcmstb_gpio_to_irq;
 
@@ -759,7 +757,7 @@ static struct platform_driver brcmstb_gpio_driver = {
 		.pm = &brcmstb_gpio_pm_ops,
 	},
 	.probe = brcmstb_gpio_probe,
-	.remove = brcmstb_gpio_remove,
+	.remove_new = brcmstb_gpio_remove,
 	.shutdown = brcmstb_gpio_shutdown,
 };
 module_platform_driver(brcmstb_gpio_driver);

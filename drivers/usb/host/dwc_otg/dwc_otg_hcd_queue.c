@@ -162,7 +162,7 @@ static uint32_t calc_bus_time(int speed, int is_in, int is_isoc, int bytecount)
  * 	      to initialize the QH.
  */
 #define SCHEDULE_SLOP 10
-void qh_init(dwc_otg_hcd_t * hcd, dwc_otg_qh_t * qh, dwc_otg_hcd_urb_t * urb)
+static void qh_init(dwc_otg_hcd_t * hcd, dwc_otg_qh_t * qh, dwc_otg_hcd_urb_t * urb)
 {
 	char *speed, *type;
 	int dev_speed;

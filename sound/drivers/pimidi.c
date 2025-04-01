@@ -1060,7 +1060,7 @@ static struct i2c_driver pimidi_i2c_driver = {
 	.id_table = pimidi_i2c_ids,
 };
 
-int pimidi_module_init(void)
+static int pimidi_module_init(void)
 {
 	int err = 0;
 
@@ -1087,7 +1087,7 @@ cleanup:
 	return err;
 }
 
-void pimidi_module_exit(void)
+static void pimidi_module_exit(void)
 {
 	i2c_del_driver(&pimidi_i2c_driver);
 	mutex_lock(&pimidi_global.lock);

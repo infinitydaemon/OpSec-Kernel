@@ -24,19 +24,7 @@
 #include "smb2pdu.h"
 #include "smb2proto.h"
 #include "cached_dir.h"
-#include "smb2status.h"
-
-static inline __u32 file_create_options(struct dentry *dentry)
-{
-	struct cifsInodeInfo *ci;
-
-	if (dentry) {
-		ci = CIFS_I(d_inode(dentry));
-		if (ci->cifsAttrs & ATTR_REPARSE)
-			return OPEN_REPARSE_POINT;
-	}
-	return 0;
-}
+#include "../common/smb2status.h"
 
 static struct reparse_data_buffer *reparse_buf_ptr(struct kvec *iov)
 {
@@ -54,6 +42,18 @@ static struct reparse_data_buffer *reparse_buf_ptr(struct kvec *iov)
 	if (count < len || count < le16_to_cpu(buf->ReparseDataLength) + len)
 		return ERR_PTR(-EIO);
 	return buf;
+}
+
+static inline __u32 file_create_options(struct dentry *dentry)
+{
+	struct cifsInodeInfo *ci;
+
+	if (dentry) {
+		ci = CIFS_I(d_inode(dentry));
+		if (ci->cifsAttrs & ATTR_REPARSE)
+			return OPEN_REPARSE_POINT;
+	}
+	return 0;
 }
 
 /* Parse owner and group from SMB3.1.1 POSIX query info */
@@ -648,6 +648,7 @@ finished:
 		switch (cmds[i]) {
 		case SMB2_OP_QUERY_INFO:
 			idata = in_iov[i].iov_base;
+			idata->contains_posix_file_info = false;
 			if (rc == 0 && cfile && cfile->symlink_target) {
 				idata->symlink_target = kstrdup(cfile->symlink_target, GFP_KERNEL);
 				if (!idata->symlink_target)
@@ -671,6 +672,7 @@ finished:
 			break;
 		case SMB2_OP_POSIX_QUERY_INFO:
 			idata = in_iov[i].iov_base;
+			idata->contains_posix_file_info = true;
 			if (rc == 0 && cfile && cfile->symlink_target) {
 				idata->symlink_target = kstrdup(cfile->symlink_target, GFP_KERNEL);
 				if (!idata->symlink_target)
@@ -768,6 +770,7 @@ finished:
 				idata = in_iov[i].iov_base;
 				idata->reparse.io.iov = *iov;
 				idata->reparse.io.buftype = resp_buftype[i + 1];
+				idata->contains_posix_file_info = false; /* BB VERIFY */
 				rbuf = reparse_buf_ptr(iov);
 				if (IS_ERR(rbuf)) {
 					rc = PTR_ERR(rbuf);
@@ -789,6 +792,7 @@ finished:
 		case SMB2_OP_QUERY_WSL_EA:
 			if (!rc) {
 				idata = in_iov[i].iov_base;
+				idata->contains_posix_file_info = false;
 				qi_rsp = rsp_iov[i + 1].iov_base;
 				data[0] = (u8 *)qi_rsp + le16_to_cpu(qi_rsp->OutputBufferOffset);
 				size[0] = le32_to_cpu(qi_rsp->OutputBufferLength);

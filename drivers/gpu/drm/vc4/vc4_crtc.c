@@ -90,7 +90,7 @@ vc4_crtc_get_cob_allocation(struct vc4_dev *vc4, unsigned int channel)
 	 * presumably ignored).
 	 */
 
-	if (vc4->gen >= VC4_GEN_6) {
+	if (vc4->gen >= VC4_GEN_6_C) {
 		dispbase = HVS_READ(SCALER6_DISPX_COB(channel));
 		top = VC4_GET_FIELD(dispbase, SCALER6_DISPX_COB_TOP) & ~3;
 		base = VC4_GET_FIELD(dispbase, SCALER6_DISPX_COB_BASE) & ~3;
@@ -131,7 +131,7 @@ static bool vc4_crtc_get_scanout_position(struct drm_crtc *crtc,
 	 * Read vertical scanline which is currently composed for our
 	 * pixelvalve by the HVS, and also the scaler status.
 	 */
-	if (vc4->gen >= VC4_GEN_6)
+	if (vc4->gen >= VC4_GEN_6_C)
 		val = HVS_READ(SCALER6_DISPX_STATUS(channel));
 	else
 		val = HVS_READ(SCALER_DISPSTATX(channel));
@@ -144,7 +144,7 @@ static bool vc4_crtc_get_scanout_position(struct drm_crtc *crtc,
 
 	/* Vertical position of hvs composed scanline. */
 
-	if (vc4->gen >= VC4_GEN_6)
+	if (vc4->gen >= VC4_GEN_6_C)
 		*vpos = VC4_GET_FIELD(val, SCALER6_DISPX_STATUS_YLINE);
 	else
 		*vpos = VC4_GET_FIELD(val, SCALER_DISPSTATX_LINE);
@@ -326,23 +326,6 @@ struct drm_encoder *vc4_get_crtc_encoder(struct drm_crtc *crtc,
 	return NULL;
 }
 
-#define drm_for_each_connector_mask(connector, dev, connector_mask) \
-	list_for_each_entry((connector), &(dev)->mode_config.connector_list, head) \
-		for_each_if ((connector_mask) & drm_connector_mask(connector))
-
-struct drm_connector *vc4_get_crtc_connector(struct drm_crtc *crtc,
-					     struct drm_crtc_state *state)
-{
-	struct drm_connector *connector;
-
-	WARN_ON(hweight32(state->connector_mask) > 1);
-
-	drm_for_each_connector_mask(connector, crtc->dev, state->connector_mask)
-		return connector;
-
-	return NULL;
-}
-
 static void vc4_crtc_pixelvalve_reset(struct drm_crtc *crtc)
 {
 	struct vc4_crtc *vc4_crtc = to_vc4_crtc(crtc);
@@ -445,7 +428,7 @@ static void vc4_crtc_config_pv(struct drm_crtc *crtc, struct drm_encoder *encode
 		 */
 		CRTC_WRITE(PV_V_CONTROL,
 			   PV_VCONTROL_CONTINUOUS |
-			   (vc4->gen >= VC4_GEN_6 && ppc == 1 ?
+			   (vc4->gen >= VC4_GEN_6_C && ppc == 1 ?
 					PV_VCONTROL_ODD_TIMING : 0) |
 			   (is_dsi ? PV_VCONTROL_DSI : 0) |
 			   PV_VCONTROL_INTERLACE |
@@ -458,7 +441,7 @@ static void vc4_crtc_config_pv(struct drm_crtc *crtc, struct drm_encoder *encode
 	} else {
 		CRTC_WRITE(PV_V_CONTROL,
 			   PV_VCONTROL_CONTINUOUS |
-			   (vc4->gen >= VC4_GEN_6 && ppc == 1 ?
+			   (vc4->gen >= VC4_GEN_6_C && ppc == 1 ?
 					PV_VCONTROL_ODD_TIMING : 0) |
 			   (is_dsi ? PV_VCONTROL_DSI : 0));
 		CRTC_WRITE(PV_VSYNCD_EVEN, 0);
@@ -479,7 +462,7 @@ static void vc4_crtc_config_pv(struct drm_crtc *crtc, struct drm_encoder *encode
 			   VC4_SET_FIELD(PV_MUX_CFG_RGB_PIXEL_MUX_MODE_NO_SWAP,
 					 PV_MUX_CFG_RGB_PIXEL_MUX_MODE));
 
-	if (vc4->gen >= VC4_GEN_6)
+	if (vc4->gen >= VC4_GEN_6_C)
 		CRTC_WRITE(PV_PIPE_INIT_CTRL,
 			   VC4_SET_FIELD(1, PV_PIPE_INIT_CTRL_PV_INIT_WIDTH) |
 			   VC4_SET_FIELD(1, PV_PIPE_INIT_CTRL_PV_INIT_IDLE) |
@@ -510,7 +493,7 @@ static void require_hvs_enabled(struct drm_device *dev)
 	struct vc4_dev *vc4 = to_vc4_dev(dev);
 	struct vc4_hvs *hvs = vc4->hvs;
 
-	if (vc4->gen >= VC4_GEN_6)
+	if (vc4->gen >= VC4_GEN_6_C)
 		WARN_ON_ONCE(!(HVS_READ(SCALER6_CONTROL) & SCALER6_CONTROL_HVS_EN));
 	else
 		WARN_ON_ONCE(!(HVS_READ(SCALER_DISPCTRL) & SCALER_DISPCTRL_ENABLE));
@@ -801,7 +784,8 @@ int vc4_crtc_atomic_check(struct drm_crtc *crtc,
 			memcpy(&vc4_state->margins, &conn_state->tv.margins,
 			       sizeof(vc4_state->margins));
 
-			/* Need to force the dlist entries for all planes to be
+			/*
+			 * Need to force the dlist entries for all planes to be
 			 * updated so that the dest rectangles are changed.
 			 */
 			crtc_state->zpos_changed = true;
@@ -858,7 +842,7 @@ static void vc4_crtc_handle_page_flip(struct vc4_crtc *vc4_crtc)
 	spin_lock_irqsave(&dev->event_lock, flags);
 	spin_lock(&vc4_crtc->irq_lock);
 
-	if (vc4->gen >= VC4_GEN_6)
+	if (vc4->gen >= VC4_GEN_6_C)
 		current_dlist = VC4_GET_FIELD(HVS_READ(SCALER6_DISPX_DL(chan)),
 					      SCALER6_DISPX_DL_LACT);
 	else
@@ -876,7 +860,7 @@ static void vc4_crtc_handle_page_flip(struct vc4_crtc *vc4_crtc)
 		 * the CRTC and encoder already reconfigured, leading to
 		 * underruns. This can be seen when reconfiguring the CRTC.
 		 */
-		if (0 && vc4->gen < VC4_GEN_6)
+		if (0 && vc4->gen < VC4_GEN_6_C)
 			vc4_hvs_unmask_underrun(hvs, chan);
 	}
 	spin_unlock(&vc4_crtc->irq_lock);
@@ -1239,7 +1223,7 @@ const struct vc4_pv_data bcm2835_pv1_data = {
 	.base = {
 		.name = "pixelvalve-1",
 		.debugfs_name = "crtc1_regs",
-		.hvs_available_channels = BIT(2),
+		.hvs_available_channels = BIT(0) | BIT(1) | BIT(2),
 		.hvs_output = 2,
 	},
 	.fifo_depth = 64,
@@ -1458,35 +1442,17 @@ int __vc4_crtc_init(struct drm_device *drm,
 	if (vc4->gen == VC4_GEN_4) {
 		drm_mode_crtc_set_gamma_size(crtc, ARRAY_SIZE(vc4_crtc->lut_r));
 		drm_crtc_enable_color_mgmt(crtc, 0, false, crtc->gamma_size);
-	}
 
-
-	if (vc4->gen == VC4_GEN_4) {
 		/* We support CTM, but only for one CRTC at a time. It's therefore
 		 * implemented as private driver state in vc4_kms, not here.
 		 */
-		drm_crtc_enable_color_mgmt(crtc, 0, true, 0);
+		drm_crtc_enable_color_mgmt(crtc, 0, true, crtc->gamma_size);
+	}
 
-		/* Initialize the VC4 gamma LUTs */
-		for (i = 0; i < crtc->gamma_size; i++) {
-			vc4_crtc->lut_r[i] = i;
-			vc4_crtc->lut_g[i] = i;
-			vc4_crtc->lut_b[i] = i;
-		}
-	} else {
-		/* Initialize the VC5 gamma PWL entries. Assume 12-bit pipeline,
-		 * evenly spread over full range.
-		 */
-		for (i = 0; i < SCALER5_DSPGAMMA_NUM_POINTS; i++) {
-			vc4_crtc->pwl_r[i] =
-				VC5_HVS_SET_GAMMA_ENTRY(i << 8, i << 12, 1 << 8);
-			vc4_crtc->pwl_g[i] =
-				VC5_HVS_SET_GAMMA_ENTRY(i << 8, i << 12, 1 << 8);
-			vc4_crtc->pwl_b[i] =
-				VC5_HVS_SET_GAMMA_ENTRY(i << 8, i << 12, 1 << 8);
-			vc4_crtc->pwl_a[i] =
-				VC5_HVS_SET_GAMMA_ENTRY(i << 8, i << 12, 1 << 8);
-		}
+	for (i = 0; i < crtc->gamma_size; i++) {
+		vc4_crtc->lut_r[i] = i;
+		vc4_crtc->lut_g[i] = i;
+		vc4_crtc->lut_b[i] = i;
 	}
 
 	return 0;

@@ -385,7 +385,7 @@ static const struct drm_prop_enum_list legacy_tv_mode_names[] = {
 	{ VC4_VEC_TV_MODE_MONOCHROME, "Mono", },
 };
 
-enum drm_connector_tv_mode
+static enum drm_connector_tv_mode
 vc4_vec_get_default_mode(struct drm_connector *connector)
 {
 	if (connector->cmdline_mode.tv_mode_specified) {
@@ -635,7 +635,7 @@ static void vc4_vec_encoder_disable(struct drm_encoder *encoder,
 
 	ret = pm_runtime_put(&vec->pdev->dev);
 	if (ret < 0) {
-		DRM_ERROR("Failed to release power domain: %d\n", ret);
+		drm_err(drm, "Failed to release power domain: %d\n", ret);
 		goto err_dev_exit;
 	}
 
@@ -669,7 +669,7 @@ static void vc4_vec_encoder_enable(struct drm_encoder *encoder,
 
 	ret = pm_runtime_resume_and_get(&vec->pdev->dev);
 	if (ret < 0) {
-		DRM_ERROR("Failed to retain power domain: %d\n", ret);
+		drm_err(drm, "Failed to retain power domain: %d\n", ret);
 		goto err_dev_exit;
 	}
 
@@ -682,13 +682,13 @@ static void vc4_vec_encoder_enable(struct drm_encoder *encoder,
 	 */
 	ret = clk_set_rate(vec->clock, 108000000);
 	if (ret) {
-		DRM_ERROR("Failed to set clock rate: %d\n", ret);
+		drm_err(drm, "Failed to set clock rate: %d\n", ret);
 		goto err_put_runtime_pm;
 	}
 
 	ret = clk_prepare_enable(vec->clock);
 	if (ret) {
-		DRM_ERROR("Failed to turn on core clock: %d\n", ret);
+		drm_err(drm, "Failed to turn on core clock: %d\n", ret);
 		goto err_put_runtime_pm;
 	}
 
@@ -884,7 +884,7 @@ static int vc4_vec_bind(struct device *dev, struct device *master, void *data)
 	if (IS_ERR(vec->clock)) {
 		ret = PTR_ERR(vec->clock);
 		if (ret != -EPROBE_DEFER)
-			DRM_ERROR("Failed to get clock: %d\n", ret);
+			drm_err(drm, "Failed to get clock: %d\n", ret);
 		return ret;
 	}
 

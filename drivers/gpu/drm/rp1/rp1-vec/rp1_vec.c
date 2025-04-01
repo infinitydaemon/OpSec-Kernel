@@ -34,7 +34,7 @@
 #include <drm/drm_crtc_helper.h>
 #include <drm/drm_encoder.h>
 #include <drm/drm_fb_helper.h>
-#include <drm/drm_fbdev_generic.h>
+#include <drm/drm_fbdev_ttm.h>
 #include <drm/drm_framebuffer.h>
 #include <drm/drm_gem.h>
 #include <drm/drm_gem_atomic_helper.h>
@@ -550,7 +550,7 @@ static int rp1vec_platform_probe(struct platform_device *pdev)
 	if (ret)
 		goto done_err;
 
-	drm_fbdev_generic_setup(&vec->drm, 32);
+	drm_fbdev_ttm_setup(&vec->drm, 32);
 	return ret;
 
 done_err:
@@ -558,7 +558,7 @@ done_err:
 	return ret;
 }
 
-static int rp1vec_platform_remove(struct platform_device *pdev)
+static void rp1vec_platform_remove(struct platform_device *pdev)
 {
 	struct drm_device *drm = platform_get_drvdata(pdev);
 
@@ -566,8 +566,6 @@ static int rp1vec_platform_remove(struct platform_device *pdev)
 	drm_dev_unregister(drm);
 	drm_atomic_helper_shutdown(drm);
 	drm_dev_put(drm);
-
-	return 0;
 }
 
 static void rp1vec_platform_shutdown(struct platform_device *pdev)

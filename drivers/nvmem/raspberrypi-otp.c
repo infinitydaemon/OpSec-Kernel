@@ -8,6 +8,8 @@
  */
 
 #include <linux/nvmem-provider.h>
+#include <linux/of.h>
+#include <linux/platform_device.h>
 #include <soc/bcm2835/raspberrypi-firmware.h>
 
 struct rpi_otp_priv {

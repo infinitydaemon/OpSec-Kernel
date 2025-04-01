@@ -129,16 +129,14 @@ static const struct vc4_mock_desc vc6_mock =
 static int __build_one_pipe(struct kunit *test, struct drm_device *drm,
 			    const struct vc4_mock_pipe_desc *pipe)
 {
-	struct vc4_dummy_plane *dummy_plane;
 	struct drm_plane *plane;
 	struct vc4_dummy_crtc *dummy_crtc;
 	struct drm_crtc *crtc;
 	unsigned int i;
 
-	dummy_plane = vc4_dummy_plane(test, drm, DRM_PLANE_TYPE_PRIMARY);
-	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, dummy_plane);
+	plane = vc4_dummy_plane(test, drm, DRM_PLANE_TYPE_PRIMARY);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, plane);
 
-	plane = &dummy_plane->plane.base;
 	dummy_crtc = vc4_mock_pv(test, drm, plane, pipe->data);
 	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, dummy_crtc);
 
@@ -173,12 +171,9 @@ static int __build_mock(struct kunit *test, struct drm_device *drm,
 	return 0;
 }
 
-static void kunit_action_drm_dev_unregister(void *ptr)
-{
-	struct drm_device *drm = ptr;
-
-	drm_dev_unregister(drm);
-}
+KUNIT_DEFINE_ACTION_WRAPPER(kunit_action_drm_dev_unregister,
+			    drm_dev_unregister,
+			    struct drm_device *);
 
 static struct vc4_dev *__mock_device(struct kunit *test, enum vc4_gen gen)
 {
@@ -198,7 +193,7 @@ static struct vc4_dev *__mock_device(struct kunit *test, enum vc4_gen gen)
 		drv = &vc5_drm_driver;
 		desc = &vc5_mock;
 		break;
-	case VC4_GEN_6:
+	case VC4_GEN_6_C:
 		drv = &vc5_drm_driver;
 		desc = &vc6_mock;
 		break;
@@ -251,5 +246,5 @@ struct vc4_dev *vc5_mock_device(struct kunit *test)
 
 struct vc4_dev *vc6_mock_device(struct kunit *test)
 {
-	return __mock_device(test, VC4_GEN_6);
+	return __mock_device(test, VC4_GEN_6_C);
 }

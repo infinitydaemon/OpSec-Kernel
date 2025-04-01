@@ -158,7 +158,7 @@ static int brcmvirt_gpio_probe(struct platform_device *pdev)
 	ucb->gc.set = brcmvirt_gpio_set;
 	ucb->gc.can_sleep = true;
 
-	err = gpiochip_add(&ucb->gc);
+	err = gpiochip_add_data(&ucb->gc, NULL);
 	if (err)
 		goto out;
 
@@ -177,10 +177,9 @@ out:
 	return err;
 }
 
-static int brcmvirt_gpio_remove(struct platform_device *pdev)
+static void brcmvirt_gpio_remove(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
-	int err = 0;
 	struct brcmvirt_gpio *ucb = platform_get_drvdata(pdev);
 
 	gpiochip_remove(&ucb->gc);
@@ -188,7 +187,6 @@ static int brcmvirt_gpio_remove(struct platform_device *pdev)
 		dma_free_coherent(dev, PAGE_SIZE, ucb->ts_base, ucb->bus_addr);
 	else if (ucb->ts_base)
 		iounmap(ucb->ts_base);
-	return err;
 }
 
 static const struct of_device_id __maybe_unused brcmvirt_gpio_ids[] = {

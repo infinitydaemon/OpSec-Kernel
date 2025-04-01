@@ -4,16 +4,16 @@
 # Copyright (c) 2001 by Jaroslav Kysela <perex@perex.cz>
 #
 
-snd-dummy-objs := dummy.o
-snd-aloop-objs := aloop.o
-snd-mtpav-objs := mtpav.o
-snd-mts64-objs := mts64.o
-snd-pcmtest-objs := pcmtest.o
-snd-pimidi-objs := pimidi.o
-snd-portman2x4-objs := portman2x4.o
-snd-serial-u16550-objs := serial-u16550.o
-snd-serial-generic-objs := serial-generic.o
-snd-virmidi-objs := virmidi.o
+snd-dummy-y := dummy.o
+snd-aloop-y := aloop.o
+snd-mtpav-y := mtpav.o
+snd-mts64-y := mts64.o
+snd-pcmtest-y := pcmtest.o
+snd-pimidi-y := pimidi.o
+snd-portman2x4-y := portman2x4.o
+snd-serial-u16550-y := serial-u16550.o
+snd-serial-generic-y := serial-generic.o
+snd-virmidi-y := virmidi.o
 
 # Toplevel Module Dependency
 obj-$(CONFIG_SND_DUMMY) += snd-dummy.o
@@ -27,4 +27,4 @@ obj-$(CONFIG_SND_MTS64) += snd-mts64.o
 obj-$(CONFIG_SND_PIMIDI) += snd-pimidi.o
 obj-$(CONFIG_SND_PORTMAN2X4) += snd-portman2x4.o
 
-obj-$(CONFIG_SND) += opl3/ opl4/ mpu401/ vx/ pcsp/
+obj-$(CONFIG_SND) += opl3/ opl4/ mpu401/ vx/ pcsp/ upisnd/

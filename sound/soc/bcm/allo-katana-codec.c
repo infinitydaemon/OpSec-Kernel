@@ -246,7 +246,7 @@ static int katana_codec_set_fmt(struct snd_soc_dai *dai, unsigned int fmt)
 	return 0;
 }
 
-int katana_codec_dai_mute_stream(struct snd_soc_dai *dai, int mute,
+static int katana_codec_dai_mute_stream(struct snd_soc_dai *dai, int mute,
 						int stream)
 {
 	struct snd_soc_component *component = dai->component;

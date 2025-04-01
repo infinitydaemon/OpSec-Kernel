@@ -421,7 +421,7 @@ static void vc4_txp_encoder_disable(struct drm_encoder *encoder)
 		WARN_ON(TXP_READ(TXP_DST_CTRL) & TXP_BUSY);
 	}
 
-	if (vc4->gen < VC4_GEN_6)
+	if (vc4->gen < VC4_GEN_6_C)
 		TXP_WRITE(TXP_DST_CTRL, TXP_POWERDOWN);
 
 	drm_dev_exit(idx);

@@ -352,6 +352,26 @@ extern uint8_t *cfiw_ep_alloc_buffer(dwc_otg_pcd_t * pcd, void *pep,
 				     dwc_dma_t * addr, size_t buflen,
 				     int flags);
 
+extern int pcd_init(
+#ifdef LM_INTERFACE
+			   struct lm_device *_dev
+#elif  defined(PCI_INTERFACE)
+			   struct pci_dev *_dev
+#elif  defined(PLATFORM_INTERFACE)
+	struct platform_device *dev
+#endif
+    );
+
+extern void pcd_remove(
+#ifdef LM_INTERFACE
+			     struct lm_device *_dev
+#elif  defined(PCI_INTERFACE)
+			     struct pci_dev *_dev
+#elif  defined(PLATFORM_INTERFACE)
+	struct platform_device *_dev
+#endif
+    );
+
 /******************************************************************************/
 
 /** @} */

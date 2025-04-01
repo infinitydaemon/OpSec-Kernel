@@ -1229,8 +1229,9 @@ static int notrace noinline fiq_fsm_do_hcintr(struct fiq_state *state, int num_c
 	if (start_next_periodic) {
 		fiq_fsm_start_next_periodic(state, num_channels);
 	}
-	if (st->fsm != FIQ_PASSTHROUGH)
+	if (st->fsm != FIQ_PASSTHROUGH) {
 		fiq_print(FIQDBG_INT, state, "FSMOUT%02d", st->fsm);
+	}
 
 	return handled;
 }

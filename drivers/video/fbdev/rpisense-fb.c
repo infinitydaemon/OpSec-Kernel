@@ -23,6 +23,7 @@
 #include <linux/delay.h>
 #include <linux/fb.h>
 #include <linux/init.h>
+#include <linux/vmalloc.h>
 #include <linux/platform_device.h>
 
 #include <linux/mfd/rpisense/framebuffer.h>
@@ -257,7 +258,7 @@ err_malloc:
 	return ret;
 }
 
-static int rpisense_fb_remove(struct platform_device *pdev)
+static void rpisense_fb_remove(struct platform_device *pdev)
 {
 	struct rpisense_fb *rpisense_fb = platform_get_drvdata(pdev);
 	struct fb_info *info = rpisense_fb->info;
@@ -268,8 +269,6 @@ static int rpisense_fb_remove(struct platform_device *pdev)
 		framebuffer_release(info);
 		vfree(rpisense_fb_param.vmem);
 	}
-
-	return 0;
 }
 
 static const struct of_device_id rpisense_fb_id[] = {

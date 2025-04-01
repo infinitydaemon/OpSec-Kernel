@@ -23,7 +23,6 @@
 		target = <&csi1>;
 		csi: __overlay__ {
 			status = "okay";
-			brcm,media-controller;
 
 			port {
 				csi_ep: endpoint {
@@ -56,7 +55,14 @@
 		};
 	};
 
-	reg_frag: fragment@5 {
+	fragment@5 {
+		target = <&csi1>;
+		__dormant__ {
+			compatible = "brcm,bcm2835-unicam-legacy";
+		};
+	};
+
+	reg_frag: fragment@6 {
 		target = <&cam1_reg>;
 		__dormant__ {
 			startup-delay-us = <20000>;
@@ -64,14 +70,14 @@
 		};
 	};
 
-	fragment@6 {
+	fragment@7 {
 		target = <&csi_ep>;
 		__overlay__ {
 			clock-noncontinuous;
 		};
 	};
 
-	fragment@7 {
+	fragment@8 {
 		target = <&cam_endpoint>;
 		__overlay__ {
 			clock-noncontinuous;
@@ -81,15 +87,15 @@
 	__overrides__ {
 		rotation = <&cam_node>,"rotation:0";
 		orientation = <&cam_node>,"orientation:0";
-		media-controller = <&csi>,"brcm,media-controller?";
+		media-controller = <0>,"!5";
 		cam0 = <&i2c_frag>, "target:0=",<&i2c_csi_dsi0>,
 		       <&csi_frag>, "target:0=",<&csi0>,
 		       <&clk_frag>, "target:0=",<&cam0_clk>,
 		       <&cam_node>, "clocks:0=",<&cam0_clk>,
 		       <&cam_node>, "avdd-supply:0=",<&cam0_reg>,
 		       <&reg_frag>, "target:0=",<&cam0_reg>;
-		arducam = <0>, "+5";
-		clk-continuous = <0>, "-6-7";
+		arducam = <0>, "+6";
+		clk-continuous = <0>, "-7-8";
 	};
 };
 

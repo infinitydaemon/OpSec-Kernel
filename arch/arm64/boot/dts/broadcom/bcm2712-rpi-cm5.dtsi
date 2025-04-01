@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0
+// SPDX-License-Identifier: (GPL-2.0 OR MIT)
 
 #include <dt-bindings/gpio/gpio.h>
 #include <dt-bindings/clock/rp1.h>
@@ -7,45 +7,7 @@
 #include <dt-bindings/pwm/pwm.h>
 #include <dt-bindings/reset/raspberrypi,firmware-reset.h>
 
-#define i2c0 _i2c0
-#define i2c3 _i2c3
-#define i2c4 _i2c4
-#define i2c5 _i2c5
-#define i2c6 _i2c6
-#define i2c8 _i2c8
-#define i2s _i2s
-#define pwm0 _pwm0
-#define pwm1 _pwm1
-#define spi0 _spi0
-#define spi3 _spi3
-#define spi4 _spi4
-#define spi5 _spi5
-#define spi6 _spi6
-#define uart0 _uart0
-#define uart2 _uart2
-#define uart5 _uart5
-
-#include "bcm2712.dtsi"
-
-#undef i2c0
-#undef i2c3
-#undef i2c4
-#undef i2c5
-#undef i2c6
-#undef i2c8
-#undef i2s
-#undef pwm0
-#undef pwm1
-#undef spi0
-#undef spi3
-#undef spi4
-#undef spi5
-#undef spi6
-#undef uart0
-#undef uart2
-#undef uart3
-#undef uart4
-#undef uart5
+#include "bcm2712-ds.dtsi"
 
 / {
 	compatible = "raspberrypi,5-compute-module", "brcm,bcm2712";
@@ -54,7 +16,11 @@
 	/* Will be filled by the bootloader */
 	memory@0 {
 		device_type = "memory";
+#ifndef FIRMWARE_UPDATED
 		reg = <0 0 0x28000000>;
+#else
+		reg = <0 0 0 0x28000000>;
+#endif
 	};
 
 	leds: leds {
@@ -75,7 +41,7 @@
 		};
 	};
 
-	sd_io_1v8_reg: sd_io_1v8_reg {
+	sd_io_1v8_reg: sd-io-1v8-reg {
 		compatible = "regulator-fixed";
 		regulator-name = "vdd-sd-io";
 		regulator-min-microvolt = <1800000>;
@@ -83,7 +49,7 @@
 		regulator-always-on;
 	};
 
-	sd_vcc_reg: sd_vcc_reg {
+	sd_vcc_reg: sd-vcc-reg {
 		compatible = "regulator-fixed";
 		regulator-name = "vcc-sd";
 		regulator-min-microvolt = <3300000>;
@@ -91,10 +57,9 @@
 		regulator-boot-on;
 		enable-active-high;
 		gpios = <&gio_aon 4 GPIO_ACTIVE_HIGH>;
-		status = "okay";
 	};
 
-	wl_on_reg: wl_on_reg {
+	wl_on_reg: wl-on-reg {
 		compatible = "regulator-fixed";
 		regulator-name = "wl-on-regulator";
 		regulator-min-microvolt = <3300000>;
@@ -106,9 +71,6 @@
 
 		startup-delay-us = <150000>;
 		enable-active-high;
-	};
-
-	clocks: clocks {
 	};
 
 	cam1_clk: cam1_clk {
@@ -127,14 +89,12 @@
 		compatible = "regulator-fixed";
 		regulator-name = "cam0_reg";
 		enable-active-high;
-		status = "okay";
-		gpio = <&rp1_gpio 34 0>; // CD0_IO0_MICCLK, to CAM_GPIO on connector
+		gpio = <&rp1_gpio 34 0>;  // CD0_IO0_MICCLK, to CAM_GPIO on connector
 	};
 
 	cam_dummy_reg: cam_dummy_reg {
 		compatible = "regulator-fixed";
 		regulator-name = "cam-dummy-reg";
-		status = "okay";
 	};
 
 	dummy: dummy {
@@ -149,21 +109,12 @@
 };
 
 rp1_target: &pcie2 {
-	brcm,enable-mps-rcb;
-	brcm,vdm-qos-map = <0xbbaa9888>;
 	aspm-no-l0s;
 	status = "okay";
 };
 
-// Add some labels to 2712 device
-
-// The system UART
-uart10: &_uart0 { status = "okay"; };
-
 // The system SPI for the bootloader EEPROM
-spi10: &_spi0 { status = "okay"; };
-
-i2c_rp1boot: &_i2c3 { };
+&spi10 { status = "okay"; };
 
 #include "rp1.dtsi"
 
@@ -214,6 +165,13 @@ i2c_rp1boot: &_i2c3 { };
 		interrupt-parent = <&gpio>;
 		interrupts = <37 IRQ_TYPE_LEVEL_LOW>;
 	};
+};
+
+/* The Debug UART, on Rpi5 it's on JST-SH 1.0mm 3-pin connector
+ * labeled "UART", i.e. the interface with the system console.
+ */
+&uart10 {
+	status = "okay";
 };
 
 gpio: &rp1_gpio {
@@ -402,7 +360,7 @@ dpi_16bit_gpio2:        &rp1_dpi_16bit_gpio2        { };
 	};
 };
 
-&i2c_rp1boot {
+&i2c10 {
 	clock-frequency = <400000>;
 	pinctrl-0 = <&i2c3_m4_agpio0_pins>;
 	pinctrl-names = "default";
@@ -461,10 +419,6 @@ dpi_16bit_gpio2:        &rp1_dpi_16bit_gpio2        { };
 	};
 };
 
-&rpivid {
-	status = "okay";
-};
-
 &pinctrl {
 	spi10_gpio2: spi10_gpio2 {
 		function = "vc_spi0";
@@ -505,6 +459,7 @@ spi10_cs_pins: &spi10_cs_gpio1 {};
 	// clash with the firmware monitoring the PMIC interrupt via the VPU.
 
 	/delete-property/ interrupt-controller;
+	/delete-property/ #interrupt-cells;
 };
 
 &main_aon_irq {
@@ -764,6 +719,8 @@ spi10_cs_pins: &spi10_cs_gpio1 {};
 			<&ant2>, "output-low?=on";
 		noanthogs = <&ant1>,"status=disabled",
 			<&ant2>, "status=disabled";
+		sd = <&sdio1>, "status";
+		sd_poll_once = <&sdio1>, "non-removable?";
 		sd_cqe = <&sdio1>, "supports-cqe:0";
 	};
 };

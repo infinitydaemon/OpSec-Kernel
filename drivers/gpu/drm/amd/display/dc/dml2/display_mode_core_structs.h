@@ -36,6 +36,7 @@ enum dml_project_id {
 	dml_project_dcn321 = 2,
 	dml_project_dcn35 = 3,
 	dml_project_dcn351 = 4,
+	dml_project_dcn401 = 5,
 };
 enum dml_prefetch_modes {
 	dml_prefetch_support_uclk_fclk_and_stutter_if_possible = 0,
@@ -574,6 +575,7 @@ struct dml_output_cfg_st {
 	dml_uint_t AudioSampleRate[__DML_NUM_PLANES__];
 	dml_uint_t AudioSampleLayout[__DML_NUM_PLANES__];
 	dml_bool_t OutputDisabled[__DML_NUM_PLANES__];
+	dml_uint_t DSCSlices[__DML_NUM_PLANES__];
 }; // dml_timing_cfg_st;
 
 /// @brief Writeback Setting
@@ -882,11 +884,11 @@ struct mode_support_st {
 	dml_uint_t meta_row_height[__DML_NUM_PLANES__];
 	dml_uint_t meta_row_height_chroma[__DML_NUM_PLANES__];
 	dml_float_t UrgLatency;
-	dml_float_t UrgentBurstFactorCursor[__DML_NUM_PLANES__];
+	dml_float_t UrgentBurstFactorCursor[2][__DML_NUM_PLANES__];
 	dml_float_t UrgentBurstFactorCursorPre[__DML_NUM_PLANES__];
-	dml_float_t UrgentBurstFactorLuma[__DML_NUM_PLANES__];
+	dml_float_t UrgentBurstFactorLuma[2][__DML_NUM_PLANES__];
 	dml_float_t UrgentBurstFactorLumaPre[__DML_NUM_PLANES__];
-	dml_float_t UrgentBurstFactorChroma[__DML_NUM_PLANES__];
+	dml_float_t UrgentBurstFactorChroma[2][__DML_NUM_PLANES__];
 	dml_float_t UrgentBurstFactorChromaPre[__DML_NUM_PLANES__];
 	dml_float_t MaximumSwathWidthInLineBufferLuma;
 	dml_float_t MaximumSwathWidthInLineBufferChroma;

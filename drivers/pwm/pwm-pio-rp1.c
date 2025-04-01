@@ -159,11 +159,11 @@ static int pwm_pio_rp1_probe(struct platform_device *pdev)
 	struct pwm_chip *chip;
 	bool is_rp1;
 
-	ppwm = devm_kzalloc(dev, sizeof(*ppwm), GFP_KERNEL);
-	if (IS_ERR(ppwm))
-		return PTR_ERR(ppwm);
+	chip = devm_pwmchip_alloc(dev, 1, sizeof(*ppwm));
+	if (IS_ERR(chip))
+		return PTR_ERR(chip);
 
-	chip = &ppwm->chip;
+	ppwm = pwmchip_get_drvdata(chip);
 
 	mutex_init(&ppwm->mutex);
 
@@ -213,7 +213,6 @@ static int pwm_pio_rp1_probe(struct platform_device *pdev)
 
 	pwm_pio_resolution = (1000u * 1000 * 1000 * pwm_loop_ticks) / clock_get_hz(clk_sys);
 
-	chip->dev = dev;
 	chip->ops = &pwm_pio_rp1_ops;
 	chip->atomic = true;
 	chip->npwm = 1;

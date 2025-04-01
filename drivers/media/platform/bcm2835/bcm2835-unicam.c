@@ -450,7 +450,6 @@ static const struct unicam_fmt formats[] = {
 		.code		= MEDIA_BUS_FMT_Y12_1X12,
 		.depth		= 12,
 		.csi_dt		= MIPI_CSI2_DT_RAW12,
-		.valid_colorspaces = MASK_CS_RAW,
 	}, {
 		.fourcc		= V4L2_PIX_FMT_Y14P,
 		.repacked_fourcc = V4L2_PIX_FMT_Y14,
@@ -1475,7 +1474,7 @@ static int unicam_enum_input(struct file *file, void *priv,
 		return -EINVAL;
 
 	inp->type = V4L2_INPUT_TYPE_CAMERA;
-	if (v4l2_subdev_has_op(dev->sensor, video, s_dv_timings)) {
+	if (v4l2_subdev_has_op(dev->sensor, pad, s_dv_timings)) {
 		inp->capabilities = V4L2_IN_CAP_DV_TIMINGS;
 		inp->std = 0;
 	} else if (v4l2_subdev_has_op(dev->sensor, video, s_std)) {
@@ -1710,7 +1709,7 @@ static int unicam_g_dv_timings(struct file *file, void *priv,
 	struct unicam_node *node = video_drvdata(file);
 	struct unicam_device *dev = node->dev;
 
-	return v4l2_subdev_call(dev->sensor, video, g_dv_timings, timings);
+	return v4l2_subdev_call(dev->sensor, pad, g_dv_timings, 0, timings);
 }
 
 static int unicam_s_dv_timings(struct file *file, void *priv,
@@ -1721,7 +1720,7 @@ static int unicam_s_dv_timings(struct file *file, void *priv,
 	struct v4l2_dv_timings current_timings;
 	int ret;
 
-	ret = v4l2_subdev_call(dev->sensor, video, g_dv_timings,
+	ret = v4l2_subdev_call(dev->sensor, pad, g_dv_timings, 0,
 			       &current_timings);
 
 	if (ret < 0)
@@ -1733,7 +1732,7 @@ static int unicam_s_dv_timings(struct file *file, void *priv,
 	if (vb2_is_busy(&node->buffer_queue))
 		return -EBUSY;
 
-	ret = v4l2_subdev_call(dev->sensor, video, s_dv_timings, timings);
+	ret = v4l2_subdev_call(dev->sensor, pad, s_dv_timings, 0, timings);
 
 	/* Force recomputation of bytesperline */
 	node->v_fmt.fmt.pix.bytesperline = 0;
@@ -1749,7 +1748,7 @@ static int unicam_query_dv_timings(struct file *file, void *priv,
 	struct unicam_node *node = video_drvdata(file);
 	struct unicam_device *dev = node->dev;
 
-	return v4l2_subdev_call(dev->sensor, video, query_dv_timings, timings);
+	return v4l2_subdev_call(dev->sensor, pad, query_dv_timings, 0, timings);
 }
 
 static int unicam_enum_dv_timings(struct file *file, void *priv,
@@ -2196,9 +2195,6 @@ static int unicam_queue_setup(struct vb2_queue *vq,
 	unsigned int size = node->pad_id == IMAGE_PAD ?
 				    node->v_fmt.fmt.pix.sizeimage :
 				    node->v_fmt.fmt.meta.buffersize;
-
-	if (vq->num_buffers + *nbuffers < 3)
-		*nbuffers = 3 - vq->num_buffers;
 
 	if (*nplanes) {
 		if (sizes[0] < size) {
@@ -3019,7 +3015,7 @@ static int register_node(struct unicam_device *unicam, struct unicam_node *node,
 	q->buf_struct_size = sizeof(struct unicam_buffer);
 	q->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_MONOTONIC;
 	q->lock = &node->lock;
-	q->min_buffers_needed = 1;
+	q->min_queued_buffers = 1;
 	q->dev = &unicam->pdev->dev;
 
 	ret = vb2_queue_init(q);
@@ -3075,7 +3071,7 @@ static int register_node(struct unicam_device *unicam, struct unicam_node *node,
 		    !v4l2_subdev_has_op(unicam->sensor, video, querystd))
 			v4l2_disable_ioctl(&node->video_dev, VIDIOC_QUERYSTD);
 		if (pad_id == METADATA_PAD ||
-		    !v4l2_subdev_has_op(unicam->sensor, video, s_dv_timings)) {
+		    !v4l2_subdev_has_op(unicam->sensor, pad, s_dv_timings)) {
 			v4l2_disable_ioctl(&node->video_dev, VIDIOC_S_EDID);
 			v4l2_disable_ioctl(&node->video_dev, VIDIOC_G_EDID);
 			v4l2_disable_ioctl(&node->video_dev,
@@ -3095,12 +3091,12 @@ static int register_node(struct unicam_device *unicam, struct unicam_node *node,
 			v4l2_disable_ioctl(&node->video_dev,
 					   VIDIOC_ENUM_FRAMEINTERVALS);
 		if (pad_id == METADATA_PAD ||
-		    !v4l2_subdev_has_op(unicam->sensor, video,
-					g_frame_interval))
+		    !v4l2_subdev_has_op(unicam->sensor, pad,
+					get_frame_interval))
 			v4l2_disable_ioctl(&node->video_dev, VIDIOC_G_PARM);
 		if (pad_id == METADATA_PAD ||
-		    !v4l2_subdev_has_op(unicam->sensor, video,
-					s_frame_interval))
+		    !v4l2_subdev_has_op(unicam->sensor, pad,
+					set_frame_interval))
 			v4l2_disable_ioctl(&node->video_dev, VIDIOC_S_PARM);
 
 		if (pad_id == METADATA_PAD ||
@@ -3385,6 +3381,11 @@ static int unicam_probe(struct platform_device *pdev)
 	 * device tree requests it.
 	 */
 	unicam->mc_api = media_controller;
+
+	/* Compatible is for the non-legacy version of the driver - use compatible */
+	if (of_device_get_match_data(&unicam->pdev->dev))
+		unicam->mc_api = true;
+
 	if (of_property_read_bool(pdev->dev.of_node, "brcm,media-controller"))
 		unicam->mc_api = true;
 
@@ -3489,7 +3490,7 @@ err_unicam_put:
 	return ret;
 }
 
-static int unicam_remove(struct platform_device *pdev)
+static void unicam_remove(struct platform_device *pdev)
 {
 	struct unicam_device *unicam = platform_get_drvdata(pdev);
 
@@ -3501,12 +3502,11 @@ static int unicam_remove(struct platform_device *pdev)
 	unregister_nodes(unicam);
 
 	pm_runtime_disable(&pdev->dev);
-
-	return 0;
 }
 
 static const struct of_device_id unicam_of_match[] = {
-	{ .compatible = "brcm,bcm2835-unicam", },
+	{ .compatible = "brcm,bcm2835-unicam", .data = (void *)1 },
+	{ .compatible = "brcm,bcm2835-unicam-legacy", .data = 0 },
 	{ /* sentinel */ },
 };
 MODULE_DEVICE_TABLE(of, unicam_of_match);

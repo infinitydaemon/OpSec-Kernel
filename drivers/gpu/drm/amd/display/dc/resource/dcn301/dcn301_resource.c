@@ -671,9 +671,9 @@ static const struct dc_plane_cap plane_cap = {
 
 	/* 6:1 downscaling ratio: 1000/6 = 166.666 */
 	.max_downscale_factor = {
-			.argb8888 = 167,
-			.nv12 = 167,
-			.fp16 = 167 
+			.argb8888 = 358,
+			.nv12 = 358,
+			.fp16 = 358
 	},
 	64,
 	64
@@ -694,7 +694,7 @@ static const struct dc_debug_options debug_defaults_drv = {
 	.disable_dcc = DCC_ENABLE,
 	.vsr_support = true,
 	.performance_trace = false,
-	.max_downscale_src_width = 7680,/*upto 8K*/
+	.max_downscale_src_width = 4096,/*upto true 4k*/
 	.scl_reset_length10 = true,
 	.sanity_checks = false,
 	.underflow_assert_delay_us = 0xFFFFFFFF,
@@ -702,6 +702,7 @@ static const struct dc_debug_options debug_defaults_drv = {
 	.dmub_command_table = true,
 	.use_max_lb = false,
 	.exit_idle_opt_for_cursor_updates = true,
+	.enable_legacy_fast_update = true,
 	.using_dml2 = false,
 };
 
@@ -1363,14 +1364,21 @@ static void set_wm_ranges(
 	pp_smu->nv_funcs.set_wm_ranges(&pp_smu->nv_funcs.pp_smu, &ranges);
 }
 
-static void dcn301_calculate_wm_and_dlg(
-		struct dc *dc, struct dc_state *context,
-		display_e2e_pipe_params_st *pipes,
-		int pipe_cnt,
-		int vlevel)
+static void dcn301_update_bw_bounding_box(struct dc *dc, struct clk_bw_params *bw_params)
 {
 	DC_FP_START();
-	dcn301_calculate_wm_and_dlg_fp(dc, context, pipes, pipe_cnt, vlevel);
+	dcn301_fpu_update_bw_bounding_box(dc, bw_params);
+	DC_FP_END();
+}
+
+static void dcn301_calculate_wm_and_dlg(struct dc *dc,
+					struct dc_state *context,
+					display_e2e_pipe_params_st *pipes,
+					int pipe_cnt,
+					int vlevel_req)
+{
+	DC_FP_START();
+	dcn301_fpu_calculate_wm_and_dlg(dc, context, pipes, pipe_cnt, vlevel_req);
 	DC_FP_END();
 }
 

@@ -176,14 +176,14 @@ static void vc4_close(struct drm_device *dev, struct drm_file *file)
 	kfree(vc4file);
 }
 
-struct drm_gem_object *
+static struct drm_gem_object *
 vc4_prime_import_sg_table(struct drm_device *dev,
 			  struct dma_buf_attachment *attach,
 			  struct sg_table *sgt)
 {
 	phys_addr_t phys = dma_to_phys(dev->dev, sg_dma_address(sgt->sgl));
 
-	if (is_swiotlb_buffer(dev->dev, phys))
+	if (swiotlb_find_pool(dev->dev, phys))
 		return ERR_PTR(-EINVAL);
 
 	return drm_gem_dma_prime_import_sg_table(dev, attach, sgt);
@@ -293,7 +293,6 @@ static const struct of_device_id vc4_dma_range_matches[] = {
 	{ .compatible = "brcm,bcm2711-hvs" },
 	{ .compatible = "brcm,bcm2712-hvs" },
 	{ .compatible = "brcm,bcm2835-hvs" },
-	{ .compatible = "raspberrypi,rpi-firmware-kms" },
 	{ .compatible = "brcm,bcm2835-v3d" },
 	{ .compatible = "brcm,cygnus-v3d" },
 	{ .compatible = "brcm,vc4-v3d" },
@@ -322,25 +321,18 @@ static int vc4_drm_bind(struct device *dev)
 	struct device_node *node;
 	struct drm_crtc *crtc;
 	enum vc4_gen gen;
-	bool step_d0 = false;
 	int ret = 0;
 
-	if (of_device_is_compatible(dev->of_node, "brcm,bcm2712d0-vc6")) {
-		gen = VC4_GEN_6;
-		step_d0 = true;
-	} else if (of_device_is_compatible(dev->of_node, "brcm,bcm2712-vc6"))
-		gen = VC4_GEN_6;
-	else if (of_device_is_compatible(dev->of_node, "brcm,bcm2711-vc5"))
-		gen = VC4_GEN_5;
-	else
-		gen = VC4_GEN_4;
+	dev->coherent_dma_mask = DMA_BIT_MASK(32);
+
+	gen = (enum vc4_gen)of_device_get_match_data(dev);
 
 	if (gen > VC4_GEN_4)
 		driver = &vc5_drm_driver;
 	else
 		driver = &vc4_drm_driver;
 
-	if (gen >= VC4_GEN_6)
+	if (gen >= VC4_GEN_6_C)
 		dma_set_mask_and_coherent(dev, DMA_BIT_MASK(36));
 	else
 		dma_set_mask_and_coherent(dev, DMA_BIT_MASK(32));
@@ -359,7 +351,6 @@ static int vc4_drm_bind(struct device *dev)
 	if (IS_ERR(vc4))
 		return PTR_ERR(vc4);
 	vc4->gen = gen;
-	vc4->step_d0 = step_d0;
 	vc4->dev = dev;
 
 	drm = &vc4->base;
@@ -368,21 +359,21 @@ static int vc4_drm_bind(struct device *dev)
 	if (gen == VC4_GEN_4) {
 		ret = drmm_mutex_init(drm, &vc4->bin_bo_lock);
 		if (ret)
-			return ret;
+			goto err;
 
 		ret = vc4_bo_cache_init(drm);
 		if (ret)
-			return ret;
+			goto err;
 	}
 
 	ret = drmm_mode_config_init(drm);
 	if (ret)
-		return ret;
+		goto err;
 
 	if (gen == VC4_GEN_4) {
 		ret = vc4_gem_init(drm);
 		if (ret)
-			return ret;
+			goto err;
 	}
 
 	node = of_find_compatible_node(NULL, NULL, "raspberrypi,bcm2835-firmware");
@@ -390,13 +381,15 @@ static int vc4_drm_bind(struct device *dev)
 		firmware = rpi_firmware_get(node);
 		of_node_put(node);
 
-		if (!firmware)
-			return -EPROBE_DEFER;
+		if (!firmware) {
+			ret = -EPROBE_DEFER;
+			goto err;
+		}
 	}
 
 	ret = drm_aperture_remove_framebuffers(driver);
 	if (ret)
-		return ret;
+		goto err;
 
 	if (firmware && !firmware_kms()) {
 		ret = rpi_firmware_property(firmware,
@@ -410,21 +403,21 @@ static int vc4_drm_bind(struct device *dev)
 
 	ret = component_bind_all(dev, drm);
 	if (ret)
-		return ret;
+		goto err;
 
 	ret = devm_add_action_or_reset(dev, vc4_component_unbind_all, vc4);
 	if (ret)
-		return ret;
+		goto err;
 
 	if (!vc4->firmware_kms) {
 		ret = vc4_plane_create_additional_planes(drm);
 		if (ret)
-			return ret;
+			goto err;
 	}
 
 	ret = vc4_kms_load(drm);
 	if (ret < 0)
-		goto unbind_all;
+		goto err;
 
 	if (!vc4->firmware_kms) {
 		drm_for_each_crtc(crtc, drm)
@@ -433,13 +426,14 @@ static int vc4_drm_bind(struct device *dev)
 
 	ret = drm_dev_register(drm, 0);
 	if (ret < 0)
-		goto unbind_all;
+		goto err;
 
 	drm_fbdev_dma_setup(drm, 16);
 
 	return 0;
 
-unbind_all:
+err:
+	platform_set_drvdata(pdev, NULL);
 	return ret;
 }
 
@@ -449,6 +443,7 @@ static void vc4_drm_unbind(struct device *dev)
 
 	drm_dev_unplug(drm);
 	drm_atomic_helper_shutdown(drm);
+	dev_set_drvdata(dev, NULL);
 }
 
 static const struct component_master_ops vc4_drm_ops = {
@@ -485,9 +480,6 @@ static int vc4_platform_drm_probe(struct platform_device *pdev)
 	vc4_match_add_drivers(dev, &match,
 			      component_drivers, ARRAY_SIZE(component_drivers));
 
-	if (!match)
-		return -ENODEV;
-
 	return component_master_add_with_match(dev, &vc4_drm_ops, match);
 }
 
@@ -496,12 +488,17 @@ static void vc4_platform_drm_remove(struct platform_device *pdev)
 	component_master_del(&pdev->dev, &vc4_drm_ops);
 }
 
+static void vc4_platform_drm_shutdown(struct platform_device *pdev)
+{
+	drm_atomic_helper_shutdown(platform_get_drvdata(pdev));
+}
+
 static const struct of_device_id vc4_of_match[] = {
-	{ .compatible = "brcm,bcm2711-vc5", },
-	{ .compatible = "brcm,bcm2712-vc6", },
-	{ .compatible = "brcm,bcm2712d0-vc6", },
-	{ .compatible = "brcm,bcm2835-vc4", },
-	{ .compatible = "brcm,cygnus-vc4", },
+	{ .compatible = "brcm,bcm2711-vc5", .data = (void *)VC4_GEN_5 },
+	/* NB GEN_6_C will be corrected on D0 hw to GEN_6_D via vc4_hvs_bind */
+	{ .compatible = "brcm,bcm2712-vc6", .data = (void *)VC4_GEN_6_C },
+	{ .compatible = "brcm,bcm2835-vc4", .data = (void *)VC4_GEN_4 },
+	{ .compatible = "brcm,cygnus-vc4", .data = (void *)VC4_GEN_4 },
 	{},
 };
 MODULE_DEVICE_TABLE(of, vc4_of_match);
@@ -509,6 +506,7 @@ MODULE_DEVICE_TABLE(of, vc4_of_match);
 static struct platform_driver vc4_platform_driver = {
 	.probe		= vc4_platform_drm_probe,
 	.remove_new	= vc4_platform_drm_remove,
+	.shutdown	= vc4_platform_drm_shutdown,
 	.driver		= {
 		.name	= "vc4-drm",
 		.of_match_table = vc4_of_match,

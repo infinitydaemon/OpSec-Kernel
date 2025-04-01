@@ -142,7 +142,7 @@ static void snd_allo_boss_set_sclk(struct snd_soc_component *component,
 
 static int snd_allo_boss_init(struct snd_soc_pcm_runtime *rtd)
 {
-	struct snd_soc_component *component = asoc_rtd_to_codec(rtd, 0)->component;
+	struct snd_soc_component *component = snd_soc_rtd_to_codec(rtd, 0)->component;
 	struct pcm512x_priv *priv = snd_soc_component_get_drvdata(component);
 
 	if (slave)
@@ -196,7 +196,7 @@ static int snd_allo_boss_update_rate_den(
 	struct snd_pcm_substream *substream, struct snd_pcm_hw_params *params)
 {
 	struct snd_soc_pcm_runtime *rtd = substream->private_data;
-	struct snd_soc_component *component = asoc_rtd_to_codec(rtd, 0)->component;
+	struct snd_soc_component *component = snd_soc_rtd_to_codec(rtd, 0)->component;
 	struct pcm512x_priv *pcm512x = snd_soc_component_get_drvdata(component);
 	struct snd_ratnum *rats_no_pll;
 	unsigned int num = 0, den = 0;
@@ -241,7 +241,7 @@ static int snd_allo_boss_set_bias_level(struct snd_soc_card *card,
 	struct snd_soc_dai *codec_dai;
 
 	rtd = snd_soc_get_pcm_runtime(card, &card->dai_link[0]);
-	codec_dai = asoc_rtd_to_codec(rtd, 0);
+	codec_dai = snd_soc_rtd_to_codec(rtd, 0);
 
 	if (dapm->dev != codec_dai->dev)
 		return 0;
@@ -275,7 +275,7 @@ static int snd_allo_boss_hw_params(
 	struct snd_soc_pcm_runtime *rtd = substream->private_data;
 	int channels = params_channels(params);
 	int width = snd_pcm_format_width(params_format(params));
-	struct snd_soc_component *component = asoc_rtd_to_codec(rtd, 0)->component;
+	struct snd_soc_component *component = snd_soc_rtd_to_codec(rtd, 0)->component;
 	struct snd_soc_card *card = rtd->card;
 
 	/* Using powers of 2 allows for an integer clock divisor */
@@ -292,12 +292,12 @@ static int snd_allo_boss_hw_params(
 			goto error;
 	}
 
-	ret = snd_soc_dai_set_bclk_ratio(asoc_rtd_to_cpu(rtd, 0), channels * width);
+	ret = snd_soc_dai_set_bclk_ratio(snd_soc_rtd_to_cpu(rtd, 0), channels * width);
 
 	if (ret)
 		goto error;
 
-	ret = snd_soc_dai_set_bclk_ratio(asoc_rtd_to_codec(rtd, 0), channels * width);
+	ret = snd_soc_dai_set_bclk_ratio(snd_soc_rtd_to_codec(rtd, 0), channels * width);
 
 	if (ret)
 		goto error;
@@ -313,7 +313,7 @@ static int snd_allo_boss_startup(
 	struct snd_pcm_substream *substream)
 {
 	struct snd_soc_pcm_runtime *rtd = substream->private_data;
-	struct snd_soc_component *component = asoc_rtd_to_codec(rtd, 0)->component;
+	struct snd_soc_component *component = snd_soc_rtd_to_codec(rtd, 0)->component;
 	struct snd_soc_card *card = rtd->card;
 
 	snd_soc_component_update_bits(component, PCM512x_GPIO_CONTROL_1, 0x08, 0x08);
@@ -338,7 +338,7 @@ static void snd_allo_boss_shutdown(
 	struct snd_pcm_substream *substream)
 {
 	struct snd_soc_pcm_runtime *rtd = substream->private_data;
-	struct snd_soc_component *component = asoc_rtd_to_codec(rtd, 0)->component;
+	struct snd_soc_component *component = snd_soc_rtd_to_codec(rtd, 0)->component;
 
 	snd_soc_component_update_bits(component, PCM512x_GPIO_CONTROL_1, 0x08, 0x00);
 }
@@ -441,11 +441,10 @@ static int snd_allo_boss_probe(struct platform_device *pdev)
 	return -EINVAL;
 }
 
-static int snd_allo_boss_remove(struct platform_device *pdev)
+static void snd_allo_boss_remove(struct platform_device *pdev)
 {
 	snd_allo_boss_gpio_mute(&snd_allo_boss);
 	snd_soc_unregister_card(&snd_allo_boss);
-	return 0;
 }
 
 static const struct of_device_id snd_allo_boss_of_match[] = {

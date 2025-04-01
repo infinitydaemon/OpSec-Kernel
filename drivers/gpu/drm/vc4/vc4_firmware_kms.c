@@ -32,6 +32,7 @@
 #include <linux/clk.h>
 #include <linux/debugfs.h>
 #include <linux/module.h>
+#include <linux/platform_device.h>
 
 #include <soc/bcm2835/raspberrypi-firmware.h>
 
@@ -1466,7 +1467,8 @@ static int vc4_fkms_connector_get_modes(struct drm_connector *connector)
 	struct vc4_fkms_encoder *vc4_encoder = to_vc4_fkms_encoder(encoder);
 	struct drm_display_mode fw_mode;
 	struct drm_display_mode *mode;
-	struct edid *edid;
+	const struct drm_edid *drm_edid;
+	const struct edid *edid;
 	int num_modes;
 
 	if (!vc4_fkms_get_fw_mode(fkms_connector, &fw_mode)) {
@@ -1476,8 +1478,9 @@ static int vc4_fkms_connector_get_modes(struct drm_connector *connector)
 		drm_mode_probed_add(connector, mode);
 		num_modes = 1;	/* 1 mode */
 	} else {
-		edid = drm_do_get_edid(connector, vc4_fkms_get_edid_block,
+		drm_edid = drm_edid_read_custom(connector, vc4_fkms_get_edid_block,
 				       fkms_connector);
+		edid = drm_edid_raw(drm_edid);
 
 		/* FIXME: Can we do CEC?
 		 * cec_s_phys_addr_from_edid(vc4->hdmi->cec_adap, edid);
@@ -1488,8 +1491,8 @@ static int vc4_fkms_connector_get_modes(struct drm_connector *connector)
 		vc4_encoder->hdmi_monitor = drm_detect_hdmi_monitor(edid);
 
 		drm_connector_update_edid_property(connector, edid);
-		num_modes = drm_add_edid_modes(connector, edid);
-		kfree(edid);
+		num_modes = drm_add_edid_modes(connector, (struct edid *)edid);
+		kfree(drm_edid);
 	}
 
 	return num_modes;
@@ -1557,7 +1560,7 @@ static void vc4_fkms_connector_destroy(struct drm_connector *connector)
  *
  * Returns: The newly allocated connector state, or NULL on failure.
  */
-struct drm_connector_state *
+static struct drm_connector_state *
 vc4_connector_duplicate_state(struct drm_connector *connector)
 {
 	struct vc4_fkms_connector_state *state;
@@ -1579,7 +1582,7 @@ vc4_connector_duplicate_state(struct drm_connector *connector)
  *
  * Returns the atomic property value for a digital connector.
  */
-int vc4_connector_atomic_get_property(struct drm_connector *connector,
+static int vc4_connector_atomic_get_property(struct drm_connector *connector,
 				      const struct drm_connector_state *state,
 				      struct drm_property *property,
 				      uint64_t *val)
@@ -1609,7 +1612,7 @@ int vc4_connector_atomic_get_property(struct drm_connector *connector,
  *
  * Sets the atomic property value for a digital connector.
  */
-int vc4_connector_atomic_set_property(struct drm_connector *connector,
+static int vc4_connector_atomic_set_property(struct drm_connector *connector,
 				      struct drm_connector_state *state,
 				      struct drm_property *property,
 				      uint64_t val)
@@ -1629,7 +1632,7 @@ int vc4_connector_atomic_set_property(struct drm_connector *connector,
 	return -EINVAL;
 }
 
-int vc4_connector_atomic_check(struct drm_connector *connector,
+static int vc4_connector_atomic_check(struct drm_connector *connector,
 			       struct drm_atomic_state *state)
 {
 	struct drm_connector_state *old_state =
@@ -2007,16 +2010,16 @@ static int vc4_fkms_bind(struct device *dev, struct device *master, void *data)
 	}
 
 	if (num_displays > 0) {
-		/* Map the SMI interrupt reg */
-		crtc_list[0]->regs = vc4_ioremap_regs(pdev, 0);
-		if (IS_ERR(crtc_list[0]->regs))
-			DRM_ERROR("Oh dear, failed to map registers\n");
-
 		if (fkms->revision >= BCM2712) {
 			ret = devm_request_irq(dev, platform_get_irq(pdev, 0),
 					       vc4_crtc2712_irq_handler, 0,
 					       "vc4 firmware kms", crtc_list);
 		} else {
+			/* Map the SMI interrupt reg */
+			crtc_list[0]->regs = vc4_ioremap_regs(pdev, 0);
+			if (IS_ERR(crtc_list[0]->regs))
+				DRM_ERROR("Oh dear, failed to map registers\n");
+
 			writel(0, crtc_list[0]->regs + SMICS);
 			ret = devm_request_irq(dev, platform_get_irq(pdev, 0),
 					       vc4_crtc_irq_handler, 0,
@@ -2061,10 +2064,9 @@ static int vc4_fkms_probe(struct platform_device *pdev)
 	return component_add(&pdev->dev, &vc4_fkms_ops);
 }
 
-static int vc4_fkms_remove(struct platform_device *pdev)
+static void vc4_fkms_remove(struct platform_device *pdev)
 {
 	component_del(&pdev->dev, &vc4_fkms_ops);
-	return 0;
 }
 
 struct platform_driver vc4_firmware_kms_driver = {

@@ -1370,17 +1370,6 @@ static int wacom_led_register_one(struct device *dev, struct wacom *wacom,
 	if (!name)
 		return -ENOMEM;
 
-	if (!read_only) {
-		led->trigger.name = name;
-		error = devm_led_trigger_register(dev, &led->trigger);
-		if (error) {
-			hid_err(wacom->hdev,
-				"failed to register LED trigger %s: %d\n",
-				led->cdev.name, error);
-			return error;
-		}
-	}
-
 	led->group = group;
 	led->id = id;
 	led->wacom = wacom;
@@ -1395,6 +1384,19 @@ static int wacom_led_register_one(struct device *dev, struct wacom *wacom,
 		led->cdev.default_trigger = led->cdev.name;
 	} else {
 		led->cdev.brightness_set = wacom_led_readonly_brightness_set;
+	}
+
+	if (!read_only) {
+		led->trigger.name = name;
+		if (id == wacom->led.groups[group].select)
+			led->trigger.brightness = wacom_leds_brightness_get(led);
+		error = devm_led_trigger_register(dev, &led->trigger);
+		if (error) {
+			hid_err(wacom->hdev,
+				"failed to register LED trigger %s: %d\n",
+				led->cdev.name, error);
+			return error;
+		}
 	}
 
 	error = devm_led_classdev_register(dev, &led->cdev);
@@ -1811,6 +1813,13 @@ static void wacom_destroy_battery(struct wacom *wacom)
 				     &wacom->battery.bat_desc);
 		wacom->battery.battery = NULL;
 	}
+}
+
+static void wacom_aes_battery_handler(struct work_struct *work)
+{
+	struct wacom *wacom = container_of(work, struct wacom, aes_battery_work.work);
+
+	wacom_destroy_battery(wacom);
 }
 
 static ssize_t wacom_show_speed(struct device *dev,
@@ -2818,6 +2827,7 @@ static int wacom_probe(struct hid_device *hdev,
 
 	mutex_init(&wacom->lock);
 	INIT_DELAYED_WORK(&wacom->init_work, wacom_init_work);
+	INIT_DELAYED_WORK(&wacom->aes_battery_work, wacom_aes_battery_handler);
 	INIT_WORK(&wacom->wireless_work, wacom_wireless_work);
 	INIT_WORK(&wacom->battery_work, wacom_battery_work);
 	INIT_WORK(&wacom->remote_work, wacom_remote_work);

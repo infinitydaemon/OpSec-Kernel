@@ -280,7 +280,7 @@ err_mem_path_disable:
 	return ret;
 }
 
-static int qce_crypto_remove(struct platform_device *pdev)
+static void qce_crypto_remove(struct platform_device *pdev)
 {
 	struct qce_device *qce = platform_get_drvdata(pdev);
 
@@ -290,7 +290,6 @@ static int qce_crypto_remove(struct platform_device *pdev)
 	clk_disable_unprepare(qce->bus);
 	clk_disable_unprepare(qce->iface);
 	clk_disable_unprepare(qce->core);
-	return 0;
 }
 
 static const struct of_device_id qce_crypto_of_match[] = {
@@ -303,7 +302,7 @@ MODULE_DEVICE_TABLE(of, qce_crypto_of_match);
 
 static struct platform_driver qce_crypto_driver = {
 	.probe = qce_crypto_probe,
-	.remove = qce_crypto_remove,
+	.remove_new = qce_crypto_remove,
 	.driver = {
 		.name = KBUILD_MODNAME,
 		.of_match_table = qce_crypto_of_match,

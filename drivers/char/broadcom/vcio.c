@@ -19,6 +19,8 @@
 #include <linux/uaccess.h>
 #include <linux/compat.h>
 #include <linux/miscdevice.h>
+#include <linux/of.h>
+#include <linux/platform_device.h>
 #include <soc/bcm2835/raspberrypi-firmware.h>
 
 #define MODULE_NAME "vcio"
@@ -154,12 +156,11 @@ static int vcio_probe(struct platform_device *pdev)
 	return misc_register(&vcio->misc_dev);
 }
 
-static int vcio_remove(struct platform_device *pdev)
+static void vcio_remove(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
 
 	misc_deregister(dev_get_drvdata(dev));
-	return 0;
 }
 
 static const struct of_device_id vcio_ids[] = {

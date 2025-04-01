@@ -2280,7 +2280,7 @@ static int32_t handle_hc_chhltd_intr(dwc_otg_hcd_t * hcd,
  * 1. Un-mangle the status as recorded in each iso_frame_desc status
  * 2. Copy it from the dwc_otg_urb into the real URB
  */
-void dwc_otg_fiq_unmangle_isoc(dwc_otg_hcd_t *hcd, dwc_otg_qh_t *qh, dwc_otg_qtd_t *qtd, uint32_t num)
+static void dwc_otg_fiq_unmangle_isoc(dwc_otg_hcd_t *hcd, dwc_otg_qh_t *qh, dwc_otg_qtd_t *qtd, uint32_t num)
 {
 	struct dwc_otg_hcd_urb *dwc_urb = qtd->urb;
 	int nr_frames = dwc_urb->packet_count;
@@ -2329,7 +2329,7 @@ void dwc_otg_fiq_unmangle_isoc(dwc_otg_hcd_t *hcd, dwc_otg_qh_t *qh, dwc_otg_qtd
  * Returns total length of data or -1 if the buffers were not used.
  *
  */
-int dwc_otg_fiq_unsetup_per_dma(dwc_otg_hcd_t *hcd, dwc_otg_qh_t *qh, dwc_otg_qtd_t *qtd, uint32_t num)
+static int dwc_otg_fiq_unsetup_per_dma(dwc_otg_hcd_t *hcd, dwc_otg_qh_t *qh, dwc_otg_qtd_t *qtd, uint32_t num)
 {
 	dwc_hc_t *hc = qh->channel;
 	struct fiq_dma_channel *split_dma = hcd->fiq_dmab;
@@ -2373,7 +2373,7 @@ int dwc_otg_fiq_unsetup_per_dma(dwc_otg_hcd_t *hcd, dwc_otg_qh_t *qh, dwc_otg_qt
  * different from the normal (messy) path. This function and its friends handles
  * channel cleanup and transaction completion from a FIQ transaction.
  */
-void dwc_otg_hcd_handle_hc_fsm(dwc_otg_hcd_t *hcd, uint32_t num)
+static void dwc_otg_hcd_handle_hc_fsm(dwc_otg_hcd_t *hcd, uint32_t num)
 {
 	struct fiq_channel_state *st = &hcd->fiq_state->channel[num];
 	dwc_hc_t *hc = hcd->hc_ptr_array[num];

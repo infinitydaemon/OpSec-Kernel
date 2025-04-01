@@ -40,8 +40,6 @@
 /** This definition should actually migrate to the Portability Library */
 #define DWC_CONSTANT_CPU_TO_LE16(x) (x)
 
-extern dwc_otg_pcd_ep_t *get_ep_by_addr(dwc_otg_pcd_t * pcd, u16 wIndex);
-
 static int cfi_core_features_buf(uint8_t * buf, uint16_t buflen);
 static int cfi_get_feature_value(uint8_t * buf, uint16_t buflen,
 				 struct dwc_otg_pcd *pcd,

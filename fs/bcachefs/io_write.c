@@ -69,11 +69,10 @@ void bch2_latency_acct(struct bch_dev *ca, u64 submit_time, int rw)
 	u64 io_latency = time_after64(now, submit_time)
 		? now - submit_time
 		: 0;
-	u64 old, new, v = atomic64_read(latency);
+	u64 old, new;
 
+	old = atomic64_read(latency);
 	do {
-		old = v;
-
 		/*
 		 * If the io latency was reasonably close to the current
 		 * latency, skip doing the update and atomic operation - most of
@@ -84,7 +83,7 @@ void bch2_latency_acct(struct bch_dev *ca, u64 submit_time, int rw)
 			break;
 
 		new = ewma_add(old, io_latency, 5);
-	} while ((v = atomic64_cmpxchg(latency, old, new)) != old);
+	} while (!atomic64_try_cmpxchg(latency, &old, new));
 
 	bch2_congested_acct(ca, io_latency, now, rw);
 
@@ -555,7 +554,7 @@ out:
 err:
 	keys->top = keys->keys;
 	op->error = ret;
-	op->flags |= BCH_WRITE_DONE;
+	op->flags |= BCH_WRITE_SUBMITTED;
 	goto out;
 }
 
@@ -590,7 +589,7 @@ static CLOSURE_CALLBACK(bch2_write_index)
 	struct workqueue_struct *wq = index_update_wq(op);
 	unsigned long flags;
 
-	if ((op->flags & BCH_WRITE_DONE) &&
+	if ((op->flags & BCH_WRITE_SUBMITTED) &&
 	    (op->flags & BCH_WRITE_MOVE))
 		bch2_bio_free_pages_pool(op->c, &op->wbio.bio);
 
@@ -635,7 +634,7 @@ void bch2_write_point_do_index_updates(struct work_struct *work)
 
 		__bch2_write_index(op);
 
-		if (!(op->flags & BCH_WRITE_DONE))
+		if (!(op->flags & BCH_WRITE_SUBMITTED))
 			__bch2_write(op);
 		else
 			bch2_write_done(&op->cl);
@@ -698,7 +697,7 @@ static void init_append_extent(struct bch_write_op *op,
 	e = bkey_extent_init(op->insert_keys.top);
 	e->k.p		= op->pos;
 	e->k.size	= crc.uncompressed_size;
-	e->k.version	= version;
+	e->k.bversion	= version;
 
 	if (crc.csum_type ||
 	    crc.compression_type ||
@@ -1081,7 +1080,10 @@ do_write:
 	*_dst = dst;
 	return more;
 csum_err:
-	bch_err(c, "%s writ error: error verifying existing checksum while rewriting existing data (memory corruption?)",
+	bch_err_inum_offset_ratelimited(c,
+		op->pos.inode,
+		op->pos.offset << 9,
+		"%s write error: error verifying existing checksum while rewriting existing data (memory corruption?)",
 		op->flags & BCH_WRITE_MOVE ? "move" : "user");
 	ret = -EIO;
 err:
@@ -1220,7 +1222,7 @@ static void bch2_nocow_write(struct bch_write_op *op)
 	DARRAY_PREALLOCATED(struct bucket_to_lock, 3) buckets;
 	u32 snapshot;
 	struct bucket_to_lock *stale_at;
-	int ret;
+	int stale, ret;
 
 	if (op->flags & BCH_WRITE_MOVE)
 		return;
@@ -1298,10 +1300,8 @@ retry:
 						 bucket_to_u64(i->b),
 						 BUCKET_NOCOW_LOCK_UPDATE);
 
-			rcu_read_lock();
-			bool stale = gen_after(*bucket_gen(ca, i->b.offset), i->gen);
-			rcu_read_unlock();
-
+			int gen = bucket_gen_get(ca, i->b.offset);
+			stale = gen < 0 ? gen : gen_after(gen, i->gen);
 			if (unlikely(stale)) {
 				stale_at = i;
 				goto err_bucket_stale;
@@ -1315,7 +1315,7 @@ retry:
 			wbio_init(bio)->put_bio = true;
 			bio->bi_opf = op->wbio.bio.bi_opf;
 		} else {
-			op->flags |= BCH_WRITE_DONE;
+			op->flags |= BCH_WRITE_SUBMITTED;
 		}
 
 		op->pos.offset += bio_sectors(bio);
@@ -1329,7 +1329,7 @@ retry:
 					  op->insert_keys.top, true);
 
 		bch2_keylist_push(&op->insert_keys);
-		if (op->flags & BCH_WRITE_DONE)
+		if (op->flags & BCH_WRITE_SUBMITTED)
 			break;
 		bch2_btree_iter_advance(&iter);
 	}
@@ -1344,14 +1344,14 @@ err:
 			op->pos.inode, op->pos.offset << 9,
 			"%s: btree lookup error %s", __func__, bch2_err_str(ret));
 		op->error = ret;
-		op->flags |= BCH_WRITE_DONE;
+		op->flags |= BCH_WRITE_SUBMITTED;
 	}
 
 	bch2_trans_put(trans);
 	darray_exit(&buckets);
 
 	/* fallback to cow write path? */
-	if (!(op->flags & BCH_WRITE_DONE)) {
+	if (!(op->flags & BCH_WRITE_SUBMITTED)) {
 		closure_sync(&op->cl);
 		__bch2_nocow_write_done(op);
 		op->insert_keys.top = op->insert_keys.keys;
@@ -1380,8 +1380,18 @@ err_bucket_stale:
 			break;
 	}
 
-	/* We can retry this: */
-	ret = -BCH_ERR_transaction_restart;
+	struct printbuf buf = PRINTBUF;
+	if (bch2_fs_inconsistent_on(stale < 0, c,
+				    "pointer to invalid bucket in nocow path on device %llu\n  %s",
+				    stale_at->b.inode,
+				    (bch2_bkey_val_to_text(&buf, c, k), buf.buf))) {
+		ret = -EIO;
+	} else {
+		/* We can retry this: */
+		ret = -BCH_ERR_transaction_restart;
+	}
+	printbuf_exit(&buf);
+
 	goto err_get_ioref;
 }
 
@@ -1397,7 +1407,7 @@ static void __bch2_write(struct bch_write_op *op)
 
 	if (unlikely(op->opts.nocow && c->opts.nocow_enabled)) {
 		bch2_nocow_write(op);
-		if (op->flags & BCH_WRITE_DONE)
+		if (op->flags & BCH_WRITE_SUBMITTED)
 			goto out_nofs_restore;
 	}
 again:
@@ -1424,7 +1434,7 @@ again:
 		 * freeing up space on specific disks, which means that
 		 * allocations for specific disks may hang arbitrarily long:
 		 */
-		ret = bch2_trans_do(c, NULL, NULL, 0,
+		ret = bch2_trans_run(c, lockrestart_do(trans,
 			bch2_alloc_sectors_start_trans(trans,
 				op->target,
 				op->opts.erasure_code && !(op->flags & BCH_WRITE_CACHED),
@@ -1434,9 +1444,7 @@ again:
 				op->nr_replicas_required,
 				op->watermark,
 				op->flags,
-				(op->flags & (BCH_WRITE_ALLOC_NOWAIT|
-					      BCH_WRITE_ONLY_SPECIFIED_DEVS))
-				? NULL : &op->cl, &wp));
+				&op->cl, &wp)));
 		if (unlikely(ret)) {
 			if (bch2_err_matches(ret, BCH_ERR_operation_blocked))
 				break;
@@ -1452,7 +1460,7 @@ again:
 		bch2_alloc_sectors_done_inlined(c, wp);
 err:
 		if (ret <= 0) {
-			op->flags |= BCH_WRITE_DONE;
+			op->flags |= BCH_WRITE_SUBMITTED;
 
 			if (ret < 0) {
 				if (!(op->flags & BCH_WRITE_ALLOC_NOWAIT))
@@ -1488,16 +1496,13 @@ err:
 	 * once, as that signals backpressure to the caller.
 	 */
 	if ((op->flags & BCH_WRITE_SYNC) ||
-	    (!(op->flags & BCH_WRITE_DONE) &&
+	    (!(op->flags & BCH_WRITE_SUBMITTED) &&
 	     !(op->flags & BCH_WRITE_IN_WORKER))) {
-		if (closure_sync_timeout(&op->cl, HZ * 10)) {
-			bch2_print_allocator_stuck(c);
-			closure_sync(&op->cl);
-		}
+		bch2_wait_on_allocator(c, &op->cl);
 
 		__bch2_write_index(op);
 
-		if (!(op->flags & BCH_WRITE_DONE))
+		if (!(op->flags & BCH_WRITE_SUBMITTED))
 			goto again;
 		bch2_write_done(&op->cl);
 	} else {
@@ -1519,7 +1524,7 @@ static void bch2_write_data_inline(struct bch_write_op *op, unsigned data_len)
 	memset(&op->failed, 0, sizeof(op->failed));
 
 	op->flags |= BCH_WRITE_WROTE_DATA_INLINE;
-	op->flags |= BCH_WRITE_DONE;
+	op->flags |= BCH_WRITE_SUBMITTED;
 
 	bch2_check_set_feature(op->c, BCH_FEATURE_inline_data);
 
@@ -1536,7 +1541,7 @@ static void bch2_write_data_inline(struct bch_write_op *op, unsigned data_len)
 
 	id = bkey_inline_data_init(op->insert_keys.top);
 	id->k.p		= op->pos;
-	id->k.version	= op->version;
+	id->k.bversion	= op->version;
 	id->k.size	= sectors;
 
 	iter = bio->bi_iter;
@@ -1581,6 +1586,9 @@ CLOSURE_CALLBACK(bch2_write)
 	BUG_ON(!op->nr_replicas);
 	BUG_ON(!op->write_point.v);
 	BUG_ON(bkey_eq(op->pos, POS_MAX));
+
+	if (op->flags & BCH_WRITE_ONLY_SPECIFIED_DEVS)
+		op->flags |= BCH_WRITE_ALLOC_NOWAIT;
 
 	op->nr_replicas_required = min_t(unsigned, op->nr_replicas_required, op->nr_replicas);
 	op->start_time = local_clock();

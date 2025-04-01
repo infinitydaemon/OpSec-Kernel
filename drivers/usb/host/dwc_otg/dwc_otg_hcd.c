@@ -69,7 +69,7 @@ dwc_otg_hcd_t *dwc_otg_hcd_alloc_hcd(void)
  * Connection timeout function.  An OTG host is required to display a
  * message if the device does not connect within 10 seconds.
  */
-void dwc_otg_hcd_connect_timeout(void *ptr)
+static void dwc_otg_hcd_connect_timeout(void *ptr)
 {
 	DWC_DEBUGPL(DBG_HCDV, "%s(%p)\n", __func__, ptr);
 	DWC_PRINTF("Connect Timeout\n");
@@ -816,7 +816,8 @@ static void qh_list_free(dwc_otg_hcd_t * hcd, dwc_list_link_t * qh_list)
  * Exit from Hibernation if Host did not detect SRP from connected SRP capable
  * Device during SRP time by host power up.
  */
-void dwc_otg_hcd_power_up(void *ptr)
+#ifdef DWC_DEV_SRPCAP
+static void dwc_otg_hcd_power_up(void *ptr)
 {
 	gpwrdn_data_t gpwrdn = {.d32 = 0 };
 	dwc_otg_core_if_t *core_if = (dwc_otg_core_if_t *) ptr;
@@ -873,6 +874,7 @@ void dwc_otg_hcd_power_up(void *ptr)
 	dwc_otg_enable_global_interrupts(core_if);
 	cil_hcd_start(core_if);
 }
+#endif
 
 void dwc_otg_cleanup_fiq_channel(dwc_otg_hcd_t *hcd, uint32_t num)
 {
@@ -1554,7 +1556,7 @@ int fiq_fsm_transaction_suitable(dwc_otg_hcd_t *hcd, dwc_otg_qh_t *qh)
  * Returns 1 if the DMA bounce buffers have been used, 0 if the default
  * HC buffer has been used.
  */
-int fiq_fsm_setup_periodic_dma(dwc_otg_hcd_t *hcd, struct fiq_channel_state *st, dwc_otg_qh_t *qh)
+static int fiq_fsm_setup_periodic_dma(dwc_otg_hcd_t *hcd, struct fiq_channel_state *st, dwc_otg_qh_t *qh)
  {
 	int frame_length, i = 0;
 	uint8_t *ptr = NULL;
@@ -1660,7 +1662,7 @@ int fiq_fsm_setup_periodic_dma(dwc_otg_hcd_t *hcd, struct fiq_channel_state *st,
  *
  * Returns 1 if initiating the transfer would cause contention, 0 otherwise.
  */
-int fiq_fsm_np_tt_contended(dwc_otg_hcd_t *hcd, dwc_otg_qh_t *qh)
+static int fiq_fsm_np_tt_contended(dwc_otg_hcd_t *hcd, dwc_otg_qh_t *qh)
 {
 	int i;
 	struct fiq_channel_state *st;
@@ -1698,7 +1700,7 @@ int fiq_fsm_np_tt_contended(dwc_otg_hcd_t *hcd, dwc_otg_qh_t *qh)
  */
 #define PERIODIC_FRREM_BACKOFF 1000
 
-int fiq_fsm_queue_isoc_transaction(dwc_otg_hcd_t *hcd, dwc_otg_qh_t *qh)
+static int fiq_fsm_queue_isoc_transaction(dwc_otg_hcd_t *hcd, dwc_otg_qh_t *qh)
 {
 	dwc_hc_t *hc = qh->channel;
 	dwc_otg_hc_regs_t *hc_regs = hcd->core_if->host_if->hc_regs[hc->hc_num];
@@ -1822,7 +1824,7 @@ int fiq_fsm_queue_isoc_transaction(dwc_otg_hcd_t *hcd, dwc_otg_qh_t *qh)
  * For periodic transfers, it also peeks at the FIQ state to see if an immediate
  * start is possible. If not, then the FIQ is left to start the transfer.
  */
-int fiq_fsm_queue_split_transaction(dwc_otg_hcd_t *hcd, dwc_otg_qh_t *qh)
+static int fiq_fsm_queue_split_transaction(dwc_otg_hcd_t *hcd, dwc_otg_qh_t *qh)
 {
 	int start_immediate = 1, i;
 	hfnum_data_t hfnum;

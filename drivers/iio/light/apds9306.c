@@ -28,7 +28,7 @@
 #include <linux/iio/events.h>
 #include <linux/iio/sysfs.h>
 
-#include <asm/unaligned.h>
+#include <linux/unaligned.h>
 
 #define APDS9306_MAIN_CTRL_REG		0x00
 #define APDS9306_ALS_MEAS_RATE_REG	0x04
@@ -108,11 +108,11 @@ static const struct part_id_gts_multiplier apds9306_gts_mul[] = {
 	{
 		.part_id = 0xB1,
 		.max_scale_int = 16,
-		.max_scale_nano = 3264320,
+		.max_scale_nano = 326432000,
 	}, {
 		.part_id = 0xB3,
 		.max_scale_int = 14,
-		.max_scale_nano = 9712000,
+		.max_scale_nano = 97120000,
 	},
 };
 
@@ -583,8 +583,8 @@ static int apds9306_intg_time_set(struct apds9306_data *data, int val2)
 		return ret;
 
 	intg_old = iio_gts_find_int_time_by_sel(&data->gts, intg_time_idx);
-	if (ret < 0)
-		return ret;
+	if (intg_old < 0)
+		return intg_old;
 
 	if (intg_old == val2)
 		return 0;

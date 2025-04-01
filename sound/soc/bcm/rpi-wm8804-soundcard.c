@@ -150,9 +150,9 @@ static int snd_rpi_wm8804_hw_params(struct snd_pcm_substream *substream,
 		struct snd_pcm_hw_params *params)
 {
 	struct snd_soc_pcm_runtime *rtd = substream->private_data;
-	struct snd_soc_dai *codec_dai = asoc_rtd_to_codec(rtd, 0);
-	struct snd_soc_component *component = asoc_rtd_to_codec(rtd, 0)->component;
-	struct snd_soc_dai *cpu_dai = asoc_rtd_to_cpu(rtd, 0);
+	struct snd_soc_dai *codec_dai = snd_soc_rtd_to_codec(rtd, 0);
+	struct snd_soc_component *component = snd_soc_rtd_to_codec(rtd, 0)->component;
+	struct snd_soc_dai *cpu_dai = snd_soc_rtd_to_cpu(rtd, 0);
 	int sampling_freq = 1;
 	int ret;
 	struct wm8804_clk_cfg clk_cfg;
@@ -377,7 +377,7 @@ SND_SOC_DAILINK_DEFS(interlude_audio_digital,
 
 static int snd_interlude_audio_init(struct snd_soc_pcm_runtime *rtd)
 {
-	struct snd_soc_component *component = asoc_rtd_to_codec(rtd, 0)->component;
+	struct snd_soc_component *component =  snd_soc_rtd_to_codec(rtd, 0)->component;
 	int ret;
 
 	ret = wm8805_add_input_controls(component);

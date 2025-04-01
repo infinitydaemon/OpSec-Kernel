@@ -42,17 +42,17 @@ static struct snd_pcm_hw_constraint_list audioinjector_octo_constraints = {
 
 static int audioinjector_octo_dai_init(struct snd_soc_pcm_runtime *rtd)
 {
-	return snd_soc_dai_set_bclk_ratio(asoc_rtd_to_cpu(rtd, 0), 64);
+	return snd_soc_dai_set_bclk_ratio(snd_soc_rtd_to_cpu(rtd, 0), 64);
 }
 
 static int audioinjector_octo_startup(struct snd_pcm_substream *substream)
 {
 	struct snd_soc_pcm_runtime *rtd = substream->private_data;
-	asoc_rtd_to_cpu(rtd, 0)->driver->playback.channels_min = 8;
-	asoc_rtd_to_cpu(rtd, 0)->driver->playback.channels_max = 8;
-	asoc_rtd_to_cpu(rtd, 0)->driver->capture.channels_min = 8;
-	asoc_rtd_to_cpu(rtd, 0)->driver->capture.channels_max = 8;
-	asoc_rtd_to_codec(rtd, 0)->driver->capture.channels_max = 8;
+	snd_soc_rtd_to_cpu(rtd, 0)->driver->playback.channels_min = 8;
+	snd_soc_rtd_to_cpu(rtd, 0)->driver->playback.channels_max = 8;
+	snd_soc_rtd_to_cpu(rtd, 0)->driver->capture.channels_min = 8;
+	snd_soc_rtd_to_cpu(rtd, 0)->driver->capture.channels_max = 8;
+	snd_soc_rtd_to_codec(rtd, 0)->driver->capture.channels_max = 8;
 
 	snd_pcm_hw_constraint_list(substream->runtime, 0,
 				SNDRV_PCM_HW_PARAM_RATE,
@@ -64,11 +64,11 @@ static int audioinjector_octo_startup(struct snd_pcm_substream *substream)
 static void audioinjector_octo_shutdown(struct snd_pcm_substream *substream)
 {
 	struct snd_soc_pcm_runtime *rtd = substream->private_data;
-	asoc_rtd_to_cpu(rtd, 0)->driver->playback.channels_min = 2;
-	asoc_rtd_to_cpu(rtd, 0)->driver->playback.channels_max = 2;
-	asoc_rtd_to_cpu(rtd, 0)->driver->capture.channels_min = 2;
-	asoc_rtd_to_cpu(rtd, 0)->driver->capture.channels_max = 2;
-	asoc_rtd_to_codec(rtd, 0)->driver->capture.channels_max = 6;
+	snd_soc_rtd_to_cpu(rtd, 0)->driver->playback.channels_min = 2;
+	snd_soc_rtd_to_cpu(rtd, 0)->driver->playback.channels_max = 2;
+	snd_soc_rtd_to_cpu(rtd, 0)->driver->capture.channels_min = 2;
+	snd_soc_rtd_to_cpu(rtd, 0)->driver->capture.channels_max = 2;
+	snd_soc_rtd_to_codec(rtd, 0)->driver->capture.channels_max = 6;
 }
 
 static int audioinjector_octo_hw_params(struct snd_pcm_substream *substream,
@@ -77,14 +77,14 @@ static int audioinjector_octo_hw_params(struct snd_pcm_substream *substream,
 	struct snd_soc_pcm_runtime *rtd = substream->private_data;
 
 	// set codec DAI configuration
-	int ret = snd_soc_dai_set_fmt(asoc_rtd_to_codec(rtd, 0),
+	int ret = snd_soc_dai_set_fmt(snd_soc_rtd_to_codec(rtd, 0),
 			SND_SOC_DAIFMT_CBS_CFS|SND_SOC_DAIFMT_DSP_A|
 			SND_SOC_DAIFMT_NB_NF);
 	if (ret < 0)
 		return ret;
 
 	// set cpu DAI configuration
-	ret = snd_soc_dai_set_fmt(asoc_rtd_to_cpu(rtd, 0),
+	ret = snd_soc_dai_set_fmt(snd_soc_rtd_to_cpu(rtd, 0),
 			SND_SOC_DAIFMT_CBM_CFM|SND_SOC_DAIFMT_I2S|
 			SND_SOC_DAIFMT_NB_NF);
 	if (ret < 0)
@@ -96,34 +96,34 @@ static int audioinjector_octo_hw_params(struct snd_pcm_substream *substream,
 	switch (audioinjector_octo_rate) {
 	case 96000:
 	case 48000:
-		return snd_soc_dai_set_sysclk(asoc_rtd_to_codec(rtd, 0), 0, 49152000,
+		return snd_soc_dai_set_sysclk(snd_soc_rtd_to_codec(rtd, 0), 0, 49152000,
 									0);
 		break;
 	case 24000:
-		return snd_soc_dai_set_sysclk(asoc_rtd_to_codec(rtd, 0), 0, 49152000/2,
+		return snd_soc_dai_set_sysclk(snd_soc_rtd_to_codec(rtd, 0), 0, 49152000/2,
 									0);
 		break;
 	case 32000:
 	case 16000:
-		return snd_soc_dai_set_sysclk(asoc_rtd_to_codec(rtd, 0), 0, 49152000/3,
+		return snd_soc_dai_set_sysclk(snd_soc_rtd_to_codec(rtd, 0), 0, 49152000/3,
 									0);
 		break;
 	case 8000:
-		return snd_soc_dai_set_sysclk(asoc_rtd_to_codec(rtd, 0), 0, 49152000/6,
+		return snd_soc_dai_set_sysclk(snd_soc_rtd_to_codec(rtd, 0), 0, 49152000/6,
 									0);
 		break;
 	case 88200:
 	case 44100:
-		return snd_soc_dai_set_sysclk(asoc_rtd_to_codec(rtd, 0), 0, 45185400,
+		return snd_soc_dai_set_sysclk(snd_soc_rtd_to_codec(rtd, 0), 0, 45185400,
 									0);
 		break;
 	case 22050:
-		return snd_soc_dai_set_sysclk(asoc_rtd_to_codec(rtd, 0), 0, 45185400/2,
+		return snd_soc_dai_set_sysclk(snd_soc_rtd_to_codec(rtd, 0), 0, 45185400/2,
 									0);
 		break;
 	case 29400:
 	case 14700:
-		return snd_soc_dai_set_sysclk(asoc_rtd_to_codec(rtd, 0), 0, 45185400/3,
+		return snd_soc_dai_set_sysclk(snd_soc_rtd_to_codec(rtd, 0), 0, 45185400/3,
 									0);
 		break;
 	default:

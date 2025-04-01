@@ -396,7 +396,7 @@ static const struct bwconfig_config config_2712 = {
 	vpu_bus_string_2712, ARRAY_SIZE(vpu_bus_string_2712),
 };
 
-const static char *monitor_name[] = {
+static const char *monitor_name[] = {
 	"System",
 	"VPU"
 };
@@ -789,16 +789,12 @@ static int rpi_axiperf_probe(struct platform_device *pdev)
 
 }
 
-static int rpi_axiperf_remove(struct platform_device *dev)
+static void rpi_axiperf_remove(struct platform_device *dev)
 {
-	int ret = 0;
-
 	kthread_stop(state->monitor_thread);
 
 	debugfs_remove_recursive(state->root_folder);
 	state->root_folder = NULL;
-
-	return ret;
 }
 
 static const struct of_device_id rpi_axiperf_match[] = {

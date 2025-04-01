@@ -446,8 +446,10 @@ static void device_run(void *priv)
 	ctx->comp_magic_cnt = 0;
 	ctx->comp_has_frame = false;
 	spin_unlock(ctx->lock);
-	if (ctx->is_stateless && src_req)
+	if (ctx->is_stateless && src_req) {
 		v4l2_ctrl_request_complete(src_req, &ctx->hdl);
+		media_request_manual_complete(src_req);
+	}
 
 	if (ctx->is_enc)
 		v4l2_m2m_job_finish(dev->stateful_enc.m2m_dev, ctx->fh.m2m_ctx);
@@ -1215,8 +1217,7 @@ static int vicodec_encoder_cmd(struct file *file, void *fh,
 	if (ret < 0)
 		return ret;
 
-	if (!vb2_is_streaming(&ctx->fh.m2m_ctx->cap_q_ctx.q) ||
-	    !vb2_is_streaming(&ctx->fh.m2m_ctx->out_q_ctx.q))
+	if (!vb2_is_streaming(&ctx->fh.m2m_ctx->out_q_ctx.q))
 		return 0;
 
 	ret = v4l2_m2m_ioctl_encoder_cmd(file, fh, ec);
@@ -1240,12 +1241,17 @@ static int vicodec_decoder_cmd(struct file *file, void *fh,
 	struct vicodec_ctx *ctx = file2ctx(file);
 	int ret;
 
+	/*
+	 * This ioctl should not be used with a stateless codec that doesn't
+	 * support holding buffers and the associated flush command.
+	 */
+	WARN_ON(ctx->is_stateless);
+
 	ret = v4l2_m2m_ioctl_try_decoder_cmd(file, fh, dc);
 	if (ret < 0)
 		return ret;
 
-	if (!vb2_is_streaming(&ctx->fh.m2m_ctx->cap_q_ctx.q) ||
-	    !vb2_is_streaming(&ctx->fh.m2m_ctx->out_q_ctx.q))
+	if (!vb2_is_streaming(&ctx->fh.m2m_ctx->out_q_ctx.q))
 		return 0;
 
 	ret = v4l2_m2m_ioctl_decoder_cmd(file, fh, dc);
@@ -1339,6 +1345,7 @@ static const struct v4l2_ioctl_ops vicodec_ioctl_ops = {
 	.vidioc_prepare_buf	= v4l2_m2m_ioctl_prepare_buf,
 	.vidioc_create_bufs	= v4l2_m2m_ioctl_create_bufs,
 	.vidioc_expbuf		= v4l2_m2m_ioctl_expbuf,
+	.vidioc_remove_bufs	= v4l2_m2m_ioctl_remove_bufs,
 
 	.vidioc_streamon	= v4l2_m2m_ioctl_streamon,
 	.vidioc_streamoff	= v4l2_m2m_ioctl_streamoff,
@@ -1518,8 +1525,12 @@ static void vicodec_return_bufs(struct vb2_queue *q, u32 state)
 			vbuf = v4l2_m2m_dst_buf_remove(ctx->fh.m2m_ctx);
 		if (vbuf == NULL)
 			return;
-		v4l2_ctrl_request_complete(vbuf->vb2_buf.req_obj.req,
-					   &ctx->hdl);
+		if (ctx->is_stateless && V4L2_TYPE_IS_OUTPUT(q->type)) {
+			struct media_request *req = vbuf->vb2_buf.req_obj.req;
+
+			v4l2_ctrl_request_complete(req, &ctx->hdl);
+			media_request_manual_complete(req);
+		}
 		spin_lock(ctx->lock);
 		v4l2_m2m_buf_done(vbuf, state);
 		spin_unlock(ctx->lock);
@@ -1672,6 +1683,7 @@ static void vicodec_buf_request_complete(struct vb2_buffer *vb)
 	struct vicodec_ctx *ctx = vb2_get_drv_priv(vb->vb2_queue);
 
 	v4l2_ctrl_request_complete(vb->req_obj.req, &ctx->hdl);
+	media_request_manual_complete(vb->req_obj.req);
 }
 
 
@@ -1718,6 +1730,7 @@ static int queue_init(void *priv, struct vb2_queue *src_vq,
 			V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE :
 			V4L2_BUF_TYPE_VIDEO_CAPTURE);
 	dst_vq->io_modes = VB2_MMAP | VB2_USERPTR | VB2_DMABUF;
+	dst_vq->max_num_buffers = 64;
 	dst_vq->drv_priv = ctx;
 	dst_vq->buf_struct_size = sizeof(struct v4l2_m2m_buffer);
 	dst_vq->ops = &vicodec_qops;
@@ -1995,6 +2008,12 @@ static int vicodec_request_validate(struct media_request *req)
 	return vb2_request_validate(req);
 }
 
+static void vicodec_request_queue(struct media_request *req)
+{
+	media_request_mark_manual_completion(req);
+	v4l2_m2m_request_queue(req);
+}
+
 static const struct v4l2_file_operations vicodec_fops = {
 	.owner		= THIS_MODULE,
 	.open		= vicodec_open,
@@ -2015,7 +2034,7 @@ static const struct video_device vicodec_videodev = {
 
 static const struct media_device_ops vicodec_m2m_media_ops = {
 	.req_validate	= vicodec_request_validate,
-	.req_queue	= v4l2_m2m_request_queue,
+	.req_queue	= vicodec_request_queue,
 };
 
 static const struct v4l2_m2m_ops m2m_ops = {
@@ -2025,7 +2044,7 @@ static const struct v4l2_m2m_ops m2m_ops = {
 
 static int register_instance(struct vicodec_dev *dev,
 			     struct vicodec_dev_instance *dev_instance,
-			     const char *name, bool is_enc)
+			     const char *name, bool is_enc, bool is_stateless)
 {
 	struct video_device *vfd;
 	int ret;
@@ -2045,10 +2064,11 @@ static int register_instance(struct vicodec_dev *dev,
 	strscpy(vfd->name, name, sizeof(vfd->name));
 	vfd->device_caps = V4L2_CAP_STREAMING |
 		(multiplanar ? V4L2_CAP_VIDEO_M2M_MPLANE : V4L2_CAP_VIDEO_M2M);
-	if (is_enc) {
+	if (is_enc || is_stateless) {
 		v4l2_disable_ioctl(vfd, VIDIOC_DECODER_CMD);
 		v4l2_disable_ioctl(vfd, VIDIOC_TRY_DECODER_CMD);
-	} else {
+	}
+	if (!is_enc) {
 		v4l2_disable_ioctl(vfd, VIDIOC_ENCODER_CMD);
 		v4l2_disable_ioctl(vfd, VIDIOC_TRY_ENCODER_CMD);
 	}
@@ -2107,17 +2127,17 @@ static int vicodec_probe(struct platform_device *pdev)
 	platform_set_drvdata(pdev, dev);
 
 	ret = register_instance(dev, &dev->stateful_enc, "stateful-encoder",
-				true);
+				true, false);
 	if (ret)
 		goto unreg_dev;
 
 	ret = register_instance(dev, &dev->stateful_dec, "stateful-decoder",
-				false);
+				false, false);
 	if (ret)
 		goto unreg_sf_enc;
 
 	ret = register_instance(dev, &dev->stateless_dec, "stateless-decoder",
-				false);
+				false, true);
 	if (ret)
 		goto unreg_sf_dec;
 

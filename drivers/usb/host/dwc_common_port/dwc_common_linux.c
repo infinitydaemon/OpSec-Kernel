@@ -51,7 +51,7 @@
 #include <asm/io.h>
 #include <asm/page.h>
 #include <asm/uaccess.h>
-#include <asm/unaligned.h>
+#include <linux/unaligned.h>
 
 #include "dwc_os.h"
 #include "dwc_list.h"

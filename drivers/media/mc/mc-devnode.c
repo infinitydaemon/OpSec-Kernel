@@ -45,6 +45,9 @@ static dev_t media_dev_t;
 static DEFINE_MUTEX(media_devnode_lock);
 static DECLARE_BITMAP(media_devnode_nums, MEDIA_NUM_DEVICES);
 
+/* debugfs */
+struct dentry *media_debugfs_root;
+
 /* Called when the last user of the media device exits. */
 static void media_devnode_release(struct device *cd)
 {
@@ -63,7 +66,7 @@ static void media_devnode_release(struct device *cd)
 	pr_debug("%s: Media Devnode Deallocated\n", __func__);
 }
 
-static struct bus_type media_bus_type = {
+static const struct bus_type media_bus_type = {
 	.name = MEDIA_NAME,
 };
 
@@ -190,7 +193,6 @@ static int media_release(struct inode *inode, struct file *filp)
 	   return value is ignored. */
 	put_device(&devnode->dev);
 
-	pr_debug("%s: Media Release\n", __func__);
 	return 0;
 }
 
@@ -205,7 +207,6 @@ static const struct file_operations media_devnode_fops = {
 #endif /* CONFIG_COMPAT */
 	.release = media_release,
 	.poll = media_poll,
-	.llseek = no_llseek,
 };
 
 int __must_check media_devnode_register(struct media_device *mdev,
@@ -238,6 +239,7 @@ int __must_check media_devnode_register(struct media_device *mdev,
 	if (devnode->parent)
 		devnode->dev.parent = devnode->parent;
 	dev_set_name(&devnode->dev, "media%d", devnode->minor);
+	dev_set_drvdata(&devnode->dev, mdev);
 	device_initialize(&devnode->dev);
 
 	/* Part 2: Initialize the character device */
@@ -315,6 +317,7 @@ static int __init media_devnode_init(void)
 
 static void __exit media_devnode_exit(void)
 {
+	debugfs_remove_recursive(media_debugfs_root);
 	bus_unregister(&media_bus_type);
 	unregister_chrdev_region(media_dev_t, MEDIA_NUM_DEVICES);
 }

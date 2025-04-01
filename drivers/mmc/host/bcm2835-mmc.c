@@ -652,7 +652,7 @@ static void bcm2835_mmc_set_transfer_mode(struct bcm2835_host *host,
 	bcm2835_mmc_writew(host, mode, SDHCI_TRANSFER_MODE);
 }
 
-void bcm2835_mmc_send_command(struct bcm2835_host *host, struct mmc_command *cmd)
+static void bcm2835_mmc_send_command(struct bcm2835_host *host, struct mmc_command *cmd)
 {
 	int flags;
 	u32 mask;
@@ -1060,7 +1060,7 @@ static void bcm2835_mmc_ack_sdio_irq(struct mmc_host *mmc)
 	spin_unlock_irqrestore(&host->lock, flags);
 }
 
-void bcm2835_mmc_set_clock(struct bcm2835_host *host, unsigned int clock)
+static void bcm2835_mmc_set_clock(struct bcm2835_host *host, unsigned int clock)
 {
 	int div = 0; /* Initialized for compiler warning */
 	int real_div = div, clk_mul = 1;
@@ -1486,7 +1486,7 @@ err:
 	return ret;
 }
 
-static int bcm2835_mmc_remove(struct platform_device *pdev)
+static void bcm2835_mmc_remove(struct platform_device *pdev)
 {
 	struct bcm2835_host *host = platform_get_drvdata(pdev);
 	unsigned long flags;
@@ -1530,8 +1530,6 @@ static int bcm2835_mmc_remove(struct platform_device *pdev)
 		dma_release_channel(host->dma_chan_rxtx);
 
 	mmc_free_host(host->mmc);
-
-	return 0;
 }
 
 

@@ -11,6 +11,7 @@
 #include <linux/of.h>
 #include <linux/platform_device.h>
 #include <linux/pm_runtime.h>
+#include <linux/pnp.h>
 #include <linux/property.h>
 #include <linux/serial_core.h>
 #include <linux/spinlock.h>
@@ -23,7 +24,7 @@
 static int __serial_port_busy(struct uart_port *port)
 {
 	return !uart_tx_stopped(port) &&
-		uart_circ_chars_pending(&port->state->xmit);
+		!kfifo_is_empty(&port->state->port.xmit_fifo);
 }
 
 static int serial_port_runtime_resume(struct device *dev)
@@ -38,14 +39,14 @@ static int serial_port_runtime_resume(struct device *dev)
 		goto out;
 
 	/* Flush any pending TX for the port */
-	spin_lock_irqsave(&port->lock, flags);
+	uart_port_lock_irqsave(port, &flags);
 	if (!port_dev->tx_enabled)
 		goto unlock;
 	if (__serial_port_busy(port))
 		port->ops->start_tx(port);
 
 unlock:
-	spin_unlock_irqrestore(&port->lock, flags);
+	uart_port_unlock_irqrestore(port, flags);
 
 out:
 	pm_runtime_mark_last_busy(dev);
@@ -172,6 +173,7 @@ EXPORT_SYMBOL(uart_remove_one_port);
  * The caller is responsible to initialize the following fields of the @port
  *   ->dev (must be valid)
  *   ->flags
+ *   ->iobase
  *   ->mapbase
  *   ->mapsize
  *   ->regshift (if @use_defaults is false)
@@ -213,7 +215,7 @@ static int __uart_read_properties(struct uart_port *port, bool use_defaults)
 	/* Read the registers I/O access type (default: MMIO 8-bit) */
 	ret = device_property_read_u32(dev, "reg-io-width", &value);
 	if (ret) {
-		port->iotype = UPIO_MEM;
+		port->iotype = port->iobase ? UPIO_PORT : UPIO_MEM;
 	} else {
 		switch (value) {
 		case 1:
@@ -226,11 +228,11 @@ static int __uart_read_properties(struct uart_port *port, bool use_defaults)
 			port->iotype = device_is_big_endian(dev) ? UPIO_MEM32BE : UPIO_MEM32;
 			break;
 		default:
+			port->iotype = UPIO_UNKNOWN;
 			if (!use_defaults) {
 				dev_err(dev, "Unsupported reg-io-width (%u)\n", value);
 				return -EINVAL;
 			}
-			port->iotype = UPIO_UNKNOWN;
 			break;
 		}
 	}
@@ -262,7 +264,11 @@ static int __uart_read_properties(struct uart_port *port, bool use_defaults)
 
 	if (dev_is_platform(dev))
 		ret = platform_get_irq(to_platform_device(dev), 0);
-	else
+	else if (dev_is_pnp(dev)) {
+		ret = pnp_irq(to_pnp_dev(dev), 0);
+		if (ret < 0)
+			ret = -ENXIO;
+	} else
 		ret = fwnode_irq_get(dev_fwnode(dev), 0);
 	if (ret == -EPROBE_DEFER)
 		return ret;

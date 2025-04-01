@@ -14,8 +14,7 @@
 #[doc(no_inline)]
 pub use core::pin::Pin;
 
-#[doc(no_inline)]
-pub use alloc::{boxed::Box, vec::Vec};
+pub use crate::alloc::{flags::*, Box, KBox, KVBox, KVVec, KVec, VBox, VVec, Vec};
 
 #[doc(no_inline)]
 pub use macros::{module, pin_data, pinned_drop, vtable, Zeroable};
@@ -35,6 +34,6 @@ pub use super::error::{code::*, Error, Result};
 
 pub use super::{str::CStr, ThisModule};
 
-pub use super::init::{InPlaceInit, Init, PinInit};
+pub use super::init::{InPlaceInit, InPlaceWrite, Init, PinInit};
 
 pub use super::current;

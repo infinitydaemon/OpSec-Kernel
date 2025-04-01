@@ -57,7 +57,7 @@ static const struct snd_soc_dapm_route dacberry400_audio_map[] = {
 
 static int snd_rpi_dacberry400_init(struct snd_soc_pcm_runtime *rtd)
 {
-	struct snd_soc_dai *codec_dai = asoc_rtd_to_codec(rtd, 0);
+	struct snd_soc_dai *codec_dai = snd_soc_rtd_to_codec(rtd, 0);
 	struct snd_soc_component *component = codec_dai->component;
 	int ret;
 
@@ -84,7 +84,7 @@ static int snd_rpi_dacberry400_set_bias_level(struct snd_soc_card *card,
 	u8 hpcom_reg = 0;
 
 	rtd = snd_soc_get_pcm_runtime(card, &card->dai_link[0]);
-	codec_dai = asoc_rtd_to_codec(rtd, 0);
+	codec_dai = snd_soc_rtd_to_codec(rtd, 0);
 	component = codec_dai->component;
 	aic3x = snd_soc_component_get_drvdata(component);
 	if (dapm->dev != codec_dai->dev)
@@ -130,8 +130,8 @@ static int snd_rpi_dacberry400_hw_params(struct snd_pcm_substream *substream,
 	int ret = 0;
 	u8 data;
 	struct snd_soc_pcm_runtime *rtd = substream->private_data;
-	struct snd_soc_dai *codec_dai = asoc_rtd_to_codec(rtd, 0);
-	struct snd_soc_dai *cpu_dai = asoc_rtd_to_cpu(rtd, 0);
+	struct snd_soc_dai *codec_dai = snd_soc_rtd_to_codec(rtd, 0);
+	struct snd_soc_dai *cpu_dai = snd_soc_rtd_to_cpu(rtd, 0);
 	struct snd_soc_component *component = codec_dai->component;
 	int fsref = (params_rate(params) % 11025 == 0) ? 44100 : 48000;
 	int channels = params_channels(params);
@@ -228,10 +228,9 @@ static int snd_rpi_dacberry400_probe(struct platform_device *pdev)
 	return 0;
 }
 
-static int snd_rpi_dacberry400_remove(struct platform_device *pdev)
+static void snd_rpi_dacberry400_remove(struct platform_device *pdev)
 {
 	snd_soc_unregister_card(&snd_rpi_dacberry400);
-	return 0;
 }
 
 static const struct of_device_id dacberry400_match_id[] = {

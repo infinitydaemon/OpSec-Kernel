@@ -202,6 +202,7 @@ struct fbtft_par {
 	u8 *buf;
 	u8 startbyte;
 	struct fbtft_ops fbtftops;
+	/* Spinlock to ensure thread-safe access to dirty_lines_start and dirty_lines_end */
 	spinlock_t dirty_lock;
 	unsigned int dirty_lines_start;
 	unsigned int dirty_lines_end;
@@ -218,6 +219,7 @@ struct fbtft_par {
 	} gpio;
 	const s16 *init_sequence;
 	struct {
+		/* Mutex to synchronize access to gamma curve locking */
 		struct mutex lock;
 		u32 *curves;
 		int num_values;
@@ -294,12 +296,11 @@ static int fbtft_driver_probe_pdev(struct platform_device *pdev)           \
 	return fbtft_probe_common(_display, NULL, pdev, dt_ids);           \
 }                                                                          \
 									   \
-static int fbtft_driver_remove_pdev(struct platform_device *pdev)          \
+static void fbtft_driver_remove_pdev(struct platform_device *pdev)	   \
 {                                                                          \
 	struct fb_info *info = platform_get_drvdata(pdev);                 \
 									   \
 	fbtft_remove_common(&pdev->dev, info);                             \
-	return 0;                                                          \
 }                                                                          \
 									   \
 static const struct of_device_id dt_ids[] = {
@@ -334,7 +335,7 @@ static struct platform_driver fbtft_driver_platform_driver = {             \
 		.of_match_table = dt_ids,                                  \
 	},                                                                 \
 	.probe  = fbtft_driver_probe_pdev,                                 \
-	.remove = fbtft_driver_remove_pdev,                                \
+	.remove_new = fbtft_driver_remove_pdev,				   \
 };                                                                         \
 									   \
 static int __init fbtft_driver_module_init(void)                           \

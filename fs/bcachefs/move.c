@@ -36,31 +36,6 @@ const char * const bch2_data_ops_strs[] = {
 	NULL
 };
 
-static void bch2_data_update_opts_to_text(struct printbuf *out, struct bch_fs *c,
-					  struct bch_io_opts *io_opts,
-					  struct data_update_opts *data_opts)
-{
-	printbuf_tabstop_push(out, 20);
-	prt_str(out, "rewrite ptrs:\t");
-	bch2_prt_u64_base2(out, data_opts->rewrite_ptrs);
-	prt_newline(out);
-
-	prt_str(out, "kill ptrs:\t");
-	bch2_prt_u64_base2(out, data_opts->kill_ptrs);
-	prt_newline(out);
-
-	prt_str(out, "target:\t");
-	bch2_target_to_text(out, c, data_opts->target);
-	prt_newline(out);
-
-	prt_str(out, "compression:\t");
-	bch2_compression_opt_to_text(out, background_compression(*io_opts));
-	prt_newline(out);
-
-	prt_str(out, "extra replicas:\t");
-	prt_u64(out, data_opts->extra_replicas);
-}
-
 static void trace_move_extent2(struct bch_fs *c, struct bkey_s_c k,
 			       struct bch_io_opts *io_opts,
 			       struct data_update_opts *data_opts)
@@ -291,7 +266,7 @@ int bch2_move_extent(struct moving_context *ctxt,
 	if (!data_opts.rewrite_ptrs &&
 	    !data_opts.extra_replicas) {
 		if (data_opts.kill_ptrs)
-			return bch2_extent_drop_ptrs(trans, iter, k, data_opts);
+			return bch2_extent_drop_ptrs(trans, iter, k, &io_opts, &data_opts);
 		return 0;
 	}
 
@@ -717,7 +692,7 @@ int bch2_evacuate_bucket(struct moving_context *ctxt,
 	a = bch2_alloc_to_v4(k, &a_convert);
 	dirty_sectors = bch2_bucket_sectors_dirty(*a);
 	bucket_size = ca->mi.bucket_size;
-	fragmentation = a->fragmentation_lru;
+	fragmentation = alloc_lru_idx_fragmentation(*a, ca);
 
 	ret = bch2_btree_write_buffer_tryflush(trans);
 	bch_err_msg(c, ret, "flushing btree write buffer");
@@ -805,7 +780,7 @@ int bch2_evacuate_bucket(struct moving_context *ctxt,
 			if (!b)
 				goto next;
 
-			unsigned sectors = btree_ptr_sectors_written(&b->key);
+			unsigned sectors = btree_ptr_sectors_written(bkey_i_to_s_c(&b->key));
 
 			ret = bch2_btree_node_rewrite(trans, &iter, b, 0);
 			bch2_trans_iter_exit(trans, &iter);

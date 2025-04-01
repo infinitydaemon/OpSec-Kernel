@@ -6,6 +6,7 @@
  */
 
 #include <linux/io.h>
+#include <linux/iopoll.h>
 #include <linux/mmc/host.h>
 #include <linux/module.h>
 #include <linux/of.h>
@@ -33,21 +34,21 @@
 
 #define SDHCI_ARASAN_CQE_BASE_ADDR		0x200
 
+#define SDIO_CFG_CQ_CAPABILITY			0x4c
+#define  SDIO_CFG_CQ_CAPABILITY_FMUL_SHIFT	12
+
 #define SDIO_CFG_CTRL				0x0
-#define  SDIO_CFG_CTRL_SDCD_N_TEST_EN		BIT(31)
-#define  SDIO_CFG_CTRL_SDCD_N_TEST_LEV		BIT(30)
+#define SDIO_CFG_CTRL_SDCD_N_TEST_EN		BIT(31)
+#define SDIO_CFG_CTRL_SDCD_N_TEST_LEV		BIT(30)
 
 #define SDIO_CFG_SD_PIN_SEL			0x44
 #define  SDIO_CFG_SD_PIN_SEL_MASK		0x3
 #define  SDIO_CFG_SD_PIN_SEL_SD			BIT(1)
 #define  SDIO_CFG_SD_PIN_SEL_MMC		BIT(0)
 
-#define SDIO_CFG_CQ_CAPABILITY			0x4c
-#define  SDIO_CFG_CQ_CAPABILITY_FMUL_SHIFT	12
-
 #define SDIO_CFG_MAX_50MHZ_MODE			0x1ac
-#define  SDIO_CFG_MAX_50MHZ_MODE_STRAP_OVERRIDE	BIT(31)
-#define  SDIO_CFG_MAX_50MHZ_MODE_ENABLE		BIT(0)
+#define SDIO_CFG_MAX_50MHZ_MODE_STRAP_OVERRIDE	BIT(31)
+#define SDIO_CFG_MAX_50MHZ_MODE_ENABLE		BIT(0)
 
 struct sdhci_brcmstb_priv {
 	void __iomem *cfg_regs;
@@ -64,15 +65,20 @@ struct sdhci_brcmstb_priv {
 };
 
 struct brcmstb_match_priv {
-	void (*hs400es)(struct mmc_host *mmc, struct mmc_ios *ios);
 	void (*cfginit)(struct sdhci_host *host);
+	void (*hs400es)(struct mmc_host *mmc, struct mmc_ios *ios);
 	struct sdhci_ops *ops;
 	const unsigned int flags;
 };
 
 static inline void enable_clock_gating(struct sdhci_host *host)
 {
+	struct sdhci_pltfm_host *pltfm_host = sdhci_priv(host);
+	struct sdhci_brcmstb_priv *priv = sdhci_pltfm_priv(pltfm_host);
 	u32 reg;
+
+	if (!(priv->flags & BRCMSTB_PRIV_FLAGS_GATE_CLOCK))
+		return;
 
 	reg = sdhci_readl(host, SDHCI_VENDOR);
 	reg |= SDHCI_VENDOR_GATE_SDCLK_EN;
@@ -81,14 +87,53 @@ static inline void enable_clock_gating(struct sdhci_host *host)
 
 static void brcmstb_reset(struct sdhci_host *host, u8 mask)
 {
-	struct sdhci_pltfm_host *pltfm_host = sdhci_priv(host);
-	struct sdhci_brcmstb_priv *priv = sdhci_pltfm_priv(pltfm_host);
-
 	sdhci_and_cqhci_reset(host, mask);
 
 	/* Reset will clear this, so re-enable it */
-	if (priv->flags & BRCMSTB_PRIV_FLAGS_GATE_CLOCK)
-		enable_clock_gating(host);
+	enable_clock_gating(host);
+}
+
+static void brcmstb_sdhci_reset_cmd_data(struct sdhci_host *host, u8 mask)
+{
+	u32 new_mask = (mask &  (SDHCI_RESET_CMD | SDHCI_RESET_DATA)) << 24;
+	int ret;
+	u32 reg;
+
+	/*
+	 * SDHCI_CLOCK_CONTROL register CARD_EN and CLOCK_INT_EN bits shall
+	 * be set along with SOFTWARE_RESET register RESET_CMD or RESET_DATA
+	 * bits, hence access SDHCI_CLOCK_CONTROL register as 32-bit register
+	 */
+	new_mask |= SDHCI_CLOCK_CARD_EN | SDHCI_CLOCK_INT_EN;
+	reg = sdhci_readl(host, SDHCI_CLOCK_CONTROL);
+	sdhci_writel(host, reg | new_mask, SDHCI_CLOCK_CONTROL);
+
+	reg = sdhci_readb(host, SDHCI_SOFTWARE_RESET);
+
+	ret = read_poll_timeout_atomic(sdhci_readb, reg, !(reg & mask),
+				       10, 10000, false,
+				       host, SDHCI_SOFTWARE_RESET);
+
+	if (ret) {
+		pr_err("%s: Reset 0x%x never completed.\n",
+		       mmc_hostname(host->mmc), (int)mask);
+		sdhci_err_stats_inc(host, CTRL_TIMEOUT);
+		sdhci_dumpregs(host);
+	}
+}
+
+static void brcmstb_reset_74165b0(struct sdhci_host *host, u8 mask)
+{
+	/* take care of RESET_ALL as usual */
+	if (mask & SDHCI_RESET_ALL)
+		sdhci_and_cqhci_reset(host, SDHCI_RESET_ALL);
+
+	/* cmd and/or data treated differently on this core */
+	if (mask & (SDHCI_RESET_CMD | SDHCI_RESET_DATA))
+		brcmstb_sdhci_reset_cmd_data(host, mask);
+
+	/* Reset will clear this, so re-enable it */
+	enable_clock_gating(host);
 }
 
 static void sdhci_brcmstb_hs400es(struct mmc_host *mmc, struct mmc_ios *ios)
@@ -216,15 +261,16 @@ static void sdhci_brcmstb_cfginit_2712(struct sdhci_host *host)
 {
 	struct sdhci_pltfm_host *pltfm_host = sdhci_priv(host);
 	struct sdhci_brcmstb_priv *brcmstb_priv = sdhci_pltfm_priv(pltfm_host);
+	u32 reg;
 	u32 uhs_mask = (MMC_CAP_UHS_SDR50 | MMC_CAP_UHS_SDR104);
 	u32 hsemmc_mask = (MMC_CAP2_HS200_1_8V_SDR | MMC_CAP2_HS200_1_2V_SDR |
 			   MMC_CAP2_HS400_1_8V | MMC_CAP2_HS400_1_2V);
-	u32 reg, base_clk_mhz;
+	u32 base_clk_mhz;
 
 	/*
-	* If we support a speed that requires tuning,
-	* then select the delay line PHY as the clock source.
-	*/
+	 * If we support a speed that requires tuning,
+	 * then select the delay line PHY as the clock source.
+	 */
 	if ((host->mmc->caps & uhs_mask) || (host->mmc->caps2 & hsemmc_mask)) {
 		reg = readl(brcmstb_priv->cfg_regs + SDIO_CFG_MAX_50MHZ_MODE);
 		reg &= ~SDIO_CFG_MAX_50MHZ_MODE_ENABLE;
@@ -412,6 +458,20 @@ static struct sdhci_ops sdhci_brcmstb_ops_7216 = {
 	.set_uhs_signaling = sdhci_brcmstb_set_uhs_signaling,
 };
 
+static struct sdhci_ops sdhci_brcmstb_ops_74165b0 = {
+	.set_clock = sdhci_brcmstb_set_clock,
+	.set_bus_width = sdhci_set_bus_width,
+	.reset = brcmstb_reset_74165b0,
+	.set_uhs_signaling = sdhci_brcmstb_set_uhs_signaling,
+};
+
+static const struct brcmstb_match_priv match_priv_2712 = {
+	.flags = BRCMSTB_MATCH_FLAGS_USE_CARD_BUSY,
+	.hs400es = sdhci_brcmstb_hs400es,
+	.cfginit = sdhci_brcmstb_cfginit_2712,
+	.ops = &sdhci_brcmstb_ops_2712,
+};
+
 static struct brcmstb_match_priv match_priv_7425 = {
 	.flags = BRCMSTB_MATCH_FLAGS_NO_64BIT |
 	BRCMSTB_MATCH_FLAGS_BROKEN_TIMEOUT,
@@ -429,18 +489,18 @@ static const struct brcmstb_match_priv match_priv_7216 = {
 	.ops = &sdhci_brcmstb_ops_7216,
 };
 
-static const struct brcmstb_match_priv match_priv_2712 = {
-	.flags = BRCMSTB_MATCH_FLAGS_USE_CARD_BUSY,
+static struct brcmstb_match_priv match_priv_74165b0 = {
+	.flags = BRCMSTB_MATCH_FLAGS_HAS_CLOCK_GATE,
 	.hs400es = sdhci_brcmstb_hs400es,
-	.cfginit = sdhci_brcmstb_cfginit_2712,
-	.ops = &sdhci_brcmstb_ops_2712,
+	.ops = &sdhci_brcmstb_ops_74165b0,
 };
 
 static const struct of_device_id __maybe_unused sdhci_brcm_of_match[] = {
+	{ .compatible = "brcm,bcm2712-sdhci", .data = &match_priv_2712 },
 	{ .compatible = "brcm,bcm7425-sdhci", .data = &match_priv_7425 },
 	{ .compatible = "brcm,bcm7445-sdhci", .data = &match_priv_7445 },
 	{ .compatible = "brcm,bcm7216-sdhci", .data = &match_priv_7216 },
-	{ .compatible = "brcm,bcm2712-sdhci", .data = &match_priv_2712 },
+	{ .compatible = "brcm,bcm74165b0-sdhci", .data = &match_priv_74165b0 },
 	{},
 };
 
@@ -621,7 +681,7 @@ static int sdhci_brcmstb_probe(struct platform_device *pdev)
 	    (priv->flags & BRCMSTB_PRIV_FLAGS_HAS_SD_EXPRESS))
 		host->mmc->caps2 |= MMC_CAP2_SD_EXP;
 
-	if(match_priv->cfginit)
+	if (match_priv->cfginit)
 		match_priv->cfginit(host);
 
 	/*
@@ -695,8 +755,15 @@ static int sdhci_brcmstb_suspend(struct device *dev)
 	struct sdhci_host *host = dev_get_drvdata(dev);
 	struct sdhci_pltfm_host *pltfm_host = sdhci_priv(host);
 	struct sdhci_brcmstb_priv *priv = sdhci_pltfm_priv(pltfm_host);
+	int ret;
 
 	clk_disable_unprepare(priv->base_clk);
+	if (host->mmc->caps2 & MMC_CAP2_CQE) {
+		ret = cqhci_suspend(host->mmc);
+		if (ret)
+			return ret;
+	}
+
 	return sdhci_pltfm_suspend(dev);
 }
 
@@ -720,6 +787,9 @@ static int sdhci_brcmstb_resume(struct device *dev)
 		    (clk_get_rate(priv->base_clk) != priv->base_freq_hz))
 			ret = clk_set_rate(priv->base_clk, priv->base_freq_hz);
 	}
+
+	if (host->mmc->caps2 & MMC_CAP2_CQE)
+		ret = cqhci_resume(host->mmc);
 
 	return ret;
 }

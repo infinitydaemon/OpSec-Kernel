@@ -40,7 +40,6 @@
 #include <linux/module.h>
 #include <linux/mm.h>
 #include <linux/of_device.h>
-#include <linux/platform_device.h>
 #include <linux/proc_fs.h>
 #include <linux/slab.h>
 #include <linux/seq_file.h>
@@ -48,12 +47,13 @@
 #include <linux/types.h>
 #include <asm/cacheflush.h>
 
-#include "vchiq_connected.h"
+#include "../interface/vchiq_arm/vchiq_arm.h"
+#include "../interface/vchiq_arm/vchiq_bus.h"
 #include "vc_sm_cma_vchi.h"
 
 #include "vc_sm.h"
 #include "vc_sm_knl.h"
-#include <linux/broadcom/vc_sm_cma_ioctl.h>
+#include "../include/linux/broadcom/vc_sm_cma_ioctl.h"
 
 MODULE_IMPORT_NS(DMA_BUF);
 
@@ -85,7 +85,7 @@ struct sm_pde_t {
 
 /* Global state information. */
 struct sm_state_t {
-	struct platform_device *pdev;
+	struct vchiq_device *device;
 
 	struct miscdevice misc_dev;
 
@@ -323,7 +323,7 @@ static void vc_sm_release_resource(struct vc_sm_buffer *buffer)
 			       __func__, buffer);
 		buffer->import.dma_buf = NULL;
 	} else {
-		dma_free_coherent(&sm_state->pdev->dev, buffer->size,
+		dma_free_coherent(&sm_state->device->dev, buffer->size,
 				  buffer->cookie, buffer->dma_addr);
 	}
 
@@ -494,7 +494,7 @@ static int vc_sm_dmabuf_mmap(struct dma_buf *dmabuf, struct vm_area_struct *vma)
 	/* now map it to userspace */
 	vma->vm_pgoff = 0;
 
-	ret = dma_mmap_coherent(&sm_state->pdev->dev, vma, buf->cookie,
+	ret = dma_mmap_coherent(&sm_state->device->dev, vma, buf->cookie,
 				buf->dma_addr, buf->size);
 
 	if (ret) {
@@ -701,7 +701,7 @@ static const struct dma_buf_ops dma_buf_import_ops = {
 };
 
 /* Import a dma_buf to be shared with VC. */
-int
+static int
 vc_sm_cma_import_dmabuf_internal(struct vc_sm_privdata_t *private,
 				 struct dma_buf *dma_buf,
 				 int fd,
@@ -729,7 +729,7 @@ vc_sm_cma_import_dmabuf_internal(struct vc_sm_privdata_t *private,
 	if (!dma_buf)
 		return -EINVAL;
 
-	attach = dma_buf_attach(dma_buf, &sm_state->pdev->dev);
+	attach = dma_buf_attach(dma_buf, &sm_state->device->dev);
 	if (IS_ERR(attach)) {
 		ret = PTR_ERR(attach);
 		goto error;
@@ -880,7 +880,7 @@ static int vc_sm_cma_vpu_alloc(u32 size, u32 align, const char *name,
 	 */
 	mutex_lock(&buffer->lock);
 
-	buffer->cookie = dma_alloc_coherent(&sm_state->pdev->dev,
+	buffer->cookie = dma_alloc_coherent(&sm_state->device->dev,
 					    aligned_size, &buffer->dma_addr,
 					    GFP_KERNEL);
 	if (!buffer->cookie) {
@@ -899,7 +899,7 @@ static int vc_sm_cma_vpu_alloc(u32 size, u32 align, const char *name,
 		goto error;
 	}
 
-	ret = dma_get_sgtable(&sm_state->pdev->dev, sgt, buffer->cookie,
+	ret = dma_get_sgtable(&sm_state->device->dev, sgt, buffer->cookie,
 			      buffer->dma_addr, buffer->size);
 	if (ret < 0) {
 		pr_err("failed to get scatterlist from DMA API\n");
@@ -1090,7 +1090,7 @@ out:
  * Allocate a shared memory handle and block.
  * Allocation is from CMA, and then imported into the VPU mappings.
  */
-int vc_sm_cma_ioctl_alloc(struct vc_sm_privdata_t *private,
+static int vc_sm_cma_ioctl_alloc(struct vc_sm_privdata_t *private,
 			  struct vc_sm_cma_ioctl_alloc *ioparam)
 {
 	DEFINE_DMA_BUF_EXPORT_INFO(exp_info);
@@ -1116,7 +1116,7 @@ int vc_sm_cma_ioctl_alloc(struct vc_sm_privdata_t *private,
 		goto error;
 	}
 
-	buffer->cookie = dma_alloc_coherent(&sm_state->pdev->dev,
+	buffer->cookie = dma_alloc_coherent(&sm_state->device->dev,
 					    aligned_size,
 					    &buffer->dma_addr,
 					    GFP_KERNEL);
@@ -1187,7 +1187,7 @@ int vc_sm_cma_ioctl_alloc(struct vc_sm_privdata_t *private,
 		goto error;
 	}
 
-	ret = dma_get_sgtable(&sm_state->pdev->dev, sgt, buffer->cookie,
+	ret = dma_get_sgtable(&sm_state->device->dev, sgt, buffer->cookie,
 			      buffer->dma_addr, buffer->size);
 	if (ret < 0) {
 		/* FIXME: error handling */
@@ -1224,106 +1224,12 @@ error:
 	} else {
 		/* No dmabuf, therefore just free the buffer here */
 		if (buffer->cookie)
-			dma_free_coherent(&sm_state->pdev->dev, buffer->size,
+			dma_free_coherent(&sm_state->device->dev, buffer->size,
 					  buffer->cookie, buffer->dma_addr);
 		kfree(buffer);
 	}
 	return ret;
 }
-
-#ifndef CONFIG_ARM64
-/* Converts VCSM_CACHE_OP_* to an operating function. */
-static void (*cache_op_to_func(const unsigned int cache_op))
-						(const void*, const void*)
-{
-	switch (cache_op) {
-	case VC_SM_CACHE_OP_NOP:
-		return NULL;
-
-	case VC_SM_CACHE_OP_INV:
-		return dmac_inv_range;
-	case VC_SM_CACHE_OP_CLEAN:
-		return dmac_clean_range;
-	case VC_SM_CACHE_OP_FLUSH:
-		return dmac_flush_range;
-
-	default:
-		pr_err("[%s]: Invalid cache_op: 0x%08x\n", __func__, cache_op);
-		return NULL;
-	}
-}
-
-/*
- * Clean/invalid/flush cache of which buffer is already pinned (i.e. accessed).
- */
-static int clean_invalid_contig_2d(const void __user *addr,
-				   const size_t block_count,
-				   const size_t block_size,
-				   const size_t stride,
-				   const unsigned int cache_op)
-{
-	size_t i;
-	void (*op_fn)(const void *start, const void *end);
-
-	if (!block_size) {
-		pr_err("[%s]: size cannot be 0\n", __func__);
-		return -EINVAL;
-	}
-
-	op_fn = cache_op_to_func(cache_op);
-	if (!op_fn)
-		return -EINVAL;
-
-	for (i = 0; i < block_count; i ++, addr += stride)
-		op_fn(addr, addr + block_size);
-
-	return 0;
-}
-
-static int vc_sm_cma_clean_invalid2(unsigned int cmdnr, unsigned long arg)
-{
-	struct vc_sm_cma_ioctl_clean_invalid2 ioparam;
-	struct vc_sm_cma_ioctl_clean_invalid_block *block = NULL;
-	int i, ret = 0;
-
-	/* Get parameter data. */
-	if (copy_from_user(&ioparam, (void *)arg, sizeof(ioparam))) {
-		pr_err("[%s]: failed to copy-from-user header for cmd %x\n",
-		       __func__, cmdnr);
-		return -EFAULT;
-	}
-	block = kmalloc(ioparam.op_count * sizeof(*block), GFP_KERNEL);
-	if (!block)
-		return -EFAULT;
-
-	if (copy_from_user(block, (void *)(arg + sizeof(ioparam)),
-			   ioparam.op_count * sizeof(*block)) != 0) {
-		pr_err("[%s]: failed to copy-from-user payload for cmd %x\n",
-		       __func__, cmdnr);
-		ret = -EFAULT;
-		goto out;
-	}
-
-	for (i = 0; i < ioparam.op_count; i++) {
-		const struct vc_sm_cma_ioctl_clean_invalid_block * const op =
-								block + i;
-
-		if (op->invalidate_mode == VC_SM_CACHE_OP_NOP)
-			continue;
-
-		ret = clean_invalid_contig_2d((void __user *)op->start_address,
-					      op->block_count, op->block_size,
-					      op->inter_block_stride,
-					      op->invalidate_mode);
-		if (ret)
-			break;
-	}
-out:
-	kfree(block);
-
-	return ret;
-}
-#endif
 
 static long vc_sm_cma_ioctl(struct file *file, unsigned int cmd,
 			    unsigned long arg)
@@ -1416,16 +1322,6 @@ static long vc_sm_cma_ioctl(struct file *file, unsigned int cmd,
 		break;
 	}
 
-#ifndef CONFIG_ARM64
-	/*
-	 * Flush/Invalidate the cache for a given mapping.
-	 * Blocks must be pinned (i.e. accessed) before this call.
-	 */
-	case VC_SM_CMA_CMD_CLEAN_INVALID2:
-		ret = vc_sm_cma_clean_invalid2(cmdnr, arg);
-		break;
-#endif
-
 	default:
 		pr_debug("[%s]: cmd %x tgid %u, owner %u\n", __func__, cmdnr,
 			 current->tgid, file_data->pid);
@@ -1486,13 +1382,21 @@ static void vc_sm_connected_init(void)
 	struct vc_sm_version version;
 	struct vc_sm_result_t version_result;
 
+	/*
+	 * Digging the vchiq_drv_mgmt, so low here and through a global seems
+	 * suspicious.
+	 *
+	 * The callbacks should be able to pass a parameter or context.
+	 */
+	struct vchiq_drv_mgmt *mgmt = dev_get_drvdata(sm_state->device->dev.parent);
+
 	pr_info("[%s]: start\n", __func__);
 
 	/*
 	 * Initialize and create a VCHI connection for the shared memory service
 	 * running on videocore.
 	 */
-	ret = vchiq_initialise(&sm_state->vchiq_instance);
+	ret = vchiq_initialise(&mgmt->state, &sm_state->vchiq_instance);
 	if (ret) {
 		pr_err("[%s]: failed to initialise VCHI instance (ret=%d)\n",
 		       __func__, ret);
@@ -1571,31 +1475,40 @@ err_remove_debugfs:
 }
 
 /* Driver loading. */
-static int bcm2835_vc_sm_cma_probe(struct platform_device *pdev)
+static int bcm2835_vc_sm_cma_probe(struct vchiq_device *device)
 {
+	int err;
+
 	pr_info("%s: Videocore shared memory driver\n", __func__);
 
-	sm_state = devm_kzalloc(&pdev->dev, sizeof(*sm_state), GFP_KERNEL);
+	err = dma_set_mask_and_coherent(&device->dev, DMA_BIT_MASK(32));
+	if (err) {
+		dev_err(&device->dev, "dma_set_mask_and_coherent failed: %d\n",
+			err);
+		return err;
+	}
+
+	sm_state = devm_kzalloc(&device->dev, sizeof(*sm_state), GFP_KERNEL);
 	if (!sm_state)
 		return -ENOMEM;
-	sm_state->pdev = pdev;
+	sm_state->device = device;
 	mutex_init(&sm_state->map_lock);
 
 	spin_lock_init(&sm_state->kernelid_map_lock);
 	idr_init_base(&sm_state->kernelid_map, 1);
 
-	pdev->dev.dma_parms = devm_kzalloc(&pdev->dev,
-					   sizeof(*pdev->dev.dma_parms),
-					   GFP_KERNEL);
+	device->dev.dma_parms = devm_kzalloc(&device->dev,
+					     sizeof(*device->dev.dma_parms),
+					     GFP_KERNEL);
 	/* dma_set_max_seg_size checks if dma_parms is NULL. */
-	dma_set_max_seg_size(&pdev->dev, 0x3FFFFFFF);
+	dma_set_max_seg_size(&device->dev, 0x3FFFFFFF);
 
-	vchiq_add_connected_callback(vc_sm_connected_init);
+	vchiq_add_connected_callback(device, vc_sm_connected_init);
 	return 0;
 }
 
 /* Driver unloading. */
-static int bcm2835_vc_sm_cma_remove(struct platform_device *pdev)
+static void bcm2835_vc_sm_cma_remove(struct vchiq_device *device)
 {
 	pr_debug("[%s]: start\n", __func__);
 	if (sm_inited) {
@@ -1616,7 +1529,6 @@ static int bcm2835_vc_sm_cma_remove(struct platform_device *pdev)
 	}
 
 	pr_debug("[%s]: end\n", __func__);
-	return 0;
 }
 
 /* Kernel API calls */
@@ -1690,7 +1602,7 @@ int vc_sm_cma_import_dmabuf(struct dma_buf *src_dmabuf, void **handle)
 }
 EXPORT_SYMBOL_GPL(vc_sm_cma_import_dmabuf);
 
-static struct platform_driver bcm2835_vcsm_cma_driver = {
+static struct vchiq_driver bcm2835_vcsm_cma_driver = {
 	.probe = bcm2835_vc_sm_cma_probe,
 	.remove = bcm2835_vc_sm_cma_remove,
 	.driver = {
@@ -1699,9 +1611,9 @@ static struct platform_driver bcm2835_vcsm_cma_driver = {
 		   },
 };
 
-module_platform_driver(bcm2835_vcsm_cma_driver);
+module_vchiq_driver(bcm2835_vcsm_cma_driver);
 
 MODULE_AUTHOR("Dave Stevenson");
 MODULE_DESCRIPTION("VideoCore CMA Shared Memory Driver");
 MODULE_LICENSE("GPL v2");
-MODULE_ALIAS("platform:vcsm-cma");
+MODULE_ALIAS("vcsm-cma");

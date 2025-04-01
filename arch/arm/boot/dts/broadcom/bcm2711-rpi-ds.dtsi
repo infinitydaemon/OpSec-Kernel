@@ -31,11 +31,6 @@
 	     /* Add a label */
 	};
 
-	arm-pmu {
-		compatible = "arm,cortex-a72-pmu", "arm,armv8-pmuv3", "arm,cortex-a7-pmu";
-
-	};
-
 	chosen {
 		stdout-path = "serial0:115200n8";
 	};
@@ -124,7 +119,7 @@
 
 	ranges = <0x0 0x7c000000  0x0 0xfc000000  0x0 0x03800000>,
 		 <0x0 0x40000000  0x0 0xff800000  0x0 0x00800000>,
-		 <0x6 0x00000000  0x6 0x00000000  0x0 0x80000000>,
+		 <0x6 0x00000000  0x6 0x00000000  0x0 0x40000000>,
 		 <0x0 0x00000000  0x0 0x00000000  0x0 0xfc000000>;
 	dma-ranges = <0x4 0x7c000000  0x0 0xfc000000  0x0 0x03800000>,
 		     <0x0 0x00000000  0x0 0x00000000  0x4 0x00000000>;
@@ -152,24 +147,17 @@
 		interrupts = <GIC_SPI 176 IRQ_TYPE_LEVEL_HIGH>;
 		power-domains = <&power RPI_POWER_DOMAIN_USB>;
 	};
+};
 
-	codec@7eb10000 {
-		compatible = "raspberrypi,rpivid-vid-decoder";
-		reg = <0x0 0x7eb10000  0x0 0x1000>,  /* INTC */
-		      <0x0 0x7eb00000  0x0 0x10000>; /* HEVC */
-		reg-names = "intc",
-			    "hevc";
-		interrupts = <GIC_SPI 98 IRQ_TYPE_LEVEL_HIGH>;
-
-		clocks = <&firmware_clocks 11>;
-		clock-names = "hevc";
-	};
+&hevc_dec {
+	reg = <0x0 0x7eb00000  0x0 0x10000>, /* HEVC */
+		<0x0 0x7eb10000  0x0 0x1000>;  /* INTC */
 };
 
 &pcie0 {
 	reg = <0x0 0x7d500000  0x0 0x9310>;
-	ranges = <0x02000000 0x0 0x80000000 0x6 0x00000000
-		  0x0 0x80000000>;
+	ranges = <0x02000000 0x0 0xc0000000 0x6 0x00000000
+		  0x0 0x40000000>;
 };
 
 &genet {
@@ -200,6 +188,13 @@
 
 &mmcnr {
 	interrupts = <GIC_SPI 126 IRQ_TYPE_LEVEL_HIGH>;
+	#address-cells = <1>;
+	#size-cells = <0>;
+
+	brcmf: wifi@1 {
+		reg = <1>;
+		compatible = "brcm,bcm4329-fmac";
+	};
 };
 
 &csi0 {

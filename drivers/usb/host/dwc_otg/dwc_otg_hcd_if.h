@@ -415,6 +415,26 @@ extern int dwc_otg_hcd_is_bandwidth_freed(dwc_otg_hcd_t * hcd, void *ep_handle);
 extern uint8_t dwc_otg_hcd_get_ep_bandwidth(dwc_otg_hcd_t * hcd,
 					    void *ep_handle);
 
+extern int hcd_init(
+#ifdef LM_INTERFACE
+			   struct lm_device *_dev
+#elif  defined(PCI_INTERFACE)
+			   struct pci_dev *_dev
+#elif  defined(PLATFORM_INTERFACE)
+	struct platform_device *dev
+#endif
+    );
+
+extern void hcd_remove(
+#ifdef LM_INTERFACE
+			      struct lm_device *_dev
+#elif  defined(PCI_INTERFACE)
+			      struct pci_dev *_dev
+#elif  defined(PLATFORM_INTERFACE)
+	struct platform_device *_dev
+#endif
+    );
+
 /** @} */
 
 #endif /* __DWC_HCD_IF_H__ */

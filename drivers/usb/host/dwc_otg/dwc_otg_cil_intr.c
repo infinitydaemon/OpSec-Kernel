@@ -61,7 +61,7 @@ inline const char *op_state_str(dwc_otg_core_if_t * core_if)
  *
  * @param core_if Programming view of DWC_otg controller.
  */
-int32_t dwc_otg_handle_mode_mismatch_intr(dwc_otg_core_if_t * core_if)
+static int32_t dwc_otg_handle_mode_mismatch_intr(dwc_otg_core_if_t * core_if)
 {
 	gintsts_data_t gintsts;
 	DWC_WARN("Mode Mismatch Interrupt: currently in %s mode\n",
@@ -81,7 +81,7 @@ int32_t dwc_otg_handle_mode_mismatch_intr(dwc_otg_core_if_t * core_if)
  *
  * @param core_if Programming view of DWC_otg controller.
  */
-int32_t dwc_otg_handle_otg_intr(dwc_otg_core_if_t * core_if)
+static int32_t dwc_otg_handle_otg_intr(dwc_otg_core_if_t * core_if)
 {
 	dwc_otg_core_global_regs_t *global_regs = core_if->core_global_regs;
 	gotgint_data_t gotgint;
@@ -320,7 +320,7 @@ void w_conn_id_status_change(void *p)
  *
  * @param core_if Programming view of DWC_otg controller.
  */
-int32_t dwc_otg_handle_conn_id_status_change_intr(dwc_otg_core_if_t * core_if)
+static int32_t dwc_otg_handle_conn_id_status_change_intr(dwc_otg_core_if_t * core_if)
 {
 
 	/*
@@ -367,7 +367,7 @@ int32_t dwc_otg_handle_conn_id_status_change_intr(dwc_otg_core_if_t * core_if)
  *
  * @param core_if Programming view of DWC_otg controller.
  */
-int32_t dwc_otg_handle_session_req_intr(dwc_otg_core_if_t * core_if)
+static int32_t dwc_otg_handle_session_req_intr(dwc_otg_core_if_t * core_if)
 {
 	gintsts_data_t gintsts;
 
@@ -435,7 +435,7 @@ void w_wakeup_detected(void *p)
  * power mode. The controller automatically begins resume
  * signaling. The handler schedules a time to stop resume signaling.
  */
-int32_t dwc_otg_handle_wakeup_detected_intr(dwc_otg_core_if_t * core_if)
+static int32_t dwc_otg_handle_wakeup_detected_intr(dwc_otg_core_if_t * core_if)
 {
 	gintsts_data_t gintsts;
 
@@ -905,34 +905,11 @@ static int32_t dwc_otg_handle_pwrdn_srp_intr(dwc_otg_core_if_t * core_if)
 	return 1;
 }
 
-/** This interrupt indicates that restore command after Hibernation
- * was completed by the core. */
-int32_t dwc_otg_handle_restore_done_intr(dwc_otg_core_if_t * core_if)
-{
-	pcgcctl_data_t pcgcctl;
-	DWC_DEBUGPL(DBG_ANY, "++Restore Done Interrupt++\n");
-
-	//TODO De-assert restore signal. 8.a
-	pcgcctl.d32 = DWC_READ_REG32(core_if->pcgcctl);
-	if (pcgcctl.b.restoremode == 1) {
-		gintmsk_data_t gintmsk = {.d32 = 0 };
-		/*
-		 * If restore mode is Remote Wakeup,
-		 * unmask Remote Wakeup interrupt.
-		 */
-		gintmsk.b.wkupintr = 1;
-		DWC_MODIFY_REG32(&core_if->core_global_regs->gintmsk,
-				 0, gintmsk.d32);
-	}
-
-	return 1;
-}
-
 /**
  * This interrupt indicates that a device has been disconnected from
  * the root port.
  */
-int32_t dwc_otg_handle_disconnect_intr(dwc_otg_core_if_t * core_if)
+static int32_t dwc_otg_handle_disconnect_intr(dwc_otg_core_if_t * core_if)
 {
 	gintsts_data_t gintsts;
 
@@ -1017,7 +994,7 @@ int32_t dwc_otg_handle_disconnect_intr(dwc_otg_core_if_t * core_if)
  * When power management is enabled the core will be put in low power
  * mode.
  */
-int32_t dwc_otg_handle_usb_suspend_intr(dwc_otg_core_if_t * core_if)
+static int32_t dwc_otg_handle_usb_suspend_intr(dwc_otg_core_if_t * core_if)
 {
 	dsts_data_t dsts;
 	gintsts_data_t gintsts;

@@ -1018,7 +1018,7 @@ static irqreturn_t dwc_otg_pcd_irq(int irq, void *dev)
  *
  * @param d Pointer on gadget_wrapper.
  */
-void gadget_add_eps(struct gadget_wrapper *d)
+static void gadget_add_eps(struct gadget_wrapper *d)
 {
 	static const char *names[] = {
 

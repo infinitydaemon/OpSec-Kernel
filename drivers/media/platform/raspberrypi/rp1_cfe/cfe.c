@@ -844,7 +844,7 @@ static void cfe_start_channel(struct cfe_node *node)
 			__func__, node_desc[FE_OUT0].name,
 			cfe->fe_csi2_channel);
 
-		source_fmt = v4l2_subdev_get_pad_format(&cfe->csi2.sd, state,
+		source_fmt = v4l2_subdev_state_get_format(state,
 							cfe->fe_csi2_channel);
 		fmt = find_format_by_code(source_fmt->code);
 
@@ -873,7 +873,7 @@ static void cfe_start_channel(struct cfe_node *node)
 
 		u32 mode = CSI2_MODE_NORMAL;
 
-		source_fmt = v4l2_subdev_get_pad_format(&cfe->csi2.sd, state,
+		source_fmt = v4l2_subdev_state_get_format(state,
 			node_desc[node->id].link_pad - CSI2_NUM_CHANNELS);
 		fmt = find_format_by_code(source_fmt->code);
 
@@ -970,8 +970,8 @@ static int cfe_queue_setup(struct vb2_queue *vq, unsigned int *nbuffers,
 	cfe_dbg("%s: [%s] type:%u\n", __func__, node_desc[node->id].name,
 		node->buffer_queue.type);
 
-	if (vq->num_buffers + *nbuffers < 3)
-		*nbuffers = 3 - vq->num_buffers;
+	if (vb2_get_num_buffers(vq) + *nbuffers < 3)
+		*nbuffers = 3 - vb2_get_num_buffers(vq);
 
 	if (*nplanes) {
 		if (sizes[0] < size) {
@@ -1058,7 +1058,7 @@ static u64 sensor_link_rate(struct cfe_device *cfe)
 	s64 link_freq;
 
 	state = v4l2_subdev_lock_and_get_active_state(&cfe->csi2.sd);
-	source_fmt = v4l2_subdev_get_pad_format(&cfe->csi2.sd, state, 0);
+	source_fmt = v4l2_subdev_state_get_format(state, 0);
 	fmt = find_format_by_code(source_fmt->code);
 	v4l2_subdev_unlock_state(state);
 
@@ -1658,7 +1658,104 @@ static const struct v4l2_file_operations cfe_fops = {
 	.mmap = vb2_fop_mmap,
 };
 
-static int cfe_video_link_validate(struct media_link *link)
+static int cfe_video_link_validate(struct cfe_node *node,
+				   struct v4l2_subdev *remote_sd,
+				   struct v4l2_mbus_framefmt *remote_fmt)
+{
+	struct cfe_device *cfe = node->cfe;
+
+	if (!remote_fmt) {
+		return -EINVAL;
+	}
+
+	if (is_image_output_node(node)) {
+		struct v4l2_pix_format *pix_fmt = &node->vid_fmt.fmt.pix;
+		const struct cfe_fmt *fmt = NULL;
+		unsigned int i;
+
+		if (remote_fmt->width != pix_fmt->width ||
+		    remote_fmt->height != pix_fmt->height) {
+			cfe_err("Wrong width or height %ux%u (remote pad set to %ux%u)\n",
+				pix_fmt->width, pix_fmt->height,
+				remote_fmt->width,
+				remote_fmt->height);
+			return -EINVAL;
+		}
+
+		for (i = 0; i < ARRAY_SIZE(formats); i++) {
+			if (formats[i].code == remote_fmt->code &&
+			    formats[i].fourcc == pix_fmt->pixelformat) {
+				fmt = &formats[i];
+				break;
+			}
+		}
+		if (!fmt) {
+			cfe_err("Format mismatch!\n");
+			return -EINVAL;
+		}
+	} else if (is_csi2_node(node) && is_meta_output_node(node)) {
+		struct v4l2_meta_format *meta_fmt = &node->meta_fmt.fmt.meta;
+		const struct cfe_fmt *fmt;
+		u32 remote_size;
+
+		fmt = find_format_by_code(remote_fmt->code);
+		if (!fmt || fmt->fourcc != meta_fmt->dataformat) {
+			cfe_err("Metadata format mismatch!\n");
+			return -EINVAL;
+		}
+
+		remote_size = DIV_ROUND_UP(remote_fmt->width * remote_fmt->height * fmt->depth, 8);
+
+		if (remote_fmt->code != MEDIA_BUS_FMT_SENSOR_DATA) {
+			cfe_err("Bad metadata mbus format\n");
+			return -EINVAL;
+		}
+
+		if (remote_size > meta_fmt->buffersize) {
+			cfe_err("Metadata buffer too small: %u < %u\n",
+				meta_fmt->buffersize, remote_size);
+			return -EINVAL;
+		}
+	}
+
+	return 0;
+}
+
+static int cfe_video_link_validate_output(struct media_link *link)
+{
+	struct video_device *vd = container_of(link->source->entity,
+					       struct video_device, entity);
+	struct cfe_node *node = container_of(vd, struct cfe_node, video_dev);
+	struct cfe_device *cfe = node->cfe;
+	struct v4l2_mbus_framefmt *sink_fmt;
+	struct v4l2_subdev_state *state;
+	struct v4l2_subdev *sink_sd;
+	int ret;
+
+	cfe_dbg("%s: [%s] link \"%s\":%u -> \"%s\":%u\n", __func__,
+		node_desc[node->id].name,
+		link->source->entity->name, link->source->index,
+		link->sink->entity->name, link->sink->index);
+
+	if (!media_entity_remote_source_pad_unique(link->source->entity)) {
+		cfe_err("video node %s pad not connected\n", vd->name);
+		return -ENOTCONN;
+	}
+
+	sink_sd = media_entity_to_v4l2_subdev(link->sink->entity);
+
+	state = v4l2_subdev_lock_and_get_active_state(sink_sd);
+
+	sink_fmt = v4l2_subdev_state_get_format(state, link->sink->index);
+
+	ret = cfe_video_link_validate(node, sink_sd, sink_fmt);
+
+	v4l2_subdev_unlock_state(state);
+
+	return ret;
+}
+
+static int cfe_video_link_validate_capture(struct media_link *link)
 {
 	struct video_device *vd = container_of(link->sink->entity,
 					       struct video_device, entity);
@@ -1667,7 +1764,7 @@ static int cfe_video_link_validate(struct media_link *link)
 	struct v4l2_mbus_framefmt *source_fmt;
 	struct v4l2_subdev_state *state;
 	struct v4l2_subdev *source_sd;
-	int ret = 0;
+	int ret;
 
 	cfe_dbg("%s: [%s] link \"%s\":%u -> \"%s\":%u\n", __func__,
 		node_desc[node->id].name,
@@ -1683,76 +1780,21 @@ static int cfe_video_link_validate(struct media_link *link)
 
 	state = v4l2_subdev_lock_and_get_active_state(source_sd);
 
-	source_fmt = v4l2_subdev_get_pad_format(source_sd, state,
-						link->source->index);
-	if (!source_fmt) {
-		ret = -EINVAL;
-		goto out;
-	}
+	source_fmt = v4l2_subdev_state_get_format(state, link->source->index);
 
-	if (is_image_output_node(node)) {
-		struct v4l2_pix_format *pix_fmt = &node->vid_fmt.fmt.pix;
-		const struct cfe_fmt *fmt = NULL;
-		unsigned int i;
+	ret = cfe_video_link_validate(node, source_sd, source_fmt);
 
-		if (source_fmt->width != pix_fmt->width ||
-		    source_fmt->height != pix_fmt->height) {
-			cfe_err("Wrong width or height %ux%u (remote pad set to %ux%u)\n",
-				pix_fmt->width, pix_fmt->height,
-				source_fmt->width,
-				source_fmt->height);
-			ret = -EINVAL;
-			goto out;
-		}
-
-		for (i = 0; i < ARRAY_SIZE(formats); i++) {
-			if (formats[i].code == source_fmt->code &&
-			    formats[i].fourcc == pix_fmt->pixelformat) {
-				fmt = &formats[i];
-				break;
-			}
-		}
-		if (!fmt) {
-			cfe_err("Format mismatch!\n");
-			ret = -EINVAL;
-			goto out;
-		}
-	} else if (is_csi2_node(node) && is_meta_output_node(node)) {
-		struct v4l2_meta_format *meta_fmt = &node->meta_fmt.fmt.meta;
-		const struct cfe_fmt *fmt;
-		u32 source_size;
-
-		fmt = find_format_by_code(source_fmt->code);
-		if (!fmt || fmt->fourcc != meta_fmt->dataformat) {
-			cfe_err("Metadata format mismatch!\n");
-			ret = -EINVAL;
-			goto out;
-		}
-
-		source_size = DIV_ROUND_UP(source_fmt->width * source_fmt->height * fmt->depth, 8);
-
-		if (source_fmt->code != MEDIA_BUS_FMT_SENSOR_DATA) {
-			cfe_err("Bad metadata mbus format\n");
-			ret = -EINVAL;
-			goto out;
-		}
-
-		if (source_size > meta_fmt->buffersize) {
-			cfe_err("Metadata buffer too small: %u < %u\n",
-				meta_fmt->buffersize, source_size);
-			ret = -EINVAL;
-			goto out;
-		}
-	}
-
-out:
 	v4l2_subdev_unlock_state(state);
 
 	return ret;
 }
 
-static const struct media_entity_operations cfe_media_entity_ops = {
-	.link_validate = cfe_video_link_validate,
+static const struct media_entity_operations cfe_media_entity_ops_output = {
+	.link_validate = cfe_video_link_validate_output,
+};
+
+static const struct media_entity_operations cfe_media_entity_ops_capture = {
+	.link_validate = cfe_video_link_validate_capture,
 };
 
 static int cfe_video_link_notify(struct media_link *link, u32 flags,
@@ -1902,7 +1944,7 @@ static int cfe_register_node(struct cfe_device *cfe, int id)
 					     : sizeof(struct cfe_buffer);
 	q->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_MONOTONIC;
 	q->lock = &node->lock;
-	q->min_buffers_needed = 1;
+	q->min_queued_buffers = 1;
 	q->dev = &cfe->pdev->dev;
 
 	ret = vb2_queue_init(q);
@@ -1917,12 +1959,15 @@ static int cfe_register_node(struct cfe_device *cfe, int id)
 	vdev->release = cfe_node_release;
 	vdev->fops = &cfe_fops;
 	vdev->ioctl_ops = &cfe_ioctl_ops;
-	vdev->entity.ops = &cfe_media_entity_ops;
 	vdev->v4l2_dev = &cfe->v4l2_dev;
-	vdev->vfl_dir = (node_supports_image_output(node) ||
-			 node_supports_meta_output(node)) ?
-				VFL_DIR_RX :
-				VFL_DIR_TX;
+	if ((node_supports_image_output(node) ||
+	     node_supports_meta_output(node))) {
+		vdev->entity.ops = &cfe_media_entity_ops_capture;
+		vdev->vfl_dir = VFL_DIR_RX;
+	} else {
+		vdev->entity.ops = &cfe_media_entity_ops_output;
+		vdev->vfl_dir = VFL_DIR_TX;
+	}
 	vdev->queue = q;
 	vdev->lock = &node->lock;
 	vdev->device_caps = node_desc[id].caps;
@@ -2347,7 +2392,7 @@ err_cfe_put:
 	return ret;
 }
 
-static int cfe_remove(struct platform_device *pdev)
+static void cfe_remove(struct platform_device *pdev)
 {
 	struct cfe_device *cfe = platform_get_drvdata(pdev);
 
@@ -2365,8 +2410,6 @@ static int cfe_remove(struct platform_device *pdev)
 	v4l2_device_unregister(&cfe->v4l2_dev);
 
 	cfe_put(cfe);
-
-	return 0;
 }
 
 static int cfe_runtime_suspend(struct device *dev)

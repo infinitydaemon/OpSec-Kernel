@@ -57,6 +57,7 @@
 #include "dwc_otg_pcd_if.h"
 #include "dwc_otg_hcd_if.h"
 #include "dwc_otg_fiq_fsm.h"
+#include "dwc_otg_adp.h"
 
 #define DWC_DRIVER_VERSION	"3.00a 10-AUG-2012"
 #define DWC_DRIVER_DESC		"HS OTG USB Controller driver"
@@ -64,48 +65,6 @@
 bool microframe_schedule=true;
 
 static const char dwc_driver_name[] = "dwc_otg";
-
-
-extern int pcd_init(
-#ifdef LM_INTERFACE
-			   struct lm_device *_dev
-#elif  defined(PCI_INTERFACE)
-			   struct pci_dev *_dev
-#elif  defined(PLATFORM_INTERFACE)
-	struct platform_device *dev
-#endif
-    );
-extern int hcd_init(
-#ifdef LM_INTERFACE
-			   struct lm_device *_dev
-#elif  defined(PCI_INTERFACE)
-			   struct pci_dev *_dev
-#elif  defined(PLATFORM_INTERFACE)
-	struct platform_device *dev
-#endif
-    );
-
-extern int pcd_remove(
-#ifdef LM_INTERFACE
-			     struct lm_device *_dev
-#elif  defined(PCI_INTERFACE)
-			     struct pci_dev *_dev
-#elif  defined(PLATFORM_INTERFACE)
-	struct platform_device *_dev
-#endif
-    );
-
-extern void hcd_remove(
-#ifdef LM_INTERFACE
-			      struct lm_device *_dev
-#elif  defined(PCI_INTERFACE)
-			      struct pci_dev *_dev
-#elif  defined(PLATFORM_INTERFACE)
-	struct platform_device *_dev
-#endif
-    );
-
-extern void dwc_otg_adp_start(dwc_otg_core_if_t * core_if, uint8_t is_host);
 
 /*-------------------------------------------------------------------------*/
 /* Encapsulate the module parameter settings */
@@ -592,7 +551,7 @@ static void dwc_otg_driver_remove(	 struct pci_dev *_dev )
 {	dwc_otg_device_t *otg_dev = pci_get_drvdata(_dev);
 #elif  defined(PLATFORM_INTERFACE)
 #define REM_RETVAL(n) n
-static int dwc_otg_driver_remove(        struct platform_device *_dev )
+static void dwc_otg_driver_remove(        struct platform_device *_dev )
 {       dwc_otg_device_t *otg_dev = platform_get_drvdata(_dev);
 #endif
 
@@ -601,14 +560,12 @@ static int dwc_otg_driver_remove(        struct platform_device *_dev )
 	if (!otg_dev) {
 		/* Memory allocation for the dwc_otg_device failed. */
 		DWC_DEBUGPL(DBG_ANY, "%s: otg_dev NULL!\n", __func__);
-                return REM_RETVAL(-ENOMEM);
 	}
 #ifndef DWC_DEVICE_ONLY
 	if (otg_dev->hcd) {
 		hcd_remove(_dev);
 	} else {
 		DWC_DEBUGPL(DBG_ANY, "%s: otg_dev->hcd NULL!\n", __func__);
-                return REM_RETVAL(-EINVAL);
 	}
 #endif
 
@@ -617,7 +574,6 @@ static int dwc_otg_driver_remove(        struct platform_device *_dev )
 		pcd_remove(_dev);
 	} else {
 		DWC_DEBUGPL(DBG_ANY, "%s: otg_dev->pcd NULL!\n", __func__);
-                return REM_RETVAL(-EINVAL);
 	}
 #endif
 	/*
@@ -627,14 +583,12 @@ static int dwc_otg_driver_remove(        struct platform_device *_dev )
 		free_irq(otg_dev->os_dep.irq_num, otg_dev);
         } else {
 		DWC_DEBUGPL(DBG_ANY, "%s: There is no installed irq!\n", __func__);
-		return REM_RETVAL(-ENXIO);
 	}
 
 	if (otg_dev->core_if) {
 		dwc_otg_cil_remove(otg_dev->core_if);
 	} else {
 		DWC_DEBUGPL(DBG_ANY, "%s: otg_dev->core_if NULL!\n", __func__);
-		return REM_RETVAL(-ENXIO);
 	}
 
 	/*
@@ -662,7 +616,6 @@ static int dwc_otg_driver_remove(        struct platform_device *_dev )
 #elif  defined(PLATFORM_INTERFACE)
         platform_set_drvdata(_dev, 0);
 #endif
-        return REM_RETVAL(0);
 }
 
 /**

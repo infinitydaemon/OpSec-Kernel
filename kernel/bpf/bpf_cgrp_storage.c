@@ -82,7 +82,7 @@ static void *bpf_cgrp_storage_lookup_elem(struct bpf_map *map, void *key)
 	int fd;
 
 	fd = *(int *)key;
-	cgroup = cgroup_get_from_fd(fd);
+	cgroup = cgroup_v1v2_get_from_fd(fd);
 	if (IS_ERR(cgroup))
 		return ERR_CAST(cgroup);
 
@@ -101,7 +101,7 @@ static long bpf_cgrp_storage_update_elem(struct bpf_map *map, void *key,
 	int fd;
 
 	fd = *(int *)key;
-	cgroup = cgroup_get_from_fd(fd);
+	cgroup = cgroup_v1v2_get_from_fd(fd);
 	if (IS_ERR(cgroup))
 		return PTR_ERR(cgroup);
 
@@ -131,7 +131,7 @@ static long bpf_cgrp_storage_delete_elem(struct bpf_map *map, void *key)
 	int err, fd;
 
 	fd = *(int *)key;
-	cgroup = cgroup_get_from_fd(fd);
+	cgroup = cgroup_v1v2_get_from_fd(fd);
 	if (IS_ERR(cgroup))
 		return PTR_ERR(cgroup);
 
@@ -154,7 +154,7 @@ static struct bpf_map *cgroup_storage_map_alloc(union bpf_attr *attr)
 
 static void cgroup_storage_map_free(struct bpf_map *map)
 {
-	bpf_local_storage_map_free(map, &cgroup_cache, NULL);
+	bpf_local_storage_map_free(map, &cgroup_cache, &bpf_cgrp_storage_busy);
 }
 
 /* *gfp_flags* is a hidden argument provided by the verifier */

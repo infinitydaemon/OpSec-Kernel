@@ -97,14 +97,22 @@ struct ModuleInfo {
     author: Option<String>,
     description: Option<String>,
     alias: Option<Vec<String>>,
+    firmware: Option<Vec<String>>,
 }
 
 impl ModuleInfo {
     fn parse(it: &mut token_stream::IntoIter) -> Self {
         let mut info = ModuleInfo::default();
 
-        const EXPECTED_KEYS: &[&str] =
-            &["type", "name", "author", "description", "license", "alias"];
+        const EXPECTED_KEYS: &[&str] = &[
+            "type",
+            "name",
+            "author",
+            "description",
+            "license",
+            "alias",
+            "firmware",
+        ];
         const REQUIRED_KEYS: &[&str] = &["type", "name", "license"];
         let mut seen_keys = Vec::new();
 
@@ -131,6 +139,7 @@ impl ModuleInfo {
                 "description" => info.description = Some(expect_string(it)),
                 "license" => info.license = expect_string_ascii(it),
                 "alias" => info.alias = Some(expect_string_array(it)),
+                "firmware" => info.firmware = Some(expect_string_array(it)),
                 _ => panic!(
                     "Unknown key \"{}\". Valid keys are: {:?}.",
                     key, EXPECTED_KEYS
@@ -186,6 +195,11 @@ pub(crate) fn module(ts: TokenStream) -> TokenStream {
             modinfo.emit("alias", &alias);
         }
     }
+    if let Some(firmware) = info.firmware {
+        for fw in firmware {
+            modinfo.emit("firmware", &fw);
+        }
+    }
 
     // Built-in modules also export the `file` modinfo string.
     let file =
@@ -239,12 +253,18 @@ pub(crate) fn module(ts: TokenStream) -> TokenStream {
                     #[doc(hidden)]
                     #[no_mangle]
                     #[link_section = \".init.text\"]
-                    pub unsafe extern \"C\" fn init_module() -> core::ffi::c_int {{
+                    pub unsafe extern \"C\" fn init_module() -> kernel::ffi::c_int {{
                         // SAFETY: This function is inaccessible to the outside due to the double
                         // module wrapping it. It is called exactly once by the C side via its
                         // unique name.
                         unsafe {{ __init() }}
                     }}
+
+                    #[cfg(MODULE)]
+                    #[doc(hidden)]
+                    #[used]
+                    #[link_section = \".init.data\"]
+                    static __UNIQUE_ID___addressable_init_module: unsafe extern \"C\" fn() -> i32 = init_module;
 
                     #[cfg(MODULE)]
                     #[doc(hidden)]
@@ -259,6 +279,12 @@ pub(crate) fn module(ts: TokenStream) -> TokenStream {
                         unsafe {{ __exit() }}
                     }}
 
+                    #[cfg(MODULE)]
+                    #[doc(hidden)]
+                    #[used]
+                    #[link_section = \".exit.data\"]
+                    static __UNIQUE_ID___addressable_cleanup_module: extern \"C\" fn() = cleanup_module;
+
                     // Built-in modules are initialized through an initcall pointer
                     // and the identifiers need to be unique.
                     #[cfg(not(MODULE))]
@@ -266,7 +292,7 @@ pub(crate) fn module(ts: TokenStream) -> TokenStream {
                     #[doc(hidden)]
                     #[link_section = \"{initcall_section}\"]
                     #[used]
-                    pub static __{name}_initcall: extern \"C\" fn() -> core::ffi::c_int = __{name}_init;
+                    pub static __{name}_initcall: extern \"C\" fn() -> kernel::ffi::c_int = __{name}_init;
 
                     #[cfg(not(MODULE))]
                     #[cfg(CONFIG_HAVE_ARCH_PREL32_RELOCATIONS)]
@@ -281,7 +307,7 @@ pub(crate) fn module(ts: TokenStream) -> TokenStream {
                     #[cfg(not(MODULE))]
                     #[doc(hidden)]
                     #[no_mangle]
-                    pub extern \"C\" fn __{name}_init() -> core::ffi::c_int {{
+                    pub extern \"C\" fn __{name}_init() -> kernel::ffi::c_int {{
                         // SAFETY: This function is inaccessible to the outside due to the double
                         // module wrapping it. It is called exactly once by the C side via its
                         // placement above in the initcall section.
@@ -304,7 +330,7 @@ pub(crate) fn module(ts: TokenStream) -> TokenStream {
                     /// # Safety
                     ///
                     /// This function must only be called once.
-                    unsafe fn __init() -> core::ffi::c_int {{
+                    unsafe fn __init() -> kernel::ffi::c_int {{
                         match <{type_} as kernel::Module>::init(&super::super::THIS_MODULE) {{
                             Ok(m) => {{
                                 // SAFETY: No data race, since `__MOD` can only be accessed by this

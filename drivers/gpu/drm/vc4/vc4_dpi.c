@@ -201,8 +201,8 @@ static void vc4_dpi_encoder_enable(struct drm_encoder *encoder)
 						       DPI_FORMAT);
 				break;
 			default:
-				DRM_ERROR("Unknown media bus format %d\n",
-					  bus_format);
+				drm_err(dev, "Unknown media bus format %d\n",
+					bus_format);
 				break;
 			}
 		}
@@ -243,11 +243,11 @@ static void vc4_dpi_encoder_enable(struct drm_encoder *encoder)
 
 	ret = clk_set_rate(dpi->pixel_clock, mode->clock * 1000);
 	if (ret)
-		DRM_ERROR("Failed to set clock rate: %d\n", ret);
+		drm_err(dev, "Failed to set clock rate: %d\n", ret);
 
 	ret = clk_prepare_enable(dpi->pixel_clock);
 	if (ret)
-		DRM_ERROR("Failed to set clock rate: %d\n", ret);
+		drm_err(dev, "Failed to set clock rate: %d\n", ret);
 
 	drm_dev_exit(idx);
 }
@@ -347,7 +347,7 @@ static int vc4_dpi_bind(struct device *dev, struct device *master, void *data)
 	if (IS_ERR(dpi->core_clock)) {
 		ret = PTR_ERR(dpi->core_clock);
 		if (ret != -EPROBE_DEFER)
-			DRM_ERROR("Failed to get core clock: %d\n", ret);
+			drm_err(drm, "Failed to get core clock: %d\n", ret);
 		return ret;
 	}
 
@@ -355,13 +355,13 @@ static int vc4_dpi_bind(struct device *dev, struct device *master, void *data)
 	if (IS_ERR(dpi->pixel_clock)) {
 		ret = PTR_ERR(dpi->pixel_clock);
 		if (ret != -EPROBE_DEFER)
-			DRM_ERROR("Failed to get pixel clock: %d\n", ret);
+			drm_err(drm, "Failed to get pixel clock: %d\n", ret);
 		return ret;
 	}
 
 	ret = clk_prepare_enable(dpi->core_clock);
 	if (ret) {
-		DRM_ERROR("Failed to turn on core clock: %d\n", ret);
+		drm_err(drm, "Failed to turn on core clock: %d\n", ret);
 		return ret;
 	}
 

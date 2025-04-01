@@ -80,7 +80,7 @@ uint32_t dwc_otg_adp_read_reg(dwc_otg_core_if_t * core_if)
 /**
  * Function is called to read ADPCTL register and filter Write-clear bits
  */
-uint32_t dwc_otg_adp_read_reg_filter(dwc_otg_core_if_t * core_if)
+static uint32_t dwc_otg_adp_read_reg_filter(dwc_otg_core_if_t * core_if)
 {
 	adpctl_data_t adpctl;
 
@@ -90,16 +90,6 @@ uint32_t dwc_otg_adp_read_reg_filter(dwc_otg_core_if_t * core_if)
 	adpctl.b.adp_tmout_int = 0;
 
 	return adpctl.d32;
-}
-
-/**
- * Function is called to write ADP registers
- */
-void dwc_otg_adp_modify_reg(dwc_otg_core_if_t * core_if, uint32_t clr,
-			    uint32_t set)
-{
-	dwc_otg_adp_write_reg(core_if,
-			      (dwc_otg_adp_read_reg(core_if) & (~clr)) | set);
 }
 
 static void adp_sense_timeout(void *ptr)
@@ -184,7 +174,7 @@ static void adp_vbuson_timeout(void *ptr)
  *
  * @param core_if the pointer to core_if strucure.
  */
-void dwc_otg_adp_vbuson_timer_start(dwc_otg_core_if_t * core_if)
+static void dwc_otg_adp_vbuson_timer_start(dwc_otg_core_if_t * core_if)
 {
 	core_if->adp.vbuson_timer_started = 1;
 	if (core_if->adp.vbuson_timer)
@@ -343,7 +333,7 @@ uint32_t dwc_otg_adp_probe_start(dwc_otg_core_if_t * core_if)
  *
  * @param core_if the pointer to core_if strucure.
  */
-void dwc_otg_adp_sense_timer_start(dwc_otg_core_if_t * core_if)
+static void dwc_otg_adp_sense_timer_start(dwc_otg_core_if_t * core_if)
 {
 	core_if->adp.sense_timer_started = 1;
 	DWC_TIMER_SCHEDULE(core_if->adp.sense_timer, 3000 /* 3 secs */ );
@@ -434,7 +424,7 @@ uint32_t dwc_otg_adp_sense_stop(dwc_otg_core_if_t * core_if)
  *
  * @param core_if the pointer to core_if structure.
  */
-void dwc_otg_adp_turnon_vbus(dwc_otg_core_if_t * core_if)
+static void dwc_otg_adp_turnon_vbus(dwc_otg_core_if_t * core_if)
 {
 	hprt0_data_t hprt0 = {.d32 = 0 };
 	hprt0.d32 = dwc_otg_read_hprt0(core_if);
@@ -778,8 +768,6 @@ int32_t dwc_otg_adp_handle_intr(dwc_otg_core_if_t * core_if)
 		retval |= dwc_otg_adp_handle_prb_intr(core_if, adpctl.d32);
 	}
 
-//	dwc_otg_adp_modify_reg(core_if, adpctl.d32, 0);
-	//dwc_otg_adp_write_reg(core_if, adpctl.d32);
 	DWC_PRINTF("RETURN FROM ADP ISR\n");
 
 	return retval;

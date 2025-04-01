@@ -121,7 +121,7 @@ static int test_iterate(struct bch_fs *c, u64 nr)
 		ck.k.p.offset = i;
 		ck.k.p.snapshot = U32_MAX;
 
-		ret = bch2_btree_insert(c, BTREE_ID_xattrs, &ck.k_i, NULL, 0);
+		ret = bch2_btree_insert(c, BTREE_ID_xattrs, &ck.k_i, NULL, 0, 0);
 		bch_err_msg(c, ret, "insert error");
 		if (ret)
 			return ret;
@@ -176,7 +176,7 @@ static int test_iterate_extents(struct bch_fs *c, u64 nr)
 		ck.k.p.snapshot = U32_MAX;
 		ck.k.size = 8;
 
-		ret = bch2_btree_insert(c, BTREE_ID_extents, &ck.k_i, NULL, 0);
+		ret = bch2_btree_insert(c, BTREE_ID_extents, &ck.k_i, NULL, 0, 0);
 		bch_err_msg(c, ret, "insert error");
 		if (ret)
 			return ret;
@@ -232,7 +232,7 @@ static int test_iterate_slots(struct bch_fs *c, u64 nr)
 		ck.k.p.offset = i * 2;
 		ck.k.p.snapshot = U32_MAX;
 
-		ret = bch2_btree_insert(c, BTREE_ID_xattrs, &ck.k_i, NULL, 0);
+		ret = bch2_btree_insert(c, BTREE_ID_xattrs, &ck.k_i, NULL, 0, 0);
 		bch_err_msg(c, ret, "insert error");
 		if (ret)
 			return ret;
@@ -292,7 +292,7 @@ static int test_iterate_slots_extents(struct bch_fs *c, u64 nr)
 		ck.k.p.snapshot = U32_MAX;
 		ck.k.size = 8;
 
-		ret = bch2_btree_insert(c, BTREE_ID_extents, &ck.k_i, NULL, 0);
+		ret = bch2_btree_insert(c, BTREE_ID_extents, &ck.k_i, NULL, 0, 0);
 		bch_err_msg(c, ret, "insert error");
 		if (ret)
 			return ret;
@@ -394,9 +394,9 @@ static int insert_test_extent(struct bch_fs *c,
 	k.k_i.k.p.offset = end;
 	k.k_i.k.p.snapshot = U32_MAX;
 	k.k_i.k.size = end - start;
-	k.k_i.k.version.lo = test_version++;
+	k.k_i.k.bversion.lo = test_version++;
 
-	ret = bch2_btree_insert(c, BTREE_ID_extents, &k.k_i, NULL, 0);
+	ret = bch2_btree_insert(c, BTREE_ID_extents, &k.k_i, NULL, 0, 0);
 	bch_err_fn(c, ret);
 	return ret;
 }
@@ -450,7 +450,7 @@ static int insert_test_overlapping_extent(struct bch_fs *c, u64 inum, u64 start,
 	k.k_i.k.p.snapshot = snapid;
 	k.k_i.k.size = len;
 
-	ret = bch2_trans_do(c, NULL, NULL, 0,
+	ret = bch2_trans_commit_do(c, NULL, NULL, 0,
 		bch2_btree_insert_nonextent(trans, BTREE_ID_extents, &k.k_i,
 					    BTREE_UPDATE_internal_snapshot_node));
 	bch_err_fn(c, ret);
@@ -481,7 +481,7 @@ static int test_snapshot_filter(struct bch_fs *c, u32 snapid_lo, u32 snapid_hi)
 
 	bkey_cookie_init(&cookie.k_i);
 	cookie.k.p.snapshot = snapid_hi;
-	ret = bch2_btree_insert(c, BTREE_ID_xattrs, &cookie.k_i, NULL, 0);
+	ret = bch2_btree_insert(c, BTREE_ID_xattrs, &cookie.k_i, NULL, 0, 0);
 	if (ret)
 		return ret;
 
@@ -506,11 +506,11 @@ static int test_snapshots(struct bch_fs *c, u64 nr)
 
 	bkey_cookie_init(&cookie.k_i);
 	cookie.k.p.snapshot = U32_MAX;
-	ret = bch2_btree_insert(c, BTREE_ID_xattrs, &cookie.k_i, NULL, 0);
+	ret = bch2_btree_insert(c, BTREE_ID_xattrs, &cookie.k_i, NULL, 0, 0);
 	if (ret)
 		return ret;
 
-	ret = bch2_trans_do(c, NULL, NULL, 0,
+	ret = bch2_trans_commit_do(c, NULL, NULL, 0,
 		      bch2_snapshot_node_create(trans, U32_MAX,
 						snapids,
 						snapid_subvols,
@@ -808,6 +808,11 @@ int bch2_btree_perf_test(struct bch_fs *c, const char *testname,
 	struct printbuf per_sec_buf = PRINTBUF;
 	unsigned i;
 	u64 time;
+
+	if (nr == 0 || nr_threads == 0) {
+		pr_err("nr of iterations or threads is not allowed to be 0");
+		return -EINVAL;
+	}
 
 	atomic_set(&j.ready, nr_threads);
 	init_waitqueue_head(&j.ready_wait);
