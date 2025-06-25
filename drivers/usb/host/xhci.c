@@ -39,6 +39,10 @@ static unsigned long long quirks;
 module_param(quirks, ullong, S_IRUGO);
 MODULE_PARM_DESC(quirks, "Bit flags for quirks to be enabled as default");
 
+static int sandbag_lpm = 1;
+module_param(sandbag_lpm, int, S_IRUGO | S_IWUSR);
+MODULE_PARM_DESC(sandbag_lpm, "Use relaxed U1/U2 port LPM timeouts");
+
 static bool td_on_ring(struct xhci_td *td, struct xhci_ring *ring)
 {
 	struct xhci_segment *seg = ring->first_seg;
@@ -321,7 +325,7 @@ static void xhci_zero_64b_regs(struct xhci_hcd *xhci)
 		xhci_info(xhci, "Fault detected\n");
 }
 
-static int xhci_enable_interrupter(struct xhci_interrupter *ir)
+int xhci_enable_interrupter(struct xhci_interrupter *ir)
 {
 	u32 iman;
 
@@ -334,7 +338,7 @@ static int xhci_enable_interrupter(struct xhci_interrupter *ir)
 	return 0;
 }
 
-static int xhci_disable_interrupter(struct xhci_interrupter *ir)
+int xhci_disable_interrupter(struct xhci_interrupter *ir)
 {
 	u32 iman;
 
@@ -1545,10 +1549,11 @@ static int xhci_check_ep0_maxpacket(struct xhci_hcd *xhci, struct xhci_virt_devi
  * XXX: bandwidth is not recalculated. We should probably do that.
  */
 
-static unsigned int xhci_get_endpoint_flag_from_index(unsigned int ep_index)
-{
-	return 1 << (ep_index + 1);
-}
+static void xhci_setup_input_ctx_for_config_ep(struct xhci_hcd *xhci,
+		struct xhci_container_ctx *in_ctx,
+		struct xhci_container_ctx *out_ctx,
+		struct xhci_input_control_ctx *ctrl_ctx,
+		u32 add_flags, u32 drop_flags);
 
 static void xhci_fixup_endpoint(struct usb_hcd *hcd, struct usb_device *udev,
 				struct usb_host_endpoint *ep, int interval)
@@ -1562,10 +1567,14 @@ static void xhci_fixup_endpoint(struct usb_hcd *hcd, struct usb_device *udev,
 	int ret;
 	int ep_index;
 	unsigned long flags;
-	u32 ep_info_tmp;
+	u32 ep_flag, ep_info_tmp;
 
 	xhci = hcd_to_xhci(hcd);
 	ep_index = xhci_get_endpoint_index(&ep->desc);
+	ep_flag = xhci_get_endpoint_flag(&ep->desc);
+
+	if (ep_flag == SLOT_FLAG || ep_flag == EP0_FLAG)
+		return;
 
 	/* FS/LS interval translations */
 	if ((udev->speed == USB_SPEED_FULL ||
@@ -1626,8 +1635,8 @@ static void xhci_fixup_endpoint(struct usb_hcd *hcd, struct usb_device *udev,
 		mutex_unlock(&xhci->mutex);
 		return;
 	}
-	ctrl_ctx->add_flags = xhci_get_endpoint_flag_from_index(ep_index);
-	ctrl_ctx->drop_flags = ctrl_ctx->add_flags;
+	xhci_setup_input_ctx_for_config_ep(xhci, command->in_ctx, vdev->out_ctx,
+					   ctrl_ctx, ep_flag, ep_flag);
 
 	spin_unlock_irqrestore(&xhci->lock, flags);
 
@@ -4807,7 +4816,7 @@ static u16 xhci_calculate_u1_timeout(struct xhci_hcd *xhci,
 		}
 	}
 
-	if (xhci->quirks & (XHCI_INTEL_HOST | XHCI_ZHAOXIN_HOST))
+	if (sandbag_lpm || xhci->quirks & (XHCI_INTEL_HOST | XHCI_ZHAOXIN_HOST))
 		timeout_ns = xhci_calculate_intel_u1_timeout(udev, desc);
 	else
 		timeout_ns = udev->u1_params.sel;
@@ -4871,7 +4880,7 @@ static u16 xhci_calculate_u2_timeout(struct xhci_hcd *xhci,
 		}
 	}
 
-	if (xhci->quirks & (XHCI_INTEL_HOST | XHCI_ZHAOXIN_HOST))
+	if (sandbag_lpm || xhci->quirks & (XHCI_INTEL_HOST | XHCI_ZHAOXIN_HOST))
 		timeout_ns = xhci_calculate_intel_u2_timeout(udev, desc);
 	else
 		timeout_ns = udev->u2_params.sel;

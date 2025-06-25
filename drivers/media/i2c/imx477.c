@@ -112,6 +112,9 @@ MODULE_PARM_DESC(trigger_mode, "Set vsync trigger mode: 1=source, 2=sink");
 #define IMX477_REG_XVS_IO_CTRL		0x3040
 #define IMX477_REG_EXTOUT_EN		0x4b81
 
+/* Temperature sensor */
+#define IMX477_REG_TEMP_SEN_CTL		0x0138
+
 /* Embedded metadata stream structure */
 #define IMX477_EMBEDDED_LINE_WIDTH 16384
 #define IMX477_NUM_EMBEDDED_LINES 1
@@ -1513,8 +1516,10 @@ static int imx477_enum_mbus_code(struct v4l2_subdev *sd,
 		if (code->index >= (ARRAY_SIZE(codes) / 4))
 			return -EINVAL;
 
+		mutex_lock(&imx477->mutex);
 		code->code = imx477_get_format_code(imx477,
 						    codes[code->index * 4]);
+		mutex_unlock(&imx477->mutex);
 	} else {
 		if (code->index > 0)
 			return -EINVAL;
@@ -1530,6 +1535,7 @@ static int imx477_enum_frame_size(struct v4l2_subdev *sd,
 				  struct v4l2_subdev_frame_size_enum *fse)
 {
 	struct imx477 *imx477 = to_imx477(sd);
+	u32 code;
 
 	if (fse->pad >= NUM_PADS)
 		return -EINVAL;
@@ -1543,7 +1549,11 @@ static int imx477_enum_frame_size(struct v4l2_subdev *sd,
 		if (fse->index >= num_modes)
 			return -EINVAL;
 
-		if (fse->code != imx477_get_format_code(imx477, fse->code))
+		mutex_lock(&imx477->mutex);
+		code = imx477_get_format_code(imx477, fse->code);
+		mutex_unlock(&imx477->mutex);
+
+		if (fse->code != code)
 			return -EINVAL;
 
 		fse->min_width = mode_list[fse->index].width;
@@ -1826,18 +1836,28 @@ static int imx477_start_streaming(struct imx477 *imx477)
 
 	/* Set vsync trigger mode: 0=standalone, 1=source, 2=sink */
 	tm = (imx477->trigger_mode_of >= 0) ? imx477->trigger_mode_of : trigger_mode;
-	imx477_write_reg(imx477, IMX477_REG_MC_MODE,
-			 IMX477_REG_VALUE_08BIT, (tm > 0) ? 1 : 0);
+	if (tm == 1)
+		imx477_write_reg(imx477, IMX477_REG_TEMP_SEN_CTL,
+				 IMX477_REG_VALUE_08BIT, 0);
+	imx477_write_reg(imx477, IMX477_REG_EXTOUT_EN,
+			IMX477_REG_VALUE_08BIT, (tm == 1) ? 1 : 0);
 	imx477_write_reg(imx477, IMX477_REG_MS_SEL,
 			 IMX477_REG_VALUE_08BIT, (tm <= 1) ? 1 : 0);
 	imx477_write_reg(imx477, IMX477_REG_XVS_IO_CTRL,
 			 IMX477_REG_VALUE_08BIT, (tm == 1) ? 1 : 0);
-	imx477_write_reg(imx477, IMX477_REG_EXTOUT_EN,
-			 IMX477_REG_VALUE_08BIT, (tm == 1) ? 1 : 0);
+	imx477_write_reg(imx477, IMX477_REG_MC_MODE,
+			 IMX477_REG_VALUE_08BIT, (tm > 0) ? 1 : 0);
 
 	/* set stream on register */
-	return imx477_write_reg(imx477, IMX477_REG_MODE_SELECT,
-				IMX477_REG_VALUE_08BIT, IMX477_MODE_STREAMING);
+	ret = imx477_write_reg(imx477, IMX477_REG_MODE_SELECT,
+			       IMX477_REG_VALUE_08BIT, IMX477_MODE_STREAMING);
+
+	/* now it's safe to re-enable temp sensor without glitching XVS */
+	if (tm == 1)
+		imx477_write_reg(imx477, IMX477_REG_TEMP_SEN_CTL,
+				 IMX477_REG_VALUE_08BIT, 1);
+
+	return ret;
 }
 
 /* Stop streaming */

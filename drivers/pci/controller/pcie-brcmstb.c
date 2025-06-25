@@ -164,11 +164,15 @@
 
 #define  PCIE_MISC_HARD_PCIE_HARD_DEBUG_CLKREQ_DEBUG_ENABLE_MASK	0x2
 #define  PCIE_MISC_HARD_PCIE_HARD_DEBUG_PERST_ASSERT_MASK		0x8
+#define  PCIE_MISC_HARD_PCIE_HARD_DEBUG_REFCLK_OVRD_ENABLE_MASK		0x10000
+#define  PCIE_MISC_HARD_PCIE_HARD_DEBUG_REFCLK_OVRD_OUT_MASK		0x100000
 #define  PCIE_MISC_HARD_PCIE_HARD_DEBUG_L1SS_ENABLE_MASK		0x200000
 #define  PCIE_MISC_HARD_PCIE_HARD_DEBUG_SERDES_IDDQ_MASK		0x08000000
 #define  PCIE_BMIPS_MISC_HARD_PCIE_HARD_DEBUG_SERDES_IDDQ_MASK		0x00800000
 #define  PCIE_CLKREQ_MASK \
 	  (PCIE_MISC_HARD_PCIE_HARD_DEBUG_CLKREQ_DEBUG_ENABLE_MASK | \
+	   PCIE_MISC_HARD_PCIE_HARD_DEBUG_REFCLK_OVRD_ENABLE_MASK | \
+	   PCIE_MISC_HARD_PCIE_HARD_DEBUG_REFCLK_OVRD_OUT_MASK | \
 	   PCIE_MISC_HARD_PCIE_HARD_DEBUG_L1SS_ENABLE_MASK)
 
 #define PCIE_MISC_UBUS_BAR1_CONFIG_REMAP			0x40ac
@@ -666,7 +670,7 @@ static struct irq_chip brcm_msi_irq_chip = {
 
 static struct msi_domain_info brcm_msi_domain_info = {
 	.flags	= MSI_FLAG_USE_DEF_DOM_OPS | MSI_FLAG_USE_DEF_CHIP_OPS |
-		  MSI_FLAG_NO_AFFINITY | MSI_FLAG_MULTI_PCI_MSI,
+		  MSI_FLAG_NO_AFFINITY | MSI_FLAG_MULTI_PCI_MSI | MSI_FLAG_PCI_MSIX,
 	.chip	= &brcm_msi_irq_chip,
 };
 
@@ -1599,12 +1603,21 @@ static void brcm_config_clkreq(struct brcm_pcie *pcie)
 
 	} else {
 		/*
-		 * "safe" -- No power savings; refclk is driven by RC
+		 * "safe" -- No power savings; refclk and CLKREQ# are driven by RC
 		 * unconditionally.
 		 */
 		if (strcmp(mode, "safe") != 0)
 			dev_err(pcie->dev, err_msg);
 		mode = "safe";
+		clkreq_cntl |= PCIE_MISC_HARD_PCIE_HARD_DEBUG_REFCLK_OVRD_OUT_MASK;
+		clkreq_cntl |= PCIE_MISC_HARD_PCIE_HARD_DEBUG_REFCLK_OVRD_ENABLE_MASK;
+		/*
+		 * Un-advertise L1ss as configuring an EP to enter L1.x with CLKREQ#
+		 * physically unconnected will result in a dead link.
+		 */
+		tmp = readl(pcie->base + PCIE_RC_CFG_PRIV1_ROOT_CAP);
+		u32p_replace_bits(&tmp, 2, PCIE_RC_CFG_PRIV1_ROOT_CAP_L1SS_MODE_MASK);
+		writel(tmp, pcie->base + PCIE_RC_CFG_PRIV1_ROOT_CAP);
 	}
 	writel(clkreq_cntl, pcie->base + HARD_DEBUG(pcie));
 
@@ -1875,7 +1888,7 @@ static int brcm_pcie_add_bus(struct pci_bus *bus)
 
 		ret = regulator_bulk_get(dev, sr->num_supplies, sr->supplies);
 		if (ret) {
-			dev_info(dev, "Did not get regulators; err=%d\n", ret);
+			dev_info(dev, "Did not get regulators, err=%d\n", ret);
 			pcie->sr = NULL;
 			goto no_regulators;
 		}
@@ -2399,7 +2412,6 @@ MODULE_PARM_DESC(trace_ltssm, "Capture and dump link states during link training
 
 static int brcm_pcie_probe(struct platform_device *pdev)
 {
-	struct device_node *msi_np __free(device_node) = NULL;
 	struct device_node *np = pdev->dev.of_node;
 	struct pci_host_bridge *bridge;
 	const struct pcie_cfg_data *data;
@@ -2516,9 +2528,14 @@ static int brcm_pcie_probe(struct platform_device *pdev)
 		goto fail;
 	}
 
-	msi_np = of_parse_phandle(pcie->np, "msi-parent", 0);
-	if (pci_msi_enabled() && msi_np == pcie->np) {
-		ret = brcm_pcie_enable_msi(pcie);
+	if (pci_msi_enabled()) {
+		struct device_node *msi_np = of_parse_phandle(pcie->np, "msi-parent", 0);
+
+		if (msi_np == pcie->np)
+			ret = brcm_pcie_enable_msi(pcie);
+
+		of_node_put(msi_np);
+
 		if (ret) {
 			dev_err(pcie->dev, "probe of internal MSI failed");
 			goto fail;

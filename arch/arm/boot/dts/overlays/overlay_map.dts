@@ -53,6 +53,10 @@
 		bcm2712;
 	};
 
+	dwc-otg {
+		renamed = "dwc-otg-deprecated";
+	};
+
 	hifiberry-adc8x {
 		bcm2712;
 	};
@@ -284,6 +288,22 @@
 		deprecated = "no longer necessary";
 	};
 
+	sc16is750-spi0 {
+		renamed = "sc16is75x-spi,sc16is750,spi0-0";
+	};
+
+	sc16is750-spi1 {
+		renamed = "sc16is75x-spi,sc16is750,spi1-0";
+	};
+
+	sc16is752-spi0 {
+		renamed = "sc16is75x-spi,sc16is752,spi0-0";
+	};
+
+	sc16is752-spi1 {
+		renamed = "sc16is75x-spi,sc16is752,spi1-0";
+	};
+
 	sdhost {
 		bcm2835;
 		bcm2711;
@@ -400,6 +420,12 @@
 
 	spi6-2cs {
 		bcm2711;
+	};
+
+	tc358743 {
+		bcm2835;
+		bcm2711;
+		bcm2712 = "tc358743-pi5";
 	};
 
 	uart0 {

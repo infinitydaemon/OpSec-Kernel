@@ -161,10 +161,13 @@ struct hailo_vdma_buffer *hailo_vdma_buffer_map(struct device *dev,
         dev_err(dev, "memory alloc failed\n");
         ret = -ENOMEM;
         goto cleanup;
+
     }
 
     if (HAILO_DMA_DMABUF_BUFFER != buffer_type) {
+        mmap_read_lock(current->mm);
         vma = find_vma(current->mm, user_address);
+        mmap_read_unlock(current->mm);
         if (IS_ENABLED(HAILO_SUPPORT_MMIO_DMA_MAPPING)) {
             if (NULL == vma) {
                 dev_err(dev, "no vma for virt_addr/size = 0x%08lx/0x%08zx\n", user_address, size);

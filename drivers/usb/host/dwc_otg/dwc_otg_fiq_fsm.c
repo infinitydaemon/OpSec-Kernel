@@ -64,7 +64,7 @@ void notrace _fiq_print(enum fiq_debug_level dbg_lvl, volatile struct fiq_state 
 
 	if((dbg_lvl & dbg_lvl_req) || dbg_lvl == FIQDBG_ERR)
 	{
-		snprintf(text, 9, " %4d:%1u  ", hfnum.b.frnum/8, hfnum.b.frnum & 7);
+		snprintf(text, 9, " %4d:%1u ", hfnum.b.frnum/8, hfnum.b.frnum & 7);
 		va_start(args, fmt);
 		vsnprintf(text+8, 9, fmt, args);
 		va_end(args);
@@ -73,70 +73,6 @@ void notrace _fiq_print(enum fiq_debug_level dbg_lvl, volatile struct fiq_state 
 		wptr = (wptr + 16) % sizeof(buffer);
 	}
 }
-
-
-#ifdef CONFIG_ARM64
-
-inline void fiq_fsm_spin_lock(fiq_lock_t *lock)
-{
-	spin_lock((spinlock_t *)lock);
-}
-
-inline void fiq_fsm_spin_unlock(fiq_lock_t *lock)
-{
-	spin_unlock((spinlock_t *)lock);
-}
-
-#else
-
-/**
- * fiq_fsm_spin_lock() - ARMv6+ bare bones spinlock
- * Must be called with local interrupts and FIQ disabled.
- */
-#if defined(CONFIG_ARCH_BCM2835) && defined(CONFIG_SMP)
-inline void fiq_fsm_spin_lock(fiq_lock_t *lock)
-{
-	unsigned long tmp;
-	uint32_t newval;
-	fiq_lock_t lockval;
-	/* Nested locking, yay. If we are on the same CPU as the fiq, then the disable
-	 * will be sufficient. If we are on a different CPU, then the lock protects us. */
-	prefetchw(&lock->slock);
-	asm volatile (
-	"1:     ldrex   %0, [%3]\n"
-	"       add     %1, %0, %4\n"
-	"       strex   %2, %1, [%3]\n"
-	"       teq     %2, #0\n"
-	"       bne     1b"
-	: "=&r" (lockval), "=&r" (newval), "=&r" (tmp)
-	: "r" (&lock->slock), "I" (1 << 16)
-	: "cc");
-
-	while (lockval.tickets.next != lockval.tickets.owner) {
-		wfe();
-		lockval.tickets.owner = READ_ONCE(lock->tickets.owner);
-	}
-	smp_mb();
-}
-#else
-inline void fiq_fsm_spin_lock(fiq_lock_t *lock) { }
-#endif
-
-/**
- * fiq_fsm_spin_unlock() - ARMv6+ bare bones spinunlock
- */
-#if defined(CONFIG_ARCH_BCM2835) && defined(CONFIG_SMP)
-inline void fiq_fsm_spin_unlock(fiq_lock_t *lock)
-{
-	smp_mb();
-	lock->tickets.owner++;
-	dsb_sev();
-}
-#else
-inline void fiq_fsm_spin_unlock(fiq_lock_t *lock) { }
-#endif
-
-#endif
 
 /**
  * fiq_fsm_restart_channel() - Poke channel enable bit for a split transaction
