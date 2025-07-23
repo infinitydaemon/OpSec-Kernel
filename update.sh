@@ -1,56 +1,74 @@
 #!/bin/bash
 
-# Script to check for the latest kernel release from a GitHub repository and compare it with the current kernel version.
+# Script to check for the latest kernel release from a GitHub repository
+# and compare it with the current kernel version.
 
-# GitHub API URL for the latest release
+# Configuration
 GITHUB_API_URL="https://api.github.com/repos/infinitydaemon/OpSec-Kernel/releases/latest"
-USER_AGENT="curl/7.77.0"
+USER_AGENT="KernelChecker/1.0"
 
-# Function to fetch the latest release data from GitHub API
+# Colors (if terminal supports)
+RED=$(tput setaf 1 2>/dev/null || echo "")
+GREEN=$(tput setaf 2 2>/dev/null || echo "")
+YELLOW=$(tput setaf 3 2>/dev/null || echo "")
+RESET=$(tput sgr0 2>/dev/null || echo "")
+
+# Fetch latest release from GitHub
 fetch_latest_release() {
-    curl -s -H "User-Agent: $USER_AGENT" "$GITHUB_API_URL"
+    curl -fsSL -H "User-Agent: $USER_AGENT" "$GITHUB_API_URL"
 }
 
-# Function to parse JSON and get the latest version tag
-get_latest_version() {
-    jq -r '.tag_name'
+# Extract tag_name from JSON
+extract_tag_name() {
+    jq -r '.tag_name // empty'
 }
 
-# Function to compare two version strings
+# Compare versions
+# Returns:
+# 0 = equal
+# 1 = current < latest (update available)
+# 2 = current > latest (ahead, likely custom)
 compare_versions() {
-    if [[ "$1" == "$2" ]]; then
-        echo "0"
-    elif [[ "$(printf '%s\n' "$1" "$2" | sort -V | head -n1)" == "$1" ]]; then
-        echo "1"
+    ver1="$1"
+    ver2="$2"
+
+    if [[ "$ver1" == "$ver2" ]]; then
+        return 0
+    elif [[ "$(printf '%s\n' "$ver1" "$ver2" | sort -V | head -n1)" == "$ver1" ]]; then
+        return 1
     else
-        echo "-1"
+        return 2
     fi
 }
 
-# Main script logic
-echo "Fetching the latest kernel release information from GitHub..."
-data=$(fetch_latest_release)
-if [[ $? -ne 0 ]]; then
-    echo "Error: Failed to fetch data from GitHub API."
+# Main logic
+echo "${YELLOW}Checking for the latest kernel release...${RESET}"
+
+if ! data=$(fetch_latest_release); then
+    echo "${RED}Error: Unable to fetch data from GitHub API.${RESET}"
     exit 1
 fi
 
-latest_version=$(echo "$data" | get_latest_version)
+latest_version=$(echo "$data" | extract_tag_name)
+
 if [[ -z "$latest_version" ]]; then
-    echo "Error: Failed to parse the latest version from GitHub API response."
+    echo "${RED}Error: Failed to extract latest version tag.${RESET}"
     exit 1
 fi
 
-# Get current kernel version
 current_version=$(uname -r)
 
-# Compare versions and output result
-comparison_result=$(compare_versions "$current_version" "$latest_version")
+compare_versions "$current_version" "$latest_version"
+cmp_result=$?
 
-if [[ "$comparison_result" == "1" ]]; then
-    echo "An update is available! Latest version: $latest_version (Current version: $current_version)"
-elif [[ "$comparison_result" == "0" ]]; then
-    echo "You are already running the latest version: $current_version"
-else
-    echo "No updates available. Current version: $current_version (Latest version: $latest_version)"
-fi
+case $cmp_result in
+    0)
+        echo "${GREEN}You are running the latest kernel version: $current_version${RESET}"
+        ;;
+    1)
+        echo "${YELLOW}Update available! Latest: $latest_version | Current: $current_version${RESET}"
+        ;;
+    2)
+        echo "${GREEN}Your kernel version ($current_version) is newer than the latest release ($latest_version).${RESET}"
+        ;;
+esac
