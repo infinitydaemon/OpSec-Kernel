@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: GPL-2.0
 VERSION = 6
-PATCHLEVEL = 12
-SUBLEVEL = 41
+PATCHLEVEL = 16
+SUBLEVEL = 04
 EXTRAVERSION =
-NAME = Baby Opossum Posse
+NAME = The Bleeding Dragon
 
 # *DOCUMENTATION*
 # To see a list of typical targets execute "make help"
