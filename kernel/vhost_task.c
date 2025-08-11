@@ -7,6 +7,11 @@
 #include <linux/sched/task.h>
 #include <linux/sched/vhost_task.h>
 #include <linux/sched/signal.h>
+#include <linux/sched.h>
+#include <linux/mutex.h>
+#include <linux/err.h>
+#include <linux/bitops.h>
+#include <linux/compiler.h>
 
 enum vhost_task_flags {
 	VHOST_TASK_FLAGS_STOP,
@@ -24,7 +29,7 @@ struct vhost_task {
 	struct mutex exit_mutex;
 };
 
-static int vhost_task_fn(void *data)
+static int __noreturn vhost_task_fn(void *data)
 {
 	struct vhost_task *vtsk = data;
 
